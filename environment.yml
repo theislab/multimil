@@ -1,0 +1,22 @@
+name: scanpy
+channels:
+  - pytorch
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - cudatoolkit=9.0
+  - jupyterlab
+  - matplotlib
+  - pandas
+  - python=3.7.6
+  - pytorch=1.1.0
+  - requests
+  - scanpy=1.5.1
+  - scikit-learn
+  - seaborn
+  - torchvision=0.3.0
+  - tqdm
+  - pip:
+    - anndata==0.6.22rc1
+    - episcanpy==0.1.10
