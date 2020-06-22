@@ -1,5 +1,5 @@
 {
-    "experiment-name": "chen-2019-p0-brain-cortex-integration",
+    "experiment-name": "chen-2019-p0-brain-cortex-integration-multiscvae",
     "dataset": {
         "datasets": [
             {
@@ -22,7 +22,7 @@
         "params": {
             "paired": true,
             "recon_coef": 1,
-            "kl_coef": 0.0001,
+            "kl_coef": 0.00001,
             "cross_coef": 1,
             "x_dims": [2925, 30298],
             "z_dim": 20,
