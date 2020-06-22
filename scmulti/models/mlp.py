@@ -25,10 +25,10 @@ class MLP(nn.Module):
         layers = [nn.Linear(n_inputs, n_outputs)]
         if batch_norm:
             layers.append(nn.BatchNorm1d(n_outputs))
-        if dropout is not None:
-            layers.append(nn.Dropout(dropout))
         if activation != 'linear':
             layers.append(self._activation(activation))
+        if dropout is not None:
+            layers.append(nn.Dropout(dropout))
         return layers
     
     def _activation(self, name='leakyrelu'):
