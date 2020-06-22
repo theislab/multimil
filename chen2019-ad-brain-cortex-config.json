@@ -22,19 +22,20 @@
         "params": {
             "paired": true,
             "recon_coef": 1,
-            "kl_coef": 0.0001,
-            "cross_coef": 0,
-            "x_dims": [2695, 10009],
+            "kl_coef": 0.00001,
+            "cross_coef": 1,
+            "x_dims": [2967, 30104],
             "z_dim": 20,
             "hiddens": [256, 128, 64, 32]
         }
     },
     "train": {
-        "n-epochs": 50,
+        "n-epochs": 1000,
         "optimizer": {
             "name": "adam",
-            "lr": 0.0001
+            "lr": 0.001
         },
+        "early-stopping": 200,
         "output-dir": "outputs/",
         "seed": 42
     }
