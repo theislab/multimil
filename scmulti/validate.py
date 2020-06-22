@@ -31,28 +31,42 @@ def validate(**config):
 
         # validate on training data
         train_loss = 0
-        zs_train = []
         for i, datas in enumerate(zip(*train_datasets)):
             train_loss += model.test(*datas).item()
-            z = model.integrate(*datas)
-            zs_train.append(torch.stack(model.integrate(*datas)))
-        zs_train = torch.cat(zs_train, dim=1)
-        train_loss /= len(train_datasets[0])
 
         # validate on validation data
         val_loss = 0
-        zs_val = []
         for i, datas in enumerate(zip(*val_datasets)):
             val_loss += model.test(*datas).item()
-            z = model.integrate(*datas)
-            zs_val.append(torch.stack(model.integrate(*datas)))
-        zs_val = torch.cat(zs_val, dim=1)
-        val_loss /= len(val_datasets[0])
 
-    print(f'train_loss={train_loss:.3f}, val_loss={val_loss:.3f}')
+        print(f'train_loss={train_loss:.4f}, val_loss={val_loss:.4f}')
 
-    plot_latent([d.dataset.dataset.get_adata()[d.dataset.indices] for d in train_datasets], zs_train.cpu().numpy(), output_dir, 'train-')
-    plot_latent([d.dataset.dataset.get_adata()[d.dataset.indices] for d in val_datasets], zs_val.cpu().numpy(), output_dir, 'val-')
+        # centers at which datasets should gather togher
+        centers = [None] + list(range(len(train_datasets)))
+
+        # integrate training datasets into common latent space
+        zs_train = {}
+        for center in centers:  # integrate datasets into multiple centers
+            zs_train[center] = []
+            for i, datas in enumerate(zip(*train_datasets)):
+                z = model.integrate(*datas)
+                zs_train[center].append(torch.stack(z))
+            zs_train[center] = torch.cat(zs_train[center], dim=1)
+
+        # integrate validation datasets into common latent space
+        zs_val = {}
+        for center in centers: # integrate datasets into multiple centers
+            zs_val[center] = []
+            for i, datas in enumerate(zip(*val_datasets)):
+                z = model.integrate(*datas)
+                zs_val[center].append(torch.stack(z))
+            zs_val[center] = torch.cat(zs_val[center], dim=1)
+
+        for center in centers:
+            plot_latent([d.dataset.dataset.get_adata()[d.dataset.indices] for d in train_datasets],
+                        zs_train[center].cpu().numpy(), output_dir, f'train-at-{center}-')
+            plot_latent([d.dataset.dataset.get_adata()[d.dataset.indices] for d in val_datasets],
+                        zs_val[center].cpu().numpy(), output_dir, f'val-at-{center}-')
 
 
 def parse_args():

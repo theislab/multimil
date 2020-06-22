@@ -1,6 +1,7 @@
 import torch
 import os
 from .mlp import MLP
+from .multiscae import MultiScAE
 from .multiscvae import MultiScVAE
 
 
@@ -15,6 +16,8 @@ def model_factory(model_name, device, params):
         model = MLP(**params, device=device)
     if model_name == 'multiscvae':
         model = MultiScVAE(**params, device=device)
+    elif model_name == 'multiscae':
+        model = MultiScAE(**params, device=device)
     else:
         raise NotImplementedError(f'No model {model_name} is implemented.')
     return model

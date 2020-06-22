@@ -28,7 +28,7 @@ def plot_latent(adatas, zs, save_dir, prefix='val-'):
         sc.pp.neighbors(latent_adata)
         sc.tl.umap(latent_adata)
         sc.pl.umap(latent_adata, color=['cell_type'])
-        plt.savefig(os.path.join(save_dir, f'{prefix}umap-latent-{i}.png'), dpi=200, bbox_inches='tight')
+        plt.savefig(os.path.join(save_dir, f'{prefix}umap-latent-modal-{i}.png'), dpi=200, bbox_inches='tight')
     
     # plot a UMAP for integrated datasets
     latent_all_adata = np.concatenate(zs, axis=0)
@@ -44,5 +44,5 @@ def plot_latent(adatas, zs, save_dir, prefix='val-'):
     sc.pp.neighbors(latent_all_adata)
     sc.tl.umap(latent_all_adata)
     sc.pl.umap(latent_all_adata, color=['modal', 'cell_type'], ncols=1)
-    plt.savefig(os.path.join(save_dir, f'{prefix}umap-all-latents.png'), dpi=200, bbox_inches='tight')
+    plt.savefig(os.path.join(save_dir, f'{prefix}umap-integrate-latents.png'), dpi=200, bbox_inches='tight')
     
