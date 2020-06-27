@@ -22,8 +22,14 @@ def train(**config):
 
     # load training configurations
     n_epochs = config['train']['n-epochs']
+
+    kl_annealing = config['train'].get('kl-annealing', None)
+
     early_stopping_limit = config['train'].get('early-stopping', None)
+    track_best_start = 0 if kl_annealing is None else kl_annealing['start'] + kl_annealing['period']
+
     optimizer = create_optimizer(model.parameters(), config['train']['optimizer'])
+
     print(model)
     print('Number of trainable parameters:', sum(p.numel() for p in model.parameters() if p.requires_grad))
 
@@ -34,36 +40,63 @@ def train(**config):
 
     for epoch in range(n_epochs):
         train_loss = 0
+        train_losses = []
         epoch_time = time.time()
 
         # train
         model.train()
-        for i_batch, datas in enumerate(zip(*train_datasets)):
-            output, loss = model.forward(*datas)
+        for i, datas in enumerate(zip(*train_datasets)):
+            if kl_annealing is not None:
+                model.kl_anneal(epoch - kl_annealing['start'], kl_annealing['period'])
+            output, loss, losses = model.forward(*datas)
             optimizer.zero_grad()
             model.backward()
             optimizer.step()
 
             train_loss += loss.item()
+            train_losses.append(losses)
+
+        train_losses = {k: sum([losses[k].item() for losses in train_losses]) for k in train_losses[0].keys()}
         
         epoch_time = time.time() - epoch_time
-        early_stopping_count += 1
 
         # evaluate
         with torch.no_grad():
             model.eval()
             val_loss = 0
-            for _, datas in enumerate(zip(*val_datasets)):
-                val_loss += model.test(*datas).item()
+            val_losses = []
+            for i, datas in enumerate(zip(*val_datasets)):
+                loss, losses = model.test(*datas)
+                val_loss += loss.item()
+                val_losses.append(losses)
+
+            val_losses = {k: sum([losses[k].item() for losses in val_losses]) for k in val_losses[0].keys()}
         
-        print(f'epoch {epoch+1}/{n_epochs}: time={epoch_time:.2f}(s), loss={train_loss:.4f}, val_loss={val_loss:.4f}')
+        # some descriptions to be printed
+        description = []
+        if epoch == track_best_start:
+            description.append('tracking started')
+        if kl_annealing is not None and epoch == kl_annealing['start']:
+            description.append('kl annealing started')
 
         # keep the best model
-        if best_loss > val_loss:
+        if epoch >= track_best_start and best_loss > val_loss:
             best_loss = val_loss
             best_model = model.state_dict()
             early_stopping_count = 0
-            print('new best.')
+            description.append('new best')
+
+        if epoch >= track_best_start:
+            early_stopping_count += 1
+
+        train_losses = ', '.join([f'train_{k}:{v:.4f}' for k, v in train_losses.items()])
+        val_losses = ', '.join([f'val_{k}:{v:.4f}' for k, v in val_losses.items()])
+        description = ', '.join(description)
+        print(f'epoch {epoch+1}/{n_epochs}: time={epoch_time:.2f}(s),',
+              f'loss={train_loss:.4f}, {train_losses}, val_loss={val_loss:.4f}, {val_losses}', end=' ')
+        if description:
+            print(f'({description})', end='')
+        print()
         
         # stop the training in case of early stopping
         if early_stopping_limit is not None and early_stopping_count > early_stopping_limit:                           

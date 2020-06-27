@@ -32,12 +32,14 @@ def validate(**config):
         # validate on training data
         train_loss = 0
         for i, datas in enumerate(zip(*train_datasets)):
-            train_loss += model.test(*datas).item()
+            loss, losses = model.test(*datas)
+            train_loss += loss.item()
 
         # validate on validation data
         val_loss = 0
         for i, datas in enumerate(zip(*val_datasets)):
-            val_loss += model.test(*datas).item()
+            loss, losses = model.test(*datas)
+            val_loss += loss.item()
 
         print(f'train_loss={train_loss:.4f}, val_loss={val_loss:.4f}')
 
