@@ -2,19 +2,21 @@ from torch import nn
 
 
 class MLP(nn.Module):
-    def __init__(self, n_inputs, n_outputs, hiddens=[], output_relu=False, dropout=None, batch_norm=True, regularize_last_layer=False,
+    def __init__(self, n_inputs, n_outputs, hiddens=[], output_activation='linear', dropout=None, batch_norm=True, regularize_last_layer=False,
                  device='cpu'):
         super(MLP, self).__init__()
 
         # create network architecture
         layers = []
         if hiddens == []:  # no hidden layers
-            layers += self._fc(n_inputs, n_outputs, activation='leakyrelu', dropout=None, batch_norm=False)
+            layers += self._fc(n_inputs, n_outputs, activation=output_activation,
+                               dropout=dropout if regularize_last_layer else None,
+                               batch_norm=regularize_last_layer)
         else:
             layers += self._fc(n_inputs, hiddens[0], activation='leakyrelu', dropout=dropout, batch_norm=batch_norm)  # first layer
             for l in range(1, len(hiddens)):  # inner layers
                 layers += self._fc(hiddens[l-1], hiddens[l], activation='leakyrelu', dropout=dropout, batch_norm=batch_norm)
-            layers += self._fc(hiddens[-1], n_outputs, activation='relu' if output_relu else 'linear',
+            layers += self._fc(hiddens[-1], n_outputs, activation=output_activation,
                                dropout=dropout if regularize_last_layer else None,
                                batch_norm=regularize_last_layer)  # last layer
 
@@ -22,7 +24,7 @@ class MLP(nn.Module):
         self = self.to(device)
 
     def _fc(self, n_inputs, n_outputs, activation='leakyrelu', dropout=None, batch_norm=True):
-        layers = [nn.Linear(n_inputs, n_outputs)]
+        layers = [nn.Linear(n_inputs, n_outputs, bias=not batch_norm)]
         if batch_norm:
             layers.append(nn.BatchNorm1d(n_outputs))
         if activation != 'linear':
