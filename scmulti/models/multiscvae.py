@@ -12,7 +12,8 @@ class MultiScVAE(MultiScAE):
                  device='cpu',
                  **kwargs):
 
-        super(MultiScVAE, self).__init__(z_dim=z_dim, device=device, **kwargs)
+        super(MultiScVAE, self).__init__(z_dim=z_dim, device=device, shared_encoder_output_activation='leakyrelu',
+                                         regularize_shared_encoder_last_layer=True, **kwargs)
 
         # save model parameters
         self.kl_coef_init = self.kl_coef = kl_coef

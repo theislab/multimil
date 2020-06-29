@@ -14,6 +14,8 @@ class MultiScAE(nn.Module):
                  recon_coef=1,
                  cross_coef=1,
                  dropout=0.2,
+                 shared_encode_output_activation='linear',
+                 regularize_shared_encoder_last_layer=False,
                  device='cpu'):
 
         super(MultiScAE, self).__init__()
@@ -31,8 +33,8 @@ class MultiScAE(nn.Module):
         self.encoders = [MLP(x_dim, h_dim, hiddens, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim in x_dims]
         self.decoders = [MLP(h_dim, x_dim, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
-        self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation='leakyrelu',
-                                  dropout=dropout, batch_norm=True, regularize_last_layer=True)
+        self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation=shared_encode_output_activation,
+                                  dropout=dropout, batch_norm=True, regularize_last_layer=regularize_shared_encoder_last_layer)
         self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.modality = nn.Embedding(self.n_modal, z_dim)
