@@ -1,0 +1,49 @@
+{
+    "dataset": {
+        "datasets": [
+            {
+                "name": "chen2019-ad-brain-cortex-scrna",
+                "root-dir": "data/chen-2019/AdBrainCortex/rna",
+                "h5ad-filename": "expressions.h5ad"
+            },
+            {
+                "name": "chen2019-ad-brain-cortex-scatac",
+                "root-dir": "data/chen-2019/AdBrainCortex/atac",
+                "h5ad-filename": "peaks-binary.h5ad"
+            }
+        ],
+        "batch_size": 64,
+        "seed": 42,
+        "val_split": 0.2
+    },
+    "model": {
+        "name": "multiscvae",
+        "params": {
+            "paired": true,
+            "recon_coef": 1,
+            "kl_coef": 1e-6,
+            "cross_coef": 0,
+            "integ_coef": 0,
+            "x_dims": [3811, 30104],
+            "z_dim": 20,
+            "h_dim": 256,
+            "hiddens": [300],
+            "shared_hiddens": [128, 64, 32],
+            "dropout": 0.2
+        }
+    },
+    "train": {
+        "n-epochs": 1000,
+        "optimizer": {
+            "name": "adam",
+            "lr": 0.001
+        },
+        "early-stopping": 300,
+        "kl-annealing": {
+            "start": 40,
+            "period": 40
+        },
+        "output-dir": "outputs/",
+        "seed": 42
+    }
+}

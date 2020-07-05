@@ -1,5 +1,4 @@
 {
-    "experiment-name": "chen-2019-p0-brain-cortex-integration-multiscvae",
     "dataset": {
         "datasets": [
             {
@@ -13,20 +12,24 @@
                 "h5ad-filename": "peaks-binary.h5ad"
             }
         ],
-        "batch_size": 64,
+        "batch_size": 256,
         "seed": 42,
         "val_split": 0.2
     },
     "model": {
         "name": "multiscvae",
         "params": {
-            "paired": true,
+            "paired": false,
             "recon_coef": 1,
-            "kl_coef": 0.00001,
-            "cross_coef": 1,
-            "x_dims": [2925, 30298],
+            "kl_coef": 2e-6,
+            "cross_coef": 0,
+            "integ_coef": 1,
+            "x_dims": [4308, 30298],
             "z_dim": 20,
-            "hiddens": [256, 128, 64, 32]
+            "h_dim": 256,
+            "hiddens": [300],
+            "shared_hiddens": [128, 64, 32],
+            "dropout": 0.2
         }
     },
     "train": {
@@ -35,7 +38,11 @@
             "name": "adam",
             "lr": 0.0001
         },
-        "early-stopping": 200,
+        "early-stopping": 300,
+        "kl-annealing": {
+            "start": 50,
+            "period": 50
+        },
         "output-dir": "outputs/",
         "seed": 42
     }

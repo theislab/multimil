@@ -1,11 +1,15 @@
 {
-    "experiment-name": "granja-2019-normal-cells-scrna",
     "dataset": {
         "datasets": [
             {
                 "name": "granja2019-scrna",
                 "root-dir": "data/granja-2019/scRNA/",
                 "h5ad-filename": "expressions-ctrl.h5ad"
+            },
+            {
+                "name": "granja2019-scatac",
+                "root-dir": "data/granja-2019/scATAC/peaks/",
+                "h5ad-filename": "peaks-binary-ctrl.h5ad"
             }
         ],
         "batch_size": 64,
@@ -17,18 +21,27 @@
         "params": {
             "paired": false,
             "recon_coef": 1,
-            "kl_coef": 0.000001,
+            "kl_coef": 1e-4,
             "cross_coef": 0,
-            "x_dims": [2999],
+            "integ_coef": 10,
+            "x_dims": [2999, 20002],
             "z_dim": 20,
-            "hiddens": [256, 128, 64, 32]
+            "h_dim": 256,
+            "hiddens": [],
+            "shared_hiddens": [128, 64, 32],
+            "dropout": 0.2
         }
     },
     "train": {
-        "n-epochs": 50,
+        "n-epochs": 1000,
         "optimizer": {
             "name": "adam",
-            "lr": 0.0001
+            "lr": 0.001
+        },
+        "early-stopping": 200,
+        "kl-annealing": {
+            "start": 40,
+            "period": 40
         },
         "output-dir": "outputs/",
         "seed": 42

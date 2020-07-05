@@ -9,7 +9,7 @@ class SingleCellDataset(torch.utils.data.Dataset):
 
     def __init__(self, root_dir, h5ad_filename='train.h5ad', device='cpu'):
         self.adata = self.load_h5ad(os.path.join(root_dir, h5ad_filename))
-        self.x = self.create_tensor(self.adata.X)
+        self.x = self._create_tensor(self.adata.X)
         self.x = self.x.to(device)
     
     def load_h5ad(self, path):
@@ -18,7 +18,7 @@ class SingleCellDataset(torch.utils.data.Dataset):
     def get_adata(self):
         return self.adata
     
-    def create_tensor(self, x):
+    def _create_tensor(self, x):
         if sparse.issparse(x):
             x = x.todense()
             return torch.FloatTensor(x)

@@ -13,8 +13,9 @@ class MultiScAE(nn.Module):
                  paired=False,
                  recon_coef=1,
                  cross_coef=1,
+                 integ_coef=1,
                  dropout=0.2,
-                 shared_encode_output_activation='linear',
+                 shared_encoder_output_activation='linear',
                  regularize_shared_encoder_last_layer=False,
                  device='cpu'):
 
@@ -27,13 +28,14 @@ class MultiScAE(nn.Module):
         self.paired = paired
         self.recon_coef = recon_coef
         self.cross_coef = cross_coef
+        self.integ_coef = integ_coef
         self.device = device
 
         # create sub-modules
         self.encoders = [MLP(x_dim, h_dim, hiddens, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim in x_dims]
         self.decoders = [MLP(h_dim, x_dim, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
-        self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation=shared_encode_output_activation,
+        self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation=shared_encoder_output_activation,
                                   dropout=dropout, batch_norm=True, regularize_last_layer=regularize_shared_encoder_last_layer)
         self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
@@ -71,21 +73,28 @@ class MultiScAE(nn.Module):
         recon_loss = sum([nn.MSELoss()(r, x) for x, r in zip(xs, rs)])
 
         cross_loss = 0
+        integ_loss = 0
         for i, zi in enumerate(zs):
             vi = self.modal_vector(i)
-            for j, xj in enumerate(xs):
+            for j, (xj, zj) in enumerate(zip(xs, zs)):
                 if i == j:
                     continue
                 vj = self.modal_vector(j)
-                rij = self.decode(self.convert(zi, vj - vi), j)
+                zij = self.convert(zi, vj - vi)
+                rij = self.decode(zij, j)
                 if self.paired:
                     cross_loss += nn.MSELoss()(rij, xj)
+                    integ_loss += nn.MSELoss()(zij, zj)
                 else:
                     cross_loss += MMD()(rij, xj)
-
-        return self.recon_coef * recon_loss + self.cross_coef * cross_loss, {
-            'recon': recon_loss,
-            'cross': cross_loss
+                    integ_loss += MMD()(zij, zj)
+        
+        return self.recon_coef * recon_loss + \
+               self.cross_coef * cross_loss + \
+               self.integ_coef * integ_loss, {
+                   'recon': recon_loss,
+                   'cross': cross_loss,
+                   'integ': integ_loss
         }
     
     def modal_vector(self, i):

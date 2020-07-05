@@ -9,7 +9,7 @@ from models import create_model
 import torch
 
 
-def train(**config):
+def train(experiment_name, **config):
     # config torch
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # torch.manual_seed(config['train']['seed'])
@@ -89,8 +89,8 @@ def train(**config):
         if epoch >= track_best_start:
             early_stopping_count += 1
 
-        train_losses = ', '.join([f'train_{k}:{v:.4f}' for k, v in train_losses.items()])
-        val_losses = ', '.join([f'val_{k}:{v:.4f}' for k, v in val_losses.items()])
+        train_losses = ', '.join([f'{k}={v:.4f}' for k, v in train_losses.items()])
+        val_losses = ', '.join([f'val_{k}={v:.4f}' for k, v in val_losses.items()])
         description = ', '.join(description)
         print(f'epoch {epoch+1}/{n_epochs}: time={epoch_time:.2f}(s),',
               f'loss={train_loss:.4f}, {train_losses}, val_loss={val_loss:.4f}, {val_losses}', end=' ')
@@ -104,7 +104,7 @@ def train(**config):
             break
     
     # save the best model and the experiment parameters
-    output_dir = os.path.join(config['train']['output-dir'], config['experiment-name'])
+    output_dir = os.path.join(config['train']['output-dir'], experiment_name)
     os.makedirs(output_dir, exist_ok=True)
     torch.save(best_model, os.path.join(output_dir, 'best-model.pt'))
     json.dump(config, open(os.path.join(output_dir, 'config.json'), 'w'), indent=2)
@@ -121,5 +121,6 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     config = parse_config_file(args.config_file)
+    experiment_name = os.path.splitext(os.path.basename(args.config_file))[0]
 
-    train(**config)
+    train(experiment_name, **config)
