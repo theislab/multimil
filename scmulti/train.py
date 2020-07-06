@@ -14,6 +14,11 @@ def train(experiment_name, **config):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # torch.manual_seed(config['train']['seed'])
 
+    # configure output directory to save logs and results
+    output_dir = os.path.join(config['train']['output-dir'], experiment_name)
+    os.makedirs(output_dir, exist_ok=True)
+    log_file = open(os.path.join(output_dir, 'train.txt'), 'w')
+
     # load train and validation datasets
     train_datasets, val_datasets = load_dataset(config['dataset'], device)
     
@@ -30,8 +35,8 @@ def train(experiment_name, **config):
 
     optimizer = create_optimizer(model.parameters(), config['train']['optimizer'])
 
-    print(model)
-    print('Number of trainable parameters:', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    print(model, file=log_file)
+    print('Number of trainable parameters:', sum(p.numel() for p in model.parameters() if p.requires_grad), file=log_file)
 
     # do the training epochs
     best_model = None
@@ -93,19 +98,17 @@ def train(experiment_name, **config):
         val_losses = ', '.join([f'val_{k}={v:.4f}' for k, v in val_losses.items()])
         description = ', '.join(description)
         print(f'epoch {epoch+1}/{n_epochs}: time={epoch_time:.2f}(s),',
-              f'loss={train_loss:.4f}, {train_losses}, val_loss={val_loss:.4f}, {val_losses}', end=' ')
+              f'loss={train_loss:.4f}, {train_losses}, val_loss={val_loss:.4f}, {val_losses}', end=' ', file=log_file)
         if description:
-            print(f'({description})', end='')
-        print()
+            print(f'({description})', end='', file=log_file)
+        print(file=log_file)
         
         # stop the training in case of early stopping
         if early_stopping_limit is not None and early_stopping_count > early_stopping_limit:                           
-            print('early stopping.')
+            print('early stopping.', file=log_file)
             break
     
     # save the best model and the experiment parameters
-    output_dir = os.path.join(config['train']['output-dir'], experiment_name)
-    os.makedirs(output_dir, exist_ok=True)
     torch.save(best_model, os.path.join(output_dir, 'best-model.pt'))
     json.dump(config, open(os.path.join(output_dir, 'config.json'), 'w'), indent=2)
     
