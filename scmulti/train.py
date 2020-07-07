@@ -33,6 +33,7 @@ def train(experiment_name, **config):
     kl_annealing = config['train'].get('kl-annealing', None)
     early_stopping_limit = config['train'].get('early-stopping', None)
     start_tracking = warmup if kl_annealing is None else warmup + kl_annealing
+    print_every = config['train'].get('print-every', 50)
 
     optimizer = create_optimizer(model.parameters(), config['train']['optimizer'])
 
@@ -69,7 +70,7 @@ def train(experiment_name, **config):
         train_loss += loss.item()
         train_losses.append(losses)
 
-        if epoch % config['train'].get('print-every', 50) == 0:
+        if epoch % print_every == 0:
             train_losses = {k: sum([losses[k].item() for losses in train_losses]) for k in train_losses[0].keys()}
             epoch_time = time.time() - epoch_time
 
@@ -100,7 +101,7 @@ def train(experiment_name, **config):
                 description.append('new best')
 
             if epoch >= start_tracking:
-                early_stopping_count += 1
+                early_stopping_count += print_every
 
             train_losses = ', '.join([f'{k}={v:.4f}' for k, v in train_losses.items()])
             val_losses = ', '.join([f'val_{k}={v:.4f}' for k, v in val_losses.items()])
