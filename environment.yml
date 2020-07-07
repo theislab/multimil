@@ -5,17 +5,17 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - cudatoolkit=9.0
+  - cudatoolkit=10.0
   - jupyterlab
   - matplotlib
   - pandas
-  - python=3.7.6
+  - python=3.7
   - pip
-  - pytorch=1.1.0
+  - pytorch
   - requests
   - scikit-learn
   - seaborn
-  - torchvision=0.3.0
+  - torchvision
   - tqdm
   - pip:
     - episcanpy==0.1.10
