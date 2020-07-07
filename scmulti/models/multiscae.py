@@ -27,8 +27,8 @@ class MultiScAE(nn.Module):
         self.h_dim = h_dim
         self.paired = paired
         self.recon_coef = recon_coef
-        self.cross_coef = cross_coef
-        self.integ_coef = integ_coef
+        self.cross_coef = self.cross_coef_init = cross_coef
+        self.integ_coef = self.integ_coef_init = integ_coef
         self.device = device
 
         # create sub-modules
@@ -47,6 +47,10 @@ class MultiScAE(nn.Module):
             self.add_module(f'decoder-{i}', dec)
 
         self = self.to(device)
+    
+    def warmup_mode(self, on=True):
+        self.cross_coef = self.cross_coef_init * (not on)
+        self.integ_coef = self.integ_coef_init * (not on)
 
     def encode(self, x, i):
         h = self.encoders[i](x)

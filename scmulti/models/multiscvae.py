@@ -27,6 +27,10 @@ class MultiScVAE(MultiScAE):
     def kl_anneal(self, epoch, anneal_limit):
         self.kl_coef = min(self.kl_coef_init, epoch / anneal_limit * self.kl_coef_init)
         self.kl_coef = max(0, self.kl_coef)
+    
+    def warmup_mode(self, on=True):
+        super(MultiScVAE, self).warmup_mode(on)
+        self.kl_coef = self.kl_coef_init * (not on)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
