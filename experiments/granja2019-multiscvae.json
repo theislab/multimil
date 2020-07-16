@@ -2,17 +2,17 @@
     "dataset": {
         "datasets": [
             {
-                "name": "granja2019-scrna",
+                "name": "scrna",
                 "root-dir": "data/granja-2019/scRNA/",
                 "h5ad-filename": "expressions-ctrl.h5ad"
             },
             {
-                "name": "granja2019-scatac",
+                "name": "scatac",
                 "root-dir": "data/granja-2019/scATAC/peaks/",
                 "h5ad-filename": "peaks-binary-ctrl.h5ad"
             }
         ],
-        "batch_size": 64,
+        "batch_size": 256,
         "seed": 42,
         "val_split": 0.2
     },
@@ -21,28 +21,28 @@
         "params": {
             "paired": false,
             "recon_coef": 1,
-            "kl_coef": 1e-4,
+            "kl_coef": 1e-5,
             "cross_coef": 0,
-            "integ_coef": 10,
-            "x_dims": [2999, 20002],
+            "integ_coef": 0.01,
+            "cycle_coef": 1,
+            "x_dims": [3172, 10003],
             "z_dim": 20,
             "h_dim": 256,
-            "hiddens": [],
+            "hiddens": [300],
             "shared_hiddens": [128, 64, 32],
             "dropout": 0.2
         }
     },
     "train": {
-        "n-epochs": 1000,
+        "n-epochs": 100000,
         "optimizer": {
             "name": "adam",
             "lr": 0.001
         },
-        "early-stopping": 200,
-        "kl-annealing": {
-            "start": 40,
-            "period": 40
-        },
+        "print-every": 100,
+        "early-stopping": 10000,
+        "warmup": 3000,
+        "kl-annealing": 2000,
         "output-dir": "outputs/",
         "seed": 42
     }
