@@ -14,6 +14,7 @@ class MultiScAE(nn.Module):
                  recon_coef=1,
                  cross_coef=1,
                  integ_coef=1,
+                 cycle_coef=1,
                  dropout=0.2,
                  shared_encoder_output_activation='linear',
                  regularize_shared_encoder_last_layer=False,
@@ -29,6 +30,7 @@ class MultiScAE(nn.Module):
         self.recon_coef = recon_coef
         self.cross_coef = self.cross_coef_init = cross_coef
         self.integ_coef = self.integ_coef_init = integ_coef
+        self.cycle_coef = self.cycle_coef_init = cycle_coef
         self.device = device
 
         # create sub-modules
@@ -51,6 +53,7 @@ class MultiScAE(nn.Module):
     def warmup_mode(self, on=True):
         self.cross_coef = self.cross_coef_init * (not on)
         self.integ_coef = self.integ_coef_init * (not on)
+        self.cycle_coef = self.cycle_coef_init * (not on)
 
     def encode(self, x, i):
         h = self.encoders[i](x)
@@ -78,7 +81,9 @@ class MultiScAE(nn.Module):
 
         cross_loss = 0
         integ_loss = 0
-        for i, zi in enumerate(zs):
+        cycle_loss = 0
+
+        for i, (xi, zi) in enumerate(zip(xs, zs)):
             vi = self.modal_vector(i)
             for j, (xj, zj) in enumerate(zip(xs, zs)):
                 if i == j:
@@ -86,20 +91,25 @@ class MultiScAE(nn.Module):
                 vj = self.modal_vector(j)
                 zij = self.convert(zi, vj - vi)
                 rij = self.decode(zij, j)
+                ziji = self.convert(self.to_latent(rij, j), vi - vj)
+                riji = self.decode(ziji, i)
                 if self.paired:
                     cross_loss += nn.MSELoss()(rij, xj)
                     integ_loss += nn.MSELoss()(zij, zj)
                 else:
                     cross_loss += MMD()(rij, xj)
                     integ_loss += MMD()(zij, zj)
+                cycle_loss += nn.MSELoss()(riji, xi)
         
         return self.recon_coef * recon_loss + \
                self.cross_coef * cross_loss + \
-               self.integ_coef * integ_loss, {
+               self.integ_coef * integ_loss + \
+               self.cycle_coef * cycle_loss, {
                    'recon': recon_loss,
                    'cross': cross_loss,
-                   'integ': integ_loss
-        }
+                   'integ': integ_loss,
+                   'cycle': cycle_loss
+                }
     
     def modal_vector(self, i):
         return nn.functional.one_hot(torch.tensor([i]).long(), self.n_modal).float().to(self.device)
@@ -114,14 +124,11 @@ class MultiScAE(nn.Module):
     def convert(self, z, v):
         return z + v @ self.modality.weight
 
-    def integrate(self, *xs, center=None):
-        zs = []
-        for i, x in enumerate(xs):
-            z = self.to_latent(x, i)
-            v = self.modal_vector(i)
-            z = self.convert(z, -v)
-            if center is not None:
-                vc = self.modal_vector(center)
-                z = self.convert(z, vc)
-            zs.append(z)
-        return zs
+    def integrate(self, x, center=None):
+        z = self.to_latent(x, i)
+        v = self.modal_vector(i)
+        z = self.convert(z, -v)
+        if center is not None:
+            vc = self.modal_vector(center)
+            z = self.convert(z, vc)
+        return z
