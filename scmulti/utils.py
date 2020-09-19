@@ -21,31 +21,6 @@ def create_optimizer(model_params, config):
     return optimizer
 
 
-def plot_latent(adatas, zs, save_dir, prefix='val-'):
-    # plot a UMAP for each dataset
-    for i, adata in enumerate(adatas):
-        latent_adata = sc.AnnData(zs[i])
-        latent_adata.obs = adata.obs.copy(deep=True)
-        sc.pp.neighbors(latent_adata)
-        sc.tl.umap(latent_adata)
-        sc.pl.umap(latent_adata, color=['cell_type'])
-        plt.savefig(os.path.join(save_dir, f'{prefix}umap-latent-modal-{i}.png'), dpi=200, bbox_inches='tight')
-
-    # plot a UMAP for integrated datasets
-    latent_all_adata = np.concatenate(zs, axis=0)
-    latent_all_adata = sc.AnnData(latent_all_adata)
-    obss = []
-    for i, adata in enumerate(adatas):
-        obs = adata.obs.copy(deep=True)
-        obs['modal'] = f'modal-{i}'
-        obss.append(obs)
-    obss = pd.concat(obss)
-    latent_all_adata.obs = obss
-
-    sc.pp.neighbors(latent_all_adata)
-    sc.tl.umap(latent_all_adata)
-    sc.pl.umap(latent_all_adata, color=['modal', 'cell_type'], ncols=1)
-    plt.savefig(os.path.join(save_dir, f'{prefix}umap-integrate-latents.png'), dpi=200, bbox_inches='tight')
     
 
 def remove_sparsity(adata):

@@ -9,16 +9,16 @@ class MLP(nn.Module):
         # create network architecture
         layers = []
         if hiddens == []:  # no hidden layers
-            layers += self._fc(n_inputs, n_outputs, activation=output_activation,
-                               dropout=dropout if regularize_last_layer else None,
-                               batch_norm=regularize_last_layer)
+            layers.append(self._fc(n_inputs, n_outputs, activation=output_activation,
+                                   dropout=dropout if regularize_last_layer else None,
+                                   batch_norm=regularize_last_layer))
         else:
-            layers += self._fc(n_inputs, hiddens[0], activation='leakyrelu', dropout=dropout, batch_norm=batch_norm)  # first layer
+            layers.append(self._fc(n_inputs, hiddens[0], activation='leakyrelu', dropout=dropout, batch_norm=batch_norm))  # first layer
             for l in range(1, len(hiddens)):  # inner layers
-                layers += self._fc(hiddens[l-1], hiddens[l], activation='leakyrelu', dropout=dropout, batch_norm=batch_norm)
-            layers += self._fc(hiddens[-1], n_outputs, activation=output_activation,
-                               dropout=dropout if regularize_last_layer else None,
-                               batch_norm=regularize_last_layer)  # last layer
+                layers.append(self._fc(hiddens[l-1], hiddens[l], activation='leakyrelu', dropout=dropout, batch_norm=batch_norm))
+            layers.append(self._fc(hiddens[-1], n_outputs, activation=output_activation,
+                                   dropout=dropout if regularize_last_layer else None,
+                                   batch_norm=regularize_last_layer))  # last layer
 
         self.network = nn.Sequential(*layers)
         self = self.to(device)
@@ -31,7 +31,7 @@ class MLP(nn.Module):
             layers.append(self._activation(activation))
         if dropout is not None:
             layers.append(nn.Dropout(dropout))
-        return layers
+        return nn.Sequential(*layers)
     
     def _activation(self, name='leakyrelu'):
         if name == 'relu':
@@ -40,7 +40,13 @@ class MLP(nn.Module):
             return nn.LeakyReLU()
         else:
             raise NotImplementedError(f'activation function {name} is not implemented.')
-
     
     def forward(self, x):
         return self.network(x)
+    
+    def through(self, x):
+        outputs = []
+        for layer in self.network:
+            x = layer(x)
+            outputs.append(x)
+        return outputs

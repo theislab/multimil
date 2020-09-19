@@ -12,7 +12,7 @@ def __entropy_from_indices(indices):
     return entropy(np.array(itemfreq(indices)[:, 1].astype(np.int32)))
 
 
-def entropy_batch_mixing(adata, label_key='batch',
+def entropy_batch_mixing(adata, label_key='modal',
                          n_neighbors=50, n_pools=50, n_samples_per_pool=100):
     """Computes Entory of Batch mixing metric for ``adata`` given the batch column name.
 
@@ -55,7 +55,28 @@ def entropy_batch_mixing(adata, label_key='batch',
     return score
 
 
-def knn_purity(adata, label_key, n_neighbors=30):
+def asw(adata, label_key='modal'):
+    """Computes Average Silhouette Width (ASW) metric for ``adata`` given the batch column name.
+
+        Parameters
+        ----------
+        adata: :class:`~anndata.AnnData`
+            Annotated dataset.
+        label_key: str
+            Name of the column which contains information about different studies in ``adata.obs`` data frame.
+        Returns
+        -------
+        score: float
+            ASW score. A float between -1 and 1.
+
+    """
+    adata = remove_sparsity(adata)
+    labels = adata.obs[label_key].values
+    labels_encoded = LabelEncoder().fit_transform(labels)
+    return silhouette_score(adata.X, labels_encoded)
+
+
+def knn_purity(adata, label_key='modal', n_neighbors=30):
     """Computes KNN Purity metric for ``adata`` given the batch column name.
 
         Parameters

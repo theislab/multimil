@@ -21,8 +21,8 @@ def train(experiment_name, **config):
     log_path = os.path.join(output_dir, 'train.txt')
     json.dump(config, open(os.path.join(output_dir, 'config.json'), 'w'), indent=2)
 
-    # load train and validation datasets
-    train_datasets, val_datasets = load_dataset(config['dataset'], device)
+    # load train and validation dataloaders
+    train_dataloder, val_dataloader = load_dataset(config['dataset'], device)
     
     # create the model to be trained
     model = create_model(config['model'], device)
@@ -40,14 +40,16 @@ def train(experiment_name, **config):
     with open(log_path, 'w') as log_file:
         print(model, file=log_file)
         print('Number of trainable parameters:', sum(p.numel() for p in model.parameters() if p.requires_grad), file=log_file)
+        print(f'device = {device}', file=log_file)
 
     # do the training epochs
+    track_metric = config['train']['track-metric']
+    best_metric = np.inf
     best_model = None
-    best_loss = np.inf
     early_stopping_count = 0
 
     # train
-    for epoch, datas in enumerate(zip(*map(cycle, train_datasets))):
+    for epoch, (xs, pair_indices) in enumerate(cycle(train_dataloder)):
         model.train()
         if epoch >= n_epochs:
             break
@@ -62,7 +64,8 @@ def train(experiment_name, **config):
             model.warmup_mode(False)
             if kl_annealing is not None:
                 model.kl_anneal(epoch - warmup, kl_annealing)
-        output, loss, losses = model.forward(*datas)
+
+        output, loss, losses = model.forward(xs, pair_indices)
         optimizer.zero_grad()
         model.backward()
         optimizer.step()
@@ -79,22 +82,23 @@ def train(experiment_name, **config):
                 model.eval()
                 val_loss = 0
                 val_losses = []
-                for i, datas in enumerate(zip(*val_datasets)):
-                    loss, losses = model.test(*datas)
+                for val_xs, val_pair_indices in val_dataloader:
+                    loss, losses = model.test(val_xs, val_pair_indices)
                     val_loss += loss.item()
                     val_losses.append(losses)
                 val_losses = {k: sum([losses[k].item() for losses in val_losses]) for k in val_losses[0].keys()}
         
             # some descriptions to be printed
             description = []
-            if epoch == start_tracking:
+            if epoch >= start_tracking and epoch - print_every < start_tracking:
                 description.append('tracking started')
-            if kl_annealing is not None and epoch == kl_annealing:
+            if kl_annealing is not None and epoch >= warmup and epoch - print_every < warmup:
                 description.append('kl annealing started')
 
             # keep the best model
-            if epoch >= start_tracking and best_loss > val_loss:
-                best_loss = val_loss
+            val_metric = val_loss if track_metric == 'loss' else val_losses[track_metric]
+            if epoch >= start_tracking and best_metric > val_metric:
+                best_metric = val_metric
                 best_model = model.state_dict()
                 torch.save(best_model, os.path.join(output_dir, 'best-model.pt'))  # save the best model so far
                 early_stopping_count = 0
@@ -119,6 +123,10 @@ def train(experiment_name, **config):
                 with open(log_path, 'a') as log_file:
                     print('early stopping.', file=log_file)
                 break
+
+    # save the last state of the model
+    last_model = model.state_dict()
+    torch.save(last_model, os.path.join(output_dir, 'last-model.pt'))
     
     return best_model
 

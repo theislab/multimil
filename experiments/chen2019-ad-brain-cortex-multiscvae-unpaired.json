@@ -24,6 +24,8 @@
             "kl_coef": 1e-5,
             "cross_coef": 0,
             "integ_coef": 1,
+            "cycle_coef": 0,
+            "integ_shared_layers": false,
             "x_dims": [3811, 30104],
             "z_dim": 20,
             "h_dim": 256,

@@ -18,7 +18,7 @@
         "pair-split": 0
     },
     "model": {
-        "name": "multiscvae",
+        "name": "multisccvae",
         "params": {
             "pair_groups": [null, null],
             "recon_coef": 1,

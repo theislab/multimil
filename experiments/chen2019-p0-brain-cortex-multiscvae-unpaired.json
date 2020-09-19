@@ -21,28 +21,28 @@
         "params": {
             "paired": false,
             "recon_coef": 1,
-            "kl_coef": 2e-6,
+            "kl_coef": 1e-5,
             "cross_coef": 0,
             "integ_coef": 1,
+            "cycle_coef": 0,
             "x_dims": [4308, 30298],
             "z_dim": 20,
             "h_dim": 256,
             "hiddens": [300],
-            "shared_hiddens": [128, 64, 32],
+            "shared_hiddens": [128],
             "dropout": 0.2
         }
     },
     "train": {
-        "n-epochs": 1000,
+        "n-epochs": 50000,
         "optimizer": {
             "name": "adam",
             "lr": 0.0001
         },
-        "early-stopping": 300,
-        "kl-annealing": {
-            "start": 50,
-            "period": 50
-        },
+        "print-every": 100,
+        "early-stopping": 10000,
+        "warmup": 5000,
+        "kl-annealing": 5000,
         "output-dir": "outputs/",
         "seed": 42
     }

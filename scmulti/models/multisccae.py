@@ -5,7 +5,7 @@ from .mlp import MLP
 from .losses import MMD
 
 
-class MultiScAE(nn.Module):
+class MultiScCAE(nn.Module):
     def __init__(self, x_dims,
                  z_dim=10,
                  h_dim=32,
@@ -21,7 +21,7 @@ class MultiScAE(nn.Module):
                  regularize_shared_encoder_last_layer=False,
                  device='cpu'):
 
-        super(MultiScAE, self).__init__()
+        super(MultiScCAE, self).__init__()
 
         # save model parameters
         self.n_modal = len(x_dims)
@@ -40,11 +40,10 @@ class MultiScAE(nn.Module):
         self.encoders = [MLP(x_dim, h_dim, hiddens, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim in x_dims]
         self.decoders = [MLP(h_dim, x_dim, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
-        self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation=shared_encoder_output_activation,
+        self.shared_encoder = MLP(h_dim + self.n_modal, z_dim, shared_hiddens, output_activation=shared_encoder_output_activation,
                                   dropout=dropout, batch_norm=True, regularize_last_layer=regularize_shared_encoder_last_layer)
-        self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
+        self.shared_decoder = MLP(z_dim + self.n_modal, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
-        self.modality = nn.Embedding(self.n_modal, z_dim)
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -75,11 +74,13 @@ class MultiScAE(nn.Module):
         return self.encoders[i](x)
     
     def h_to_z(self, h, i):
-        z = self.shared_encoder(h)
+        c = self.modal_vector(i).repeat(h.size(0), 1)
+        z = self.shared_encoder(torch.cat([h, c], dim=1))
         return z
     
     def z_to_h(self, z, i):
-        h = self.shared_decoder(z)
+        c = self.modal_vector(i).repeat(z.size(0), 1)
+        h = self.shared_decoder(torch.cat([z, c], dim=1))
         return h
     
     def h_to_x(self, h, i):
@@ -107,32 +108,31 @@ class MultiScAE(nn.Module):
             for j, (xj, zj, pmj) in enumerate(zip(xs, zs, pair_masks)):
                 if i == j:
                     continue
-                zij = self.convert(zi, i, j)
-                rij = self.decode(zij, j)
-                ziji = self.convert(self.to_latent(rij, j), j, i)
+                rij = self.decode(zi, j)
+                zij = self.to_latent(rij, j)
 
-                cycle_loss += nn.MSELoss()(zi, ziji)
+                cycle_loss += nn.MSELoss()(zi, zij)
 
                 if self.pair_groups[i] is not None and self.pair_groups[i] == self.pair_groups[j]:
                     xj_paired, xj_unpaired = xj[pmj == 1], xj[pmj == 0]
                     zj_paired, zj_unpaired = zj[pmj == 1], zj[pmj == 0]
-                    zij_paired, zij_unpaired = zij[pmi == 1], zij[pmi == 0]
+                    zi_paired, zi_unpaired = zi[pmi == 1], zi[pmi == 0]
                     rij_paired, rij_unpaired = rij[pmi == 1], rij[pmi == 0]
 
                     # unpaired losses
-                    if len(zij_unpaired) > 0 and len(zj_unpaired) > 0:
-                        integ_loss += MMD()(zij_unpaired, zj_unpaired)
+                    if len(zi_unpaired) > 0 and len(zj_unpaired) > 0:
+                        integ_loss += MMD()(zi_unpaired, zj_unpaired)
                     if len(rij_unpaired) > 0 and len(xj_unpaired) > 0:
                         cross_loss += MMD()(rij_unpaired, xj_unpaired)
 
                     # paired losses
-                    if len(zij_paired) > 0 and len(zj_paired) > 0:
-                        integ_loss += nn.MSELoss()(zij_paired, zj_paired)
+                    if len(zi_paired) > 0 and len(zj_paired) > 0:
+                        integ_loss += nn.MSELoss()(zi_paired, zj_paired)
                     if len(rij_paired) > 0 and len(xj_paired) > 0:
                         cross_loss += nn.MSELoss()(rij_paired, xj_paired)
                 else:
                     cross_loss += MMD()(rij, xj)
-                    integ_loss += MMD()(zij, zj)
+                    integ_loss += MMD()(zi, zj)
 
         
         return self.recon_coef * recon_loss + \
@@ -155,23 +155,6 @@ class MultiScAE(nn.Module):
         outputs, loss, losses = self.forward(*xs)
         return loss, losses
 
-    def convert(self, z, i, j=None):
-        """This function converts vector z from modality i to modality j
-
-        Args:
-            z (torch.tensor): latent vector in modality i
-            i (int): id of the source modality
-            j (int): id of the destination modality
-
-        Returns:
-            torch.tensor: the converted latent vector
-        """
-        v = -self.modal_vector(i)
-        if j is not None:
-            v += self.modal_vector(j)
-        return z + v @ self.modality.weight
-
     def integrate(self, x, i, j=None):
         zi = self.to_latent(x, i)
-        zij = self.convert(zi, i, j)
-        return zij
+        return zi

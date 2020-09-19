@@ -33,7 +33,7 @@
             "recon_coef": 1,
             "kl_coef": 1e-5,
             "cross_coef": 0,
-            "integ_coef": 1,
+            "integ_coef": 0,
             "cycle_coef": 0,
             "x_dims": [2975, 2975, 2975, 2975],
             "z_dim": 20,
@@ -50,8 +50,8 @@
             "lr": 0.0001
         },
         "print-every": 100,
-        "early-stopping": 10000,
-        "warmup": 3000,
+        "early-stopping": 5000,
+        "warmup": 4000,
         "kl-annealing": 3000,
         "output-dir": "outputs/",
         "seed": 42

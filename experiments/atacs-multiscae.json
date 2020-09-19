@@ -2,29 +2,35 @@
     "dataset": {
         "datasets": [
             {
-                "name": "scrna",
-                "root-dir": "data/chen-2019/P0BrainCortex/rna",
-                "h5ad-filename": "expressions.h5ad"
+                "name": "10xgenomics",
+                "root-dir": "data/atac/",
+                "h5ad-filename": "10xgenomics.h5ad"
             },
             {
-                "name": "scatac",
-                "root-dir": "data/chen-2019/P0BrainCortex/atac",
-                "h5ad-filename": "peaks-binary.h5ad"
+                "name": "fang2019",
+                "root-dir": "data/atac/",
+                "h5ad-filename": "fang2019.h5ad"
+            },
+            {
+                "name": "GSE111586",
+                "root-dir": "data/atac/",
+                "h5ad-filename": "gse111586.h5ad"
             }
         ],
-        "batch_size": 64,
+        "batch_size": 128,
         "seed": 42,
         "val_split": 0.2
     },
     "model": {
         "name": "multiscae",
         "params": {
-            "paired": true,
+            "paired": false,
             "recon_coef": 1,
             "cross_coef": 0,
-            "integ_coef": 0,
+            "integ_coef": 1,
             "cycle_coef": 0,
-            "x_dims": [4308, 30298],
+            "integ_shared_layers": false,
+            "x_dims": [20003, 20003, 20003],
             "z_dim": 20,
             "h_dim": 256,
             "hiddens": [300],
@@ -33,10 +39,10 @@
         }
     },
     "train": {
-        "n-epochs": 25000,
+        "n-epochs": 50000,
         "optimizer": {
             "name": "adam",
-            "lr": 0.0001
+            "lr": 0.001
         },
         "print-every": 100,
         "early-stopping": 7000,

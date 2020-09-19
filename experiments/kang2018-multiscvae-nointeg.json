@@ -3,23 +3,13 @@
         "datasets": [
             {
                 "name": "control",
-                "root-dir": "data/haber-2017/",
+                "root-dir": "data/kang-2018/",
                 "h5ad-filename": "ctrl.h5ad"
             },
             {
-                "name": "hpoly3",
-                "root-dir": "data/haber-2017/",
-                "h5ad-filename": "hpoly3.h5ad"
-            },
-            {
-                "name": "hpoly10",
-                "root-dir": "data/haber-2017/",
-                "h5ad-filename": "hpoly10.h5ad"
-            },
-            {
-                "name": "salmonella",
-                "root-dir": "data/haber-2017/",
-                "h5ad-filename": "salm.h5ad"
+                "name": "stimulated",
+                "root-dir": "data/kang-2018/",
+                "h5ad-filename": "stim.h5ad"
             }
         ],
         "batch_size": 256,
@@ -31,23 +21,23 @@
         "params": {
             "paired": false,
             "recon_coef": 1,
-            "kl_coef": 1e-5,
+            "kl_coef": 1e-6,
             "cross_coef": 0,
-            "integ_coef": 1,
+            "integ_coef": 0,
             "cycle_coef": 0,
-            "x_dims": [2975, 2975, 2975, 2975],
+            "x_dims": [3235, 3235],
             "z_dim": 20,
             "h_dim": 256,
             "hiddens": [],
-            "shared_hiddens": [128],
+            "shared_hiddens": [128, 64, 32],
             "dropout": 0.2
         }
     },
     "train": {
-        "n-epochs": 100000,
+        "n-epochs": 50000,
         "optimizer": {
             "name": "adam",
-            "lr": 0.0001
+            "lr": 0.001
         },
         "print-every": 100,
         "early-stopping": 10000,
