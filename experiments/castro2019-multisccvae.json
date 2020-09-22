@@ -27,15 +27,17 @@
         "params": {
             "pair_groups": [null, null, null],
             "recon_coef": 1,
-            "kl_coef": 1e-5,
+            "kl_coef": 1e-4,
             "cross_coef": 0,
-            "integ_coef": 1,
+            "integ_coef": 0,
             "cycle_coef": 0,
+            "adver_coef": 1e-2,
             "x_dims": [784, 784, 784],
             "z_dim": 20,
             "h_dim": 128,
             "hiddens": [256],
             "shared_hiddens": [64, 32],
+            "adver_hiddens": [10],
             "dropout": 0.2
         }
     },
@@ -46,9 +48,11 @@
             "lr": 0.0001
         },
         "print-every": 100,
+        "ae-optimize-every": 5,
         "early-stopping": 10000,
         "warmup": 5000,
         "kl-annealing": 5000,
+        "track-metric": "integ",
         "output-dir": "outputs/",
         "seed": 42
     }

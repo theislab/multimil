@@ -23,6 +23,12 @@ class MultiScCVAE(MultiScCAE):
         self.logvar = MLP(self.z_dim, self.z_dim)
 
         self = self.to(device)
+    
+    def get_nonadversarial_params(self):
+        params = super(MultiScCVAE, self).get_nonadversarial_params()
+        params.extend(list(self.mu.parameters()))
+        params.extend(list(self.logvar.parameters()))
+        return params
 
     def kl_anneal(self, epoch, anneal_limit):
         self.kl_coef = min(self.kl_coef_init, epoch / anneal_limit * self.kl_coef_init)
@@ -60,8 +66,9 @@ class MultiScCVAE(MultiScCAE):
         rs = [self.decode(z, i) for i, z in enumerate(zs)]
 
         self.loss, losses = self.calc_loss(xs, rs, zs, pair_masks, mus, logvars)
+        self.adv_loss, adv_losses = self.calc_adv_loss(zs)
 
-        return (rs, mus, logvars), self.loss, losses
+        return (rs, mus, logvars), self.loss - self.adv_loss, {**losses, **adv_losses}
 
     def calc_loss(self, xs, rs, zs, pair_masks, mus, logvars):
         loss, losses = super(MultiScCVAE, self).calc_loss(xs, rs, zs, pair_masks)

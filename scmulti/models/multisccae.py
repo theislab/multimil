@@ -11,10 +11,12 @@ class MultiScCAE(nn.Module):
                  h_dim=32,
                  hiddens=[],
                  shared_hiddens=[],
+                 adver_hiddens=[],
                  recon_coef=1,
                  cross_coef=1,
                  integ_coef=1,
                  cycle_coef=1,
+                 adver_coef=1,
                  dropout=0.2,
                  pair_groups=[],
                  shared_encoder_output_activation='linear',
@@ -31,6 +33,7 @@ class MultiScCAE(nn.Module):
         self.cross_coef = self.cross_coef_init = cross_coef
         self.integ_coef = self.integ_coef_init = integ_coef
         self.cycle_coef = self.cycle_coef_init = cycle_coef
+        self.adver_coef = self.adver_coef_init = adver_coef 
         self.pair_groups = pair_groups
         self.device = device
 
@@ -44,6 +47,7 @@ class MultiScCAE(nn.Module):
                                   dropout=dropout, batch_norm=True, regularize_last_layer=regularize_shared_encoder_last_layer)
         self.shared_decoder = MLP(z_dim + self.n_modal, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
+        self.adversarial_discriminator = MLP(z_dim, self.n_modal, adver_hiddens, dropout=dropout, batch_norm=True, regularize_last_layer=False)
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -52,10 +56,24 @@ class MultiScCAE(nn.Module):
 
         self = self.to(device)
     
+    def get_nonadversarial_params(self):
+        params = []
+        for enc in self.encoders:
+            params.extend(list(enc.parameters()))
+        for dec in self.decoders:
+            params.extend(list(dec.parameters()))
+        params.extend(list(self.shared_encoder.parameters()))
+        params.extend(list(self.shared_decoder.parameters()))
+        return params
+    
+    def get_adversarial_params(self):
+        return list(self.adversarial_discriminator.parameters())
+    
     def warmup_mode(self, on=True):
         self.cross_coef = self.cross_coef_init * (not on)
         self.integ_coef = self.integ_coef_init * (not on)
         self.cycle_coef = self.cycle_coef_init * (not on)
+        self.adver_coef = self.adver_coef_init * (not on)
 
     def encode(self, x, i):
         h = self.x_to_h(x, i)
@@ -87,14 +105,20 @@ class MultiScCAE(nn.Module):
         x = self.decoders[i](h)
         return x
     
+    def adversarial_loss(self, z, i):
+        y = self.modal_vector(i).repeat(z.size(0), 1).argmax(dim=1)
+        y_pred = self.adversarial_discriminator(z)
+        return nn.CrossEntropyLoss()(y_pred, y)
+    
     def forward(self, xs, pair_masks):
         # encoder and decoder
         zs = [self.encode(x, i) for i, x in enumerate(xs)]
         rs = [self.decode(z, i) for i, z in enumerate(zs)]
 
         self.loss, losses = self.calc_loss(xs, rs, zs, pair_masks)
+        self.adv_loss, adv_losses = self.calc_adv_loss(zs)
         
-        return rs, self.loss, losses
+        return rs, self.loss - self.adv_loss, {**losses, **adv_losses}
 
     def calc_loss(self, xs, rs, zs, pair_masks):
         # reconstruction loss for each modality, seaprately
@@ -104,6 +128,7 @@ class MultiScCAE(nn.Module):
         cross_loss = 0
         integ_loss = 0
         cycle_loss = 0
+
         for i, (xi, zi, pmi) in enumerate(zip(xs, zs, pair_masks)):
             for j, (xj, zj, pmj) in enumerate(zip(xs, zs, pair_masks)):
                 if i == j:
@@ -133,23 +158,29 @@ class MultiScCAE(nn.Module):
                 else:
                     cross_loss += MMD()(rij, xj)
                     integ_loss += MMD()(zi, zj)
-
         
         return self.recon_coef * recon_loss + \
                self.cross_coef * cross_loss + \
                self.integ_coef * integ_loss + \
-               self.cycle_coef * cycle_loss, {
+               self.cycle_coef * cycle_loss , {
                    'recon': recon_loss,
                    'cross': cross_loss,
                    'integ': integ_loss,
                    'cycle': cycle_loss
                 }
     
+    def calc_adv_loss(self, zs):
+        loss = sum([self.adversarial_loss(z, i) for i, z in enumerate(zs)])
+        return self.adver_coef * loss, {'adver': loss}
+    
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modal).float().to(self.device)
 
     def backward(self):
-        self.loss.backward()
+        (self.loss - self.adv_loss).backward()
+    
+    def backward_adv(self):
+        self.adv_loss.backward()
     
     def test(self, *xs):
         outputs, loss, losses = self.forward(*xs)

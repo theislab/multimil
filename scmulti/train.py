@@ -34,8 +34,10 @@ def train(experiment_name, **config):
     early_stopping_limit = config['train'].get('early-stopping', None)
     start_tracking = warmup if kl_annealing is None else warmup + kl_annealing
     print_every = config['train'].get('print-every', 50)
+    ae_optimize_every = config['train'].get('ae-optimize-every', 3)
 
-    optimizer = create_optimizer(model.parameters(), config['train']['optimizer'])
+    optimizer_ae = create_optimizer(model.get_nonadversarial_params(), config['train']['optimizer'])
+    optimizer_adv = create_optimizer(model.get_adversarial_params(), config['train']['optimizer'])
 
     with open(log_path, 'w') as log_file:
         print(model, file=log_file)
@@ -66,9 +68,14 @@ def train(experiment_name, **config):
                 model.kl_anneal(epoch - warmup, kl_annealing)
 
         output, loss, losses = model.forward(xs, pair_indices)
-        optimizer.zero_grad()
-        model.backward()
-        optimizer.step()
+        optimizer_ae.zero_grad()
+        optimizer_adv.zero_grad()
+        if epoch < warmup or epoch % ae_optimize_every == 0:
+            model.backward()
+            optimizer_ae.step()
+        else:
+            model.backward_adv()
+            optimizer_adv.step()
 
         train_loss += loss.item()
         train_losses.append(losses)
