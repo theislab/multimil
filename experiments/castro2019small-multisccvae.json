@@ -1,0 +1,56 @@
+{
+    "dataset": {
+        "datasets": [
+            {
+                "name": "plain",
+                "h5ad-path": "data/castro-2019/global/plain-small.h5ad",
+                "pair-group": null
+            },
+            {
+                "name": "thickened",
+                "h5ad-path": "data/castro-2019/global/thickened-small.h5ad",
+                "pair-group": null
+            },
+            {
+                "name": "thinned",
+                "h5ad-path": "data/castro-2019/global/thinned-small.h5ad",
+                "pair-group": null
+            }
+        ],
+        "batch_size": 256,
+        "seed": 42,
+        "val_split": 0.2,
+        "pair-split": 0
+    },
+    "model": {
+        "name": "multisccvae",
+        "params": {
+            "pair_groups": [null, null, null],
+            "recon_coef": 1,
+            "kl_coef": 1e-5,
+            "cross_coef": 0,
+            "integ_coef": 1,
+            "cycle_coef": 0,
+            "x_dims": [784, 784, 784],
+            "z_dim": 20,
+            "h_dim": 128,
+            "hiddens": [256],
+            "shared_hiddens": [64, 32],
+            "dropout": 0.2
+        }
+    },
+    "train": {
+        "n-epochs": 50000,
+        "optimizer": {
+            "name": "adam",
+            "lr": 0.0001
+        },
+        "print-every": 100,
+        "early-stopping": 10000,
+        "warmup": 5000,
+        "kl-annealing": 5000,
+        "track-metric": "integ",
+        "output-dir": "outputs/",
+        "seed": 42
+    }
+}
