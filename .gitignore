@@ -7,3 +7,5 @@ __pycache__
 outputs/
 *.e*
 *.o*
+slurm-*.out
+experiments-*/*
