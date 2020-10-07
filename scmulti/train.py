@@ -10,13 +10,12 @@ from models import create_model
 import torch
 
 
-def train(experiment_name, **config):
+def train(experiment_name, output_dir, **config):
     # config torch
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # torch.manual_seed(config['train']['seed'])
 
     # configure output directory to save logs and results
-    output_dir = os.path.join(config['train']['output-dir'], experiment_name)
     os.makedirs(output_dir, exist_ok=True)
     log_path = os.path.join(output_dir, 'train.txt')
     json.dump(config, open(os.path.join(output_dir, 'config.json'), 'w'), indent=2)
@@ -141,6 +140,7 @@ def train(experiment_name, **config):
 def parse_args():
     parser = argparse.ArgumentParser(description='Perform model training.')
     parser.add_argument('--config-file', type=str)
+    parser.add_argument('--output-dir', type=str)
     return parser.parse_args()
 
 
@@ -149,4 +149,4 @@ if __name__ == '__main__':
     config = parse_config_file(args.config_file)
     experiment_name = os.path.splitext(os.path.basename(args.config_file))[0]
 
-    train(experiment_name, **config)
+    train(experiment_name, args.output_dir, **config)

@@ -14,7 +14,7 @@ import scanpy as sc
 import torch
 
 
-def validate(experiment_name, use_best_model=True, **config):
+def validate(experiment_name, output_dir, use_best_model=True, **config):
     # config torch
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     torch.manual_seed(config['train']['seed'])
@@ -23,7 +23,6 @@ def validate(experiment_name, use_best_model=True, **config):
     train_dataloader, val_dataloader = load_dataset(config['dataset'], device)
     
     # get configs
-    output_dir = os.path.join(config['train']['output-dir'], experiment_name)
     log_file = open(os.path.join(output_dir, 'evaluations.txt'), 'a')
 
     # create the model to be trained
@@ -196,5 +195,5 @@ if __name__ == '__main__':
     config = parse_config_file(os.path.join(args.root_dir, 'config.json'))
     experiment_name = os.path.basename(args.root_dir)
 
-    validate(experiment_name, use_best_model=True, **config)
-    validate(experiment_name, use_best_model=False, **config)
+    validate(experiment_name, args.root_dir, use_best_model=True, **config)
+    validate(experiment_name, args.root_dir, use_best_model=False, **config)
