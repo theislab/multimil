@@ -16,7 +16,7 @@ class MultiScCAE(nn.Module):
                  cross_coef=1,
                  integ_coef=1,
                  cycle_coef=1,
-                 adver_coef=1,
+                 adversarial=True,
                  dropout=0.2,
                  pair_groups=[],
                  shared_encoder_output_activation='linear',
@@ -33,7 +33,7 @@ class MultiScCAE(nn.Module):
         self.cross_coef = self.cross_coef_init = cross_coef
         self.integ_coef = self.integ_coef_init = integ_coef
         self.cycle_coef = self.cycle_coef_init = cycle_coef
-        self.adver_coef = self.adver_coef_init = adver_coef 
+        self.adversarial = adversarial
         self.pair_groups = pair_groups
         self.device = device
 
@@ -73,7 +73,6 @@ class MultiScCAE(nn.Module):
         self.cross_coef = self.cross_coef_init * (not on)
         self.integ_coef = self.integ_coef_init * (not on)
         self.cycle_coef = self.cycle_coef_init * (not on)
-        self.adver_coef = self.adver_coef_init * (not on)
 
     def encode(self, x, i):
         h = self.x_to_h(x, i)
@@ -156,13 +155,13 @@ class MultiScCAE(nn.Module):
                     if len(rij_paired) > 0 and len(xj_paired) > 0:
                         cross_loss += nn.MSELoss()(rij_paired, xj_paired)
                 else:
-                    cross_loss += MMD()(rij, xj)
                     integ_loss += MMD()(zi, zj)
+                    cross_loss += MMD()(rij, xj)
         
         return self.recon_coef * recon_loss + \
                self.cross_coef * cross_loss + \
-               self.integ_coef * integ_loss + \
-               self.cycle_coef * cycle_loss , {
+               (not self.adversarial) * self.integ_coef * integ_loss + \
+               self.cycle_coef * cycle_loss, {
                    'recon': recon_loss,
                    'cross': cross_loss,
                    'integ': integ_loss,
@@ -171,7 +170,7 @@ class MultiScCAE(nn.Module):
     
     def calc_adv_loss(self, zs):
         loss = sum([self.adversarial_loss(z, i) for i, z in enumerate(zs)])
-        return self.adver_coef * loss, {'adver': loss}
+        return self.adversarial * self.integ_coef * loss, {'adver': loss}
     
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modal).float().to(self.device)
