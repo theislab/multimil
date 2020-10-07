@@ -35,9 +35,9 @@ class MLP(nn.Module):
     
     def _activation(self, name='leakyrelu'):
         if name == 'relu':
-            return nn.ReLU()
+            return nn.ReLU(inplace=True)
         elif name == 'leakyrelu':
-            return nn.LeakyReLU()
+            return nn.LeakyReLU(0.2, inplace=True)
         else:
             raise NotImplementedError(f'activation function {name} is not implemented.')
     
