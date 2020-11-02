@@ -50,6 +50,7 @@ def train(experiment_name, output_dir, **config):
     early_stopping_count = 0
 
     # train
+    epoch_time = time.time()
     for epoch, (xs, pair_indices) in enumerate(cycle(train_dataloder)):
         model.train()
         if epoch >= n_epochs:
@@ -57,7 +58,6 @@ def train(experiment_name, output_dir, **config):
 
         train_loss = 0
         train_losses = []
-        epoch_time = time.time()
 
         if epoch < warmup:
             model.warmup_mode(True)
@@ -66,22 +66,26 @@ def train(experiment_name, output_dir, **config):
             if kl_annealing is not None:
                 model.kl_anneal(epoch - warmup, kl_annealing)
 
+        # train AE
         output, loss, losses = model.forward(xs, pair_indices)
         optimizer_ae.zero_grad()
         optimizer_adv.zero_grad()
-        if epoch < warmup or epoch % ae_optimize_every == 0:
-            model.backward()
-            optimizer_ae.step()
-        else:
-            model.backward_adv()
-            optimizer_adv.step()
+        model.backward()
+        optimizer_ae.step()
+        if epoch >= warmup:
+            # train the adversarial classifier
+            for _ in range(ae_optimize_every):
+                optimizer_ae.zero_grad()
+                optimizer_adv.zero_grad()
+                output, loss, losses = model.forward(xs, pair_indices)
+                model.backward_adv()
+                optimizer_adv.step()
 
-        train_loss += loss.item()
+        train_loss += loss.detach().item()
         train_losses.append(losses)
 
         if epoch % print_every == 0:
             train_losses = {k: sum([losses[k].item() for losses in train_losses]) for k in train_losses[0].keys()}
-            epoch_time = time.time() - epoch_time
 
             # evaluate
             with torch.no_grad():
@@ -93,6 +97,8 @@ def train(experiment_name, output_dir, **config):
                     val_loss += loss.item()
                     val_losses.append(losses)
                 val_losses = {k: sum([losses[k].item() for losses in val_losses]) for k in val_losses[0].keys()}
+
+            epoch_time = time.time() - epoch_time  # record total time since the last evalution until now
         
             # some descriptions to be printed
             description = []
@@ -129,6 +135,8 @@ def train(experiment_name, output_dir, **config):
                 with open(log_path, 'a') as log_file:
                     print('early stopping.', file=log_file)
                 break
+
+            epoch_time = time.time()  # reset the timer
 
     # save the last state of the model
     last_model = model.state_dict()

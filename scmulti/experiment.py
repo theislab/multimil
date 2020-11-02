@@ -90,8 +90,8 @@ def create_config(base_config,
     model_params['adversarial'] = adversarial
 
     train_config = config['train']
-    train_config['ae-optimize-every'] = ae_optimize_every if adversarial else 1
-    train_config['track-metric'] = 'loss' if adversarial else 'integ'
+    train_config['ae-optimize-every'] = ae_optimize_every if adversarial else 0
+    # train_config['track-metric'] = 'loss' if adversarial else 'integ'
 
     dataset_config = config['dataset']
     dataset_config['pair-split'] = pair_split

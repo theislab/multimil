@@ -9,6 +9,7 @@ from torch import optim
 
 
 def parse_config_file(path):
+    # TODO remove this function
     with open(path) as json_file:
         return json.load(json_file)
 

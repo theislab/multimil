@@ -2,7 +2,14 @@ from torch import nn
 
 
 class MLP(nn.Module):
-    def __init__(self, n_inputs, n_outputs, hiddens=[], output_activation='linear', dropout=None, batch_norm=True, regularize_last_layer=False,
+    def __init__(self,
+                 n_inputs,
+                 n_outputs,
+                 hiddens=[],
+                 output_activation='linear',
+                 dropout=None,
+                 batch_norm=True,
+                 regularize_last_layer=False,
                  device='cpu'):
         super(MLP, self).__init__()
 

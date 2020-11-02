@@ -5,7 +5,7 @@ import time
 import os
 import json
 from utils import create_optimizer, parse_config_file
-from metrics import entropy_batch_mixing, knn_purity
+import metrics
 from datasets import load_dataset
 from models import load_model
 from collections import OrderedDict
@@ -22,8 +22,8 @@ def validate(experiment_name, output_dir, use_best_model=True, **config):
     # load train and validation datasets
     train_dataloader, val_dataloader = load_dataset(config['dataset'], device)
     
-    # get configs
-    log_file = open(os.path.join(output_dir, 'evaluations.txt'), 'a')
+    # a dict to save metrics and logs
+    logs = {'train': {}, 'val': {}}
 
     # create the model to be trained
     model_prefix = 'best' if use_best_model else 'last'
@@ -34,6 +34,19 @@ def validate(experiment_name, output_dir, use_best_model=True, **config):
     # find integration of data
     with torch.no_grad():
         model.eval()
+        print(model.modality.weight)
+
+        # bring training datasets into latent space without integration
+        # hs_train = OrderedDict()
+        # for xs, pair_indices in train_dataloader:
+        #     for i, (name, x) in enumerate(zip(train_dataloader.dataset.names, xs)):
+        #         h = model.x_to_h(x, i)
+        #         if name not in hs_train:
+        #             hs_train[name] = []
+        #         hs_train[name].append(h)
+        # for name, h in hs_train.items():
+        #     hs_train[name] = torch.cat(h).cpu().numpy()
+        # plot_latent(train_dataloader.dataset.adatas, hs_train, output_dir, f'{model_prefix}-train-hs-')
 
         # validate on training data
         train_loss = 0
@@ -47,8 +60,8 @@ def validate(experiment_name, output_dir, use_best_model=True, **config):
             loss, losses = model.test(xs, pair_indices)
             val_loss += loss.item()
 
-        print(f'########## {model_prefix} model validation:', file=log_file)
-        print(f'train_loss={train_loss:.4f}, val_loss={val_loss:.4f}', file=log_file)
+        logs['train_loss'] = train_loss
+        logs['val_loss'] = val_loss
 
         # bring training datasets into latent space without integration
         zs_train_uninteg = OrderedDict()
@@ -75,10 +88,8 @@ def validate(experiment_name, output_dir, use_best_model=True, **config):
         # calculate metrics for unintegrated latents
         train_metrics_uninteg = calc_metrics(train_dataloader.dataset.adatas, zs_train_uninteg)
         val_metrics_uninteg = calc_metrics(val_dataloader.dataset.adatas, zs_val_uninteg)
-        train_metrics_uninteg = ', '.join([f'{k}={v:.4f}' for k, v in train_metrics_uninteg.items()])
-        val_metrics_uninteg = ', '.join([f'{k}={v:.4f}' for k, v in val_metrics_uninteg.items()])
-        print('metrics for unintegrated training set:', train_metrics_uninteg, file=log_file)
-        print('metrics for unintegrated validation set:', val_metrics_uninteg, file=log_file)
+        logs['train']['uninteg'] = train_metrics_uninteg
+        logs['val']['uninteg'] = val_metrics_uninteg
 
         # plot the unintegrated latents 
         plot_latent(train_dataloader.dataset.adatas, zs_train_uninteg, output_dir, f'{model_prefix}-train-uintegrated-')
@@ -120,16 +131,16 @@ def validate(experiment_name, output_dir, use_best_model=True, **config):
             # calculate metrics for integrated latents
             train_metrics = calc_metrics(train_dataloader.dataset.adatas, zs_train[cname])
             val_metrics = calc_metrics(val_dataloader.dataset.adatas, zs_val[cname])
-            train_metrics = ', '.join([f'{k}={v:.4f}' for k, v in train_metrics.items()])
-            val_metrics = ', '.join([f'{k}={v:.4f}' for k, v in val_metrics.items()])
-            print(f'metrics for integrated training set at center {cname}:', train_metrics, file=log_file)
-            print(f'metrics for integrated validation set at center {cname}:', val_metrics, file=log_file)
+            logs['train'][cname] = train_metrics
+            logs['val'][cname] = val_metrics
 
             # plot the integrated latents 
             plot_latent(train_dataloader.dataset.adatas, zs_train[cname], output_dir, f'{model_prefix}-train-at-{cname}-')
             plot_latent(val_dataloader.dataset.adatas, zs_val[cname], output_dir, f'{model_prefix}-val-at-{cname}-')
 
-        log_file.close()
+        json.dump(logs,
+                  open(os.path.join(output_dir, f'{"best-model" if use_best_model else "last-model"}-evaluations.json'), 'w'),
+                  indent=2)
 
 
 def calc_metrics(adatas, zs):
@@ -144,17 +155,43 @@ def calc_metrics(adatas, zs):
     obss = pd.concat(obss)
     latent_all_adata.obs = obss
 
-    modal_ebm = entropy_batch_mixing(latent_all_adata, label_key='modal', n_neighbors=15, n_pools=15)
-    modal_knnp = knn_purity(latent_all_adata, label_key='modal', n_neighbors=15)
-    celltype_ebm = entropy_batch_mixing(latent_all_adata, label_key='cell_type', n_neighbors=15, n_pools=15)
-    celltype_knnp = knn_purity(latent_all_adata, label_key='cell_type', n_neighbors=15)
+    # compute PCA
+    sc.pp.pca(latent_all_adata)
 
-    return {
-        'Modal-EBM': modal_ebm,
-        'Modal-kNNPurity': modal_knnp,
-        'CellType-EBM': celltype_ebm,
-        'CellType-kNNPurity': celltype_knnp
-    }
+    # compute all metrics
+    all_metrics = metrics.scibmetrics.metrics(latent_all_adata,
+                                              latent_all_adata,
+                                              batch_key='modal',
+                                              label_key='cell_type',
+                                              hvg_score_=False,
+                                              nmi_=True,
+                                              ari_=True,
+                                              silhouette_=True)
+    all_metrics = all_metrics.dropna(axis=0)
+    return all_metrics.to_dict()[0]
+    # modal_ebm = entropy_batch_mixing(latent_all_adata, label_key='modal', n_neighbors=15, n_pools=15)
+    # modal_knnp = knn_purity(latent_all_adata, label_key='modal', n_neighbors=15)
+    # modal_asw = asw(latent_all_adata, label_key='modal')
+    # modal_nmi = nmi(latent_all_adata, label_key='modal')
+    # celltype_ebm = entropy_batch_mixing(latent_all_adata, label_key='cell_type', n_neighbors=15, n_pools=15)
+    # celltype_knnp = knn_purity(latent_all_adata, label_key='cell_type', n_neighbors=15)
+    # celltype_asw = asw(latent_all_adata, label_key='cell_type')
+    # celltype_nmi = nmi(latent_all_adata, label_key='cell_type')
+
+    # return {
+    #     'modal': {
+    #         'ebm': modal_ebm,
+    #         'knnpurity': modal_knnp,
+    #         'asw': modal_asw,
+    #         'nmi': modal_nmi
+    #     },
+    #     'cell_type': {
+    #         'ebm': celltype_ebm,
+    #         'knnpurity': celltype_knnp,
+    #         'asw': celltype_asw,
+    #         'nmi': celltype_nmi
+    #     }
+    # }
 
 
 def plot_latent(adatas, zs, save_dir, prefix='val-'):

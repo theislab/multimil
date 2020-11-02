@@ -7,6 +7,8 @@ from sklearn.preprocessing import LabelEncoder
 
 from utils import remove_sparsity
 
+import scIB.metrics as scibmetrics
+
 
 def __entropy_from_indices(indices):
     return entropy(np.array(itemfreq(indices)[:, 1].astype(np.int32)))
@@ -73,7 +75,20 @@ def asw(adata, label_key='modal'):
     adata = remove_sparsity(adata)
     labels = adata.obs[label_key].values
     labels_encoded = LabelEncoder().fit_transform(labels)
-    return silhouette_score(adata.X, labels_encoded)
+    return silhouette_score(adata.X, labels_encoded).item()
+
+
+def nmi(adata, label_key='modal'):
+    adata = remove_sparsity(adata)
+
+    n_labels = len(adata.obs[label_key].unique().tolist())
+    kmeans = KMeans(n_labels, n_init=200)
+
+    labels_pred = kmeans.fit_predict(adata.X)
+    labels = adata.obs[label_key].values
+    labels_encoded = LabelEncoder().fit_transform(labels)
+
+    return normalized_mutual_info_score(labels_encoded, labels_pred)
 
 
 def knn_purity(adata, label_key='modal', n_neighbors=30):

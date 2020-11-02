@@ -68,7 +68,7 @@ class MultiScVAE(MultiScAE):
         self.loss, losses = self.calc_loss(xs, rs, zs, pair_masks, mus, logvars)
         self.adv_loss, adv_losses = self.calc_adv_loss(zs)
 
-        return (rs, mus, logvars), self.loss - self.adv_loss, {**losses, **adv_losses}
+        return (rs, mus, logvars), self.loss - self.integ_coef * self.adv_loss, {**losses, **adv_losses}
 
     def calc_loss(self, xs, rs, zs, pair_masks, mus, logvars):
         loss, losses = super(MultiScVAE, self).calc_loss(xs, rs, zs, pair_masks)
