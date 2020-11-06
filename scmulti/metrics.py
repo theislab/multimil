@@ -5,9 +5,9 @@ from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mu
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
 
-from utils import remove_sparsity
+from .utils import remove_sparsity
 
-import scIB.metrics as scibmetrics
+from scIB import metrics as scibmetrics
 
 
 def __entropy_from_indices(indices):
