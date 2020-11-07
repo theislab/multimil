@@ -9,7 +9,7 @@ try:
 except ImportError:  # Deps not yet installed
     __author__ = __email__ = ''
 
-setup(name='scArches',
+setup(name='Multigrate',
       version='0.1.0',
       description='Multi-omic data integration and transformation for signle-cell genomics',
       long_description=long_description,
