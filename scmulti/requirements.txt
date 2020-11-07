@@ -1,0 +1,15 @@
+cudatoolkit=10.0
+jupyterlab
+matplotlib
+pandas
+python=3.7
+pip
+pytorch
+requests
+scikit-learn
+seaborn
+torchvision
+tqdm
+episcanpy==0.1.10
+anndata==0.7.3
+scanpy==1.5.1
