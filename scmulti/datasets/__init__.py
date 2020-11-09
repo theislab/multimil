@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, Subset
 import anndata
 from sklearn.model_selection import train_test_split
 from .scmultidataset import SingleCellMultiDatasetBuilder
+from .scdataset import SingleCellDataset
 
 
 def load_dataset(config, device='cpu'):
