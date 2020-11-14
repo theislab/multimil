@@ -1,4 +1,7 @@
+import sys
 import numpy as np
+import time
+from collections import defaultdict
 import scanpy as sc
 import torch
 from torch import nn
@@ -11,7 +14,6 @@ from .losses import MMD, KLD
 
 
 class MultiVAETorch(nn.Module):
-
     def __init__(
         self,
         encoders,
@@ -139,7 +141,6 @@ class MultiVAETorch(nn.Module):
 
 
 class MultiVAE:
-
     def __init__(
         self,
         adatas,
@@ -165,6 +166,7 @@ class MultiVAE:
             self.device = device
 
         # TODO: do some assertions for the model parameters
+        self._history = defaultdict(list)
         self.recon_coef = recon_coef
         self.kl_coef = kl_coef
         self.integ_coef = integ_coef
@@ -206,6 +208,55 @@ class MultiVAE:
                     'pair_group': pair_group
                 }
         return reshaped_adatas
+
+    def print_progress_train(self, n_iters):
+        current_iter = self._history['iteration'][-1]
+        msg_train = 'iter={:d}/{:d}, loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}'.format(
+            current_iter+1,
+            n_iters,
+            self._history['train_loss'][-1],
+            self._history['train_recon'][-1],
+            self._history['train_kl'][-1],
+            self._history['train_integ'][-1]
+        )
+        self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train)
+
+    def print_progress_val(self, n_iters, time_):
+        current_iter = self._history['iteration'][-1]
+        msg_train = 'iter={:d}/{:d}, time={:.2f}(s)' \
+            ', loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}' \
+            ', val_loss={:.4f}, val_recon={:.4f}, val_kl={:.4f}, val_integ={:.4f}'.format(
+            current_iter+1,
+            n_iters,
+            time_,
+            self._history['train_loss'][-1],
+            self._history['train_recon'][-1],
+            self._history['train_kl'][-1],
+            self._history['train_integ'][-1],
+            self._history['val_loss'][-1],
+            self._history['val_recon'][-1],
+            self._history['val_kl'][-1],
+            self._history['val_integ'][-1]
+        )
+        self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train, end='\n')
+
+    def _print_progress_bar(
+        self,
+        iteration,
+        total,
+        prefix = '',
+        suffix = '',
+        decimals = 1,
+        length = 20,
+        fill = '█',
+        end=''
+    ):
+        percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+        filled_len = int(length * iteration // total)
+        bar = fill * filled_len + '-' * (length - filled_len)
+        sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix)),
+        sys.stdout.write(end)
+        sys.stdout.flush()
     
     def predict(
         self,
@@ -243,7 +294,11 @@ class MultiVAE:
         val_split=0.1,
         adv_iters=0,
         celltype_key='cell_type',
+        validate_every=1000,
     ):
+        # configure training parameters
+        print_every = n_iters // 50
+
         # create data loaders
         train_datasets, val_datasets = self.make_datasets(self.adatas, val_split, celltype_key, batch_size)
         train_dataloaders = [d.loader for d in train_datasets]
@@ -254,8 +309,10 @@ class MultiVAE:
         optimizer_adv = torch.optim.Adam(self.model.get_adversarial_params(), lr)
 
         # the training loop
+        epoch_time = 0  # epoch is the time between two consequtive validations
         self.model.train()
         for iteration, datas in enumerate(cycle(zip(*train_dataloaders))):
+            tik = time.time()
             if iteration >= n_iters:
                 break
 
@@ -288,6 +345,57 @@ class MultiVAE:
                 optimizer_adv.zero_grad()
                 loss_adv.backward()
                 optimizer_adv.step()
+            
+            if iteration % print_every == 0:
+                self._history['iteration'].append(iteration)
+                self._history['train_loss'].append(loss_ae.detach().cpu().item())
+                self._history['train_recon'].append(recon_loss.detach().cpu().item())
+                self._history['train_kl'].append(kl_loss.detach().cpu().item())
+                self._history['train_integ'].append(integ_loss.detach().cpu().item())
+                self.print_progress_train(n_iters)
+
+            # add this iteration to the epoch time
+            epoch_time += time.time() - tik
+
+            # validate
+            if iteration > 0 and iteration % validate_every == 0:
+                self.model.eval()
+                self.validate(val_dataloaders, iteration, n_iters, epoch_time)
+                self.model.train()
+                epoch_time = 0
+    
+    def validate(self, val_dataloaders, cur_iter, n_iters, train_time=None):
+        tik = time.time()
+        val_n_iters = max([len(loader) for loader in val_dataloaders])
+        for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
+            # iterate until all of the dataloaders run out of data
+            if iteration >= val_n_iters:
+                break
+
+            # TODO: refactor datas to be like (xs, modalities, pair_groups)
+            xs = [data[0].to(self.device) for data in datas]
+            modalities = [data[2] for data in datas]
+            pair_groups = [data[3] for data in datas]
+            
+            # forward propagation
+            rs, zs, mus, logvars = self.model.forward(xs, modalities)
+
+            # calculate the losses
+            recon_loss = self.calc_recon_loss(xs, rs)
+            kl_loss = self.calc_kl_loss(mus, logvars)
+            integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
+            loss_ae = self.recon_coef * recon_loss + \
+                      self.kl_coef * kl_loss + \
+                      self.integ_coef * integ_loss
+            loss_adv = -integ_loss
+            self._history['iteration'].append(cur_iter)
+            self._history['val_loss'].append(loss_ae.detach().cpu().item())
+            self._history['val_recon'].append(recon_loss.detach().cpu().item())
+            self._history['val_kl'].append(kl_loss.detach().cpu().item())
+            self._history['val_integ'].append(integ_loss.detach().cpu().item())
+
+        val_time = time.time() - tik
+        self.print_progress_val(n_iters, train_time + val_time)
 
     def calc_recon_loss(self, xs, rs):
         return sum([nn.MSELoss()(r, x) for x, r in zip(xs, rs)])
