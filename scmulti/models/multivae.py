@@ -1,5 +1,6 @@
 import sys
 import numpy as np
+import pandas as pd
 import time
 from collections import defaultdict
 import scanpy as sc
@@ -166,7 +167,8 @@ class MultiVAE:
             self.device = device
 
         # TODO: do some assertions for the model parameters
-        self._history = defaultdict(list)
+        self._train_history = defaultdict(list)
+        self._val_history = defaultdict(list)
         self.recon_coef = recon_coef
         self.kl_coef = kl_coef
         self.integ_coef = integ_coef
@@ -193,6 +195,10 @@ class MultiVAE:
 
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device)
+                                
+    @property
+    def history(self):
+        return pd.DataFrame(self._val_history)
 
     def reshape_adatas(self, adatas, names, pair_groups=None):
         if pair_groups is None:
@@ -210,33 +216,33 @@ class MultiVAE:
         return reshaped_adatas
 
     def print_progress_train(self, n_iters):
-        current_iter = self._history['iteration'][-1]
+        current_iter = self._train_history['iteration'][-1]
         msg_train = 'iter={:d}/{:d}, loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}'.format(
             current_iter+1,
             n_iters,
-            self._history['train_loss'][-1],
-            self._history['train_recon'][-1],
-            self._history['train_kl'][-1],
-            self._history['train_integ'][-1]
+            self._train_history['loss'][-1],
+            self._train_history['recon'][-1],
+            self._train_history['kl'][-1],
+            self._train_history['integ'][-1]
         )
         self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train)
 
     def print_progress_val(self, n_iters, time_):
-        current_iter = self._history['iteration'][-1]
+        current_iter = self._val_history['iteration'][-1]
         msg_train = 'iter={:d}/{:d}, time={:.2f}(s)' \
             ', loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}' \
             ', val_loss={:.4f}, val_recon={:.4f}, val_kl={:.4f}, val_integ={:.4f}'.format(
             current_iter+1,
             n_iters,
             time_,
-            self._history['train_loss'][-1],
-            self._history['train_recon'][-1],
-            self._history['train_kl'][-1],
-            self._history['train_integ'][-1],
-            self._history['val_loss'][-1],
-            self._history['val_recon'][-1],
-            self._history['val_kl'][-1],
-            self._history['val_integ'][-1]
+            self._val_history['train_loss'][-1],
+            self._val_history['train_recon'][-1],
+            self._val_history['train_kl'][-1],
+            self._val_history['train_integ'][-1],
+            self._val_history['val_loss'][-1],
+            self._val_history['val_recon'][-1],
+            self._val_history['val_kl'][-1],
+            self._val_history['val_integ'][-1]
         )
         self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train, end='\n')
 
@@ -347,26 +353,41 @@ class MultiVAE:
                 optimizer_adv.step()
             
             if iteration % print_every == 0:
-                self._history['iteration'].append(iteration)
-                self._history['train_loss'].append(loss_ae.detach().cpu().item())
-                self._history['train_recon'].append(recon_loss.detach().cpu().item())
-                self._history['train_kl'].append(kl_loss.detach().cpu().item())
-                self._history['train_integ'].append(integ_loss.detach().cpu().item())
+                self._train_history['iteration'].append(iteration)
+                self._train_history['loss'].append(loss_ae.detach().cpu().item())
+                self._train_history['recon'].append(recon_loss.detach().cpu().item())
+                self._train_history['kl'].append(kl_loss.detach().cpu().item())
+                self._train_history['integ'].append(integ_loss.detach().cpu().item())
                 self.print_progress_train(n_iters)
 
             # add this iteration to the epoch time
             epoch_time += time.time() - tik
 
             # validate
-            if iteration > 0 and iteration % validate_every == 0:
+            if iteration > 0 and iteration % validate_every == 0 or iteration == n_iters - 1:
+                # add average train losses of the elapsed epoch to the validation history
+                self._val_history['iteration'].append(iteration)
+                self._val_history['train_loss'].append(np.mean(self._train_history['loss'][-(validate_every//print_every):]))
+                self._val_history['train_recon'].append(np.mean(self._train_history['recon'][-(validate_every//print_every):]))
+                self._val_history['train_kl'].append(np.mean(self._train_history['kl'][-(validate_every//print_every):]))
+                self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
+
                 self.model.eval()
-                self.validate(val_dataloaders, iteration, n_iters, epoch_time)
+                self.validate(val_dataloaders, n_iters, epoch_time)
                 self.model.train()
-                epoch_time = 0
+                epoch_time = 0  # reset epoch time
     
-    def validate(self, val_dataloaders, cur_iter, n_iters, train_time=None):
+    def validate(self, val_dataloaders, n_iters, train_time=None):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
+        
+        # we want mean losses of all validation batches
+        loss_ae = 0
+        recon_loss = 0
+        kl_loss = 0
+        integ_loss = 0
+        loss_adv = 0
+
         for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
             # iterate until all of the dataloaders run out of data
             if iteration >= val_n_iters:
@@ -381,18 +402,19 @@ class MultiVAE:
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
 
             # calculate the losses
-            recon_loss = self.calc_recon_loss(xs, rs)
-            kl_loss = self.calc_kl_loss(mus, logvars)
-            integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
-            loss_ae = self.recon_coef * recon_loss + \
+            recon_loss += self.calc_recon_loss(xs, rs)
+            kl_loss += self.calc_kl_loss(mus, logvars)
+            integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
+            loss_ae += self.recon_coef * recon_loss + \
                       self.kl_coef * kl_loss + \
                       self.integ_coef * integ_loss
-            loss_adv = -integ_loss
-            self._history['iteration'].append(cur_iter)
-            self._history['val_loss'].append(loss_ae.detach().cpu().item())
-            self._history['val_recon'].append(recon_loss.detach().cpu().item())
-            self._history['val_kl'].append(kl_loss.detach().cpu().item())
-            self._history['val_integ'].append(integ_loss.detach().cpu().item())
+            loss_adv += -integ_loss
+        
+        # logging
+        self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
+        self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
+        self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
+        self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
 
         val_time = time.time() - tik
         self.print_progress_val(n_iters, train_time + val_time)
