@@ -1,6 +1,7 @@
 import torch
 import os
 from .mlp import MLP
+from .multivae import MultiVAE
 from .multiscae import MultiScAE
 from .multiscvae import MultiScVAE
 from .multisccae import MultiScCAE
