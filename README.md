@@ -1,4 +1,4 @@
-# Multigrate: multi-omic data integration and transformation for signle-cell genomics 
+# Multigrate: multi-omic data integration and transformation for signle-cell genomics
 
 To start:
 1. Set up a Conda environment:
@@ -22,7 +22,7 @@ and `conda activate scmulti`
 `conda install conda-forge louvain`
 
 7. Install scmulti
-`pip install git+https://github.com/theislab/multigrate.git@train-method`
+`pip install git+https://github.com/theislab/multigrate.git`
 
 Additionally:
 1. Download the dataset of interest from [Drive](https://drive.google.com/drive/u/0/folders/1vdO8CJluRp7sOOQHc85YYZXhV2p2QcDN)
