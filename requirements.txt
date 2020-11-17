@@ -7,6 +7,7 @@ scikit-learn
 seaborn
 torchvision
 tqdm
+notebook
 #episcanpy==0.1.10
 anndata==0.7.3
 scanpy<=1.4.6
