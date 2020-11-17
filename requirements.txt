@@ -1,7 +1,7 @@
 matplotlib
 pandas
 pip
-pytorch
+torch
 requests
 scikit-learn
 seaborn
