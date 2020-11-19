@@ -147,6 +147,7 @@ class MultiVAE:
         adatas,
         names,
         pair_groups,
+        cond = False,
         z_dim=10,
         h_dim=32,
         hiddens=[],
@@ -174,16 +175,21 @@ class MultiVAE:
         self.integ_coef = integ_coef
         self.cycle_coef = cycle_coef
         self.adversarial = adversarial
+        self.cond = cond
 
         # reshape hiddens into a dict for easier use in the following
         x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
         n_modality = len(x_dims)
+        if cond:
+            self.n_batches = len([item for sublist in pair_groups for item in sublist])
+        else:
+            self.n_batches = 0
         self.adatas = self.reshape_adatas(adatas, names, pair_groups)
 
         # create modules
-        self.encoders = [MLP(x_dim, h_dim, hiddens, output_activation='leakyrelu',
+        self.encoders = [MLP(x_dim + self.n_batches, h_dim, hiddens, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim in x_dims]
-        self.decoders = [MLP(h_dim, x_dim, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
+        self.decoders = [MLP(h_dim, x_dim + self.n_batches, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
         self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
@@ -279,7 +285,9 @@ class MultiVAE:
         for loader in dataloaders:
             z = []
             celltypes = []
-            for x, name, modality, _, celltype in loader:
+            for x, name, modality, _, celltype, batch_label in loader:
+                if self.cond:
+                    x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
                 x = x.to(self.device)
                 z_pred = self.model.integrate(x, modality)
                 z.append(z_pred)
@@ -326,6 +334,11 @@ class MultiVAE:
             xs = [data[0].to(self.device) for data in datas]
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
+            batch_labels = [data[-1] for data in datas]
+
+            if self.cond:
+                for i, x in enumerate(xs):
+                    xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
 
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
@@ -397,7 +410,13 @@ class MultiVAE:
             xs = [data[0].to(self.device) for data in datas]
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
-            
+            batch_labels = [data[-1] for data in datas]
+
+            if self.cond:
+                for i, x in enumerate(xs):
+                    xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
+
+
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
 
@@ -458,9 +477,14 @@ class MultiVAE:
 
             train_adata = adata[train_indices]
             val_adata = adata[~train_indices]
-            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size)
-            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size)
+            counter=0
+            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=counter)
+            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=counter)
+            counter+=1
             train_datasets.insert(modality, train_dataset)
             val_datasets.insert(modality, val_dataset)
 
         return train_datasets, val_datasets
+    def batch_vector(self, i):
+        return F.one_hot(torch.tensor([int(i)]).long(), self.n_batches).float()
+    
