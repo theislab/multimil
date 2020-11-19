@@ -150,6 +150,7 @@ class MultiVAE:
         z_dim=10,
         h_dim=32,
         hiddens=[],
+        output_activations=[],
         shared_hiddens=[],
         adver_hiddens=[],
         recon_coef=1,
@@ -165,8 +166,18 @@ class MultiVAE:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = device
+        
+        # assertions
+        if len(adatas) != len(names):
+            raise ValueError(f'adatas and names arguments must be the same length. len(adatas) = {len(adatas)} != {len(names)} = len(names)')
+        if len(adatas) != len(pair_groups):
+            raise ValueError(f'adatas and pair_groups arguments must be the same length. len(adatas) = {len(adatas)} != {len(pair_groups)} = len(pair_groups)')
+        if len(adatas) != len(hiddens):
+            raise ValueError(f'adatas and hiddens arguments must be the same length. len(adatas) = {len(adatas)} != {len(hiddens)} = len(hiddens)')
+        if len(adatas) != len(output_activations):
+            raise ValueError(f'adatas and output_activations arguments must be the same length. len(adatas) = {len(adatas)} != {len(output_activations)} = len(output_activations)')
+        # TODO: do some assertions for other parameters
 
-        # TODO: do some assertions for the model parameters
         self._train_history = defaultdict(list)
         self._val_history = defaultdict(list)
         self.recon_coef = recon_coef
@@ -181,9 +192,10 @@ class MultiVAE:
         self.adatas = self.reshape_adatas(adatas, names, pair_groups)
 
         # create modules
-        self.encoders = [MLP(x_dim, h_dim, hiddens, output_activation='leakyrelu',
-                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim in x_dims]
-        self.decoders = [MLP(h_dim, x_dim, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
+        self.encoders = [MLP(x_dim, h_dim, hs, output_activation='leakyrelu',
+                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(x_dims, hiddens)]
+        self.decoders = [MLP(h_dim, x_dim, hs[::-1], output_activation=out_act,
+                             dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(x_dims, hiddens, output_activations)]
         self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
