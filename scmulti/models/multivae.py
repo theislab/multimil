@@ -364,6 +364,7 @@ class MultiVAE:
                 loss_adv.backward()
                 optimizer_adv.step()
             
+            # update progress bar
             if iteration % print_every == 0:
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
@@ -394,12 +395,9 @@ class MultiVAE:
         val_n_iters = max([len(loader) for loader in val_dataloaders])
         
         # we want mean losses of all validation batches
-        loss_ae = 0
         recon_loss = 0
         kl_loss = 0
         integ_loss = 0
-        loss_adv = 0
-
         for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
             # iterate until all of the dataloaders run out of data
             if iteration >= val_n_iters:
@@ -417,10 +415,12 @@ class MultiVAE:
             recon_loss += self.calc_recon_loss(xs, rs)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
-            loss_ae += self.recon_coef * recon_loss + \
-                      self.kl_coef * kl_loss + \
-                      self.integ_coef * integ_loss
-            loss_adv += -integ_loss
+
+        # calculate overal losses
+        loss_ae = self.recon_coef * recon_loss + \
+                  self.kl_coef * kl_loss + \
+                  self.integ_coef * integ_loss
+        loss_adv = -integ_loss
         
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
