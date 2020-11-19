@@ -45,6 +45,8 @@ class MLP(nn.Module):
             return nn.ReLU(inplace=True)
         elif name == 'leakyrelu':
             return nn.LeakyReLU(0.2, inplace=True)
+        elif name == 'sigmoid':
+            return nn.Sigmoid()
         else:
             raise NotImplementedError(f'activation function {name} is not implemented.')
     

@@ -150,6 +150,7 @@ class MultiVAE:
         z_dim=10,
         h_dim=32,
         hiddens=[],
+        output_activations=[],
         shared_hiddens=[],
         adver_hiddens=[],
         recon_coef=1,
@@ -165,8 +166,18 @@ class MultiVAE:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = device
+        
+        # assertions
+        if len(adatas) != len(names):
+            raise ValueError(f'adatas and names arguments must be the same length. len(adatas) = {len(adatas)} != {len(names)} = len(names)')
+        if len(adatas) != len(pair_groups):
+            raise ValueError(f'adatas and pair_groups arguments must be the same length. len(adatas) = {len(adatas)} != {len(pair_groups)} = len(pair_groups)')
+        if len(adatas) != len(hiddens):
+            raise ValueError(f'adatas and hiddens arguments must be the same length. len(adatas) = {len(adatas)} != {len(hiddens)} = len(hiddens)')
+        if len(adatas) != len(output_activations):
+            raise ValueError(f'adatas and output_activations arguments must be the same length. len(adatas) = {len(adatas)} != {len(output_activations)} = len(output_activations)')
+        # TODO: do some assertions for other parameters
 
-        # TODO: do some assertions for the model parameters
         self._train_history = defaultdict(list)
         self._val_history = defaultdict(list)
         self.recon_coef = recon_coef
@@ -181,9 +192,10 @@ class MultiVAE:
         self.adatas = self.reshape_adatas(adatas, names, pair_groups)
 
         # create modules
-        self.encoders = [MLP(x_dim, h_dim, hiddens, output_activation='leakyrelu',
-                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim in x_dims]
-        self.decoders = [MLP(h_dim, x_dim, hiddens[::-1], dropout=dropout, batch_norm=True) for x_dim in x_dims]
+        self.encoders = [MLP(x_dim, h_dim, hs, output_activation='leakyrelu',
+                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(x_dims, hiddens)]
+        self.decoders = [MLP(h_dim, x_dim, hs[::-1], output_activation=out_act,
+                             dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(x_dims, hiddens, output_activations)]
         self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
@@ -329,13 +341,14 @@ class MultiVAE:
 
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
-
+        
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
+            kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
-                      self.kl_coef * kl_loss + \
+                      kl_coef * kl_loss + \
                       self.integ_coef * integ_loss
             loss_adv = -integ_loss
             
@@ -352,6 +365,7 @@ class MultiVAE:
                 loss_adv.backward()
                 optimizer_adv.step()
             
+            # update progress bar
             if iteration % print_every == 0:
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
@@ -373,21 +387,20 @@ class MultiVAE:
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
 
                 self.model.eval()
-                self.validate(val_dataloaders, n_iters, epoch_time)
+                self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef)
                 self.model.train()
                 epoch_time = 0  # reset epoch time
     
-    def validate(self, val_dataloaders, n_iters, train_time=None):
+    def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
+        if kl_coef is None:
+            kl_coef = self.kl_coef
         
         # we want mean losses of all validation batches
-        loss_ae = 0
         recon_loss = 0
         kl_loss = 0
         integ_loss = 0
-        loss_adv = 0
-
         for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
             # iterate until all of the dataloaders run out of data
             if iteration >= val_n_iters:
@@ -405,10 +418,12 @@ class MultiVAE:
             recon_loss += self.calc_recon_loss(xs, rs)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
-            loss_ae += self.recon_coef * recon_loss + \
-                      self.kl_coef * kl_loss + \
-                      self.integ_coef * integ_loss
-            loss_adv += -integ_loss
+
+        # calculate overal losses
+        loss_ae = self.recon_coef * recon_loss + \
+                  kl_coef * kl_loss + \
+                  self.integ_coef * integ_loss
+        loss_adv = -integ_loss
         
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
@@ -437,6 +452,13 @@ class MultiVAE:
                 else:  # unpaired loss
                     loss += MMD()(zij, zj)
         return loss
+    
+    def kl_anneal(self, iteration, anneal_iters):
+        kl_coef = min(
+            self.kl_coef,
+            (iteration / anneal_iters) * self.kl_coef
+        )
+        return kl_coef
 
     def make_datasets(self, adatas, val_split, celltype_key, batch_size):
         train_datasets, val_datasets = [], []
