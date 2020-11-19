@@ -341,13 +341,14 @@ class MultiVAE:
 
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
-
+        
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
+            kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
-                      self.kl_coef * kl_loss + \
+                      kl_coef * kl_loss + \
                       self.integ_coef * integ_loss
             loss_adv = -integ_loss
             
@@ -386,13 +387,15 @@ class MultiVAE:
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
 
                 self.model.eval()
-                self.validate(val_dataloaders, n_iters, epoch_time)
+                self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef)
                 self.model.train()
                 epoch_time = 0  # reset epoch time
     
-    def validate(self, val_dataloaders, n_iters, train_time=None):
+    def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
+        if kl_coef is None:
+            kl_coef = self.kl_coef
         
         # we want mean losses of all validation batches
         recon_loss = 0
@@ -418,7 +421,7 @@ class MultiVAE:
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
-                  self.kl_coef * kl_loss + \
+                  kl_coef * kl_loss + \
                   self.integ_coef * integ_loss
         loss_adv = -integ_loss
         
@@ -449,6 +452,13 @@ class MultiVAE:
                 else:  # unpaired loss
                     loss += MMD()(zij, zj)
         return loss
+    
+    def kl_anneal(self, iteration, anneal_iters):
+        kl_coef = min(
+            self.kl_coef,
+            (iteration / anneal_iters) * self.kl_coef
+        )
+        return kl_coef
 
     def make_datasets(self, adatas, val_split, celltype_key, batch_size):
         train_datasets, val_datasets = [], []
