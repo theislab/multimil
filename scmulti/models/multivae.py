@@ -26,6 +26,8 @@ class MultiVAETorch(nn.Module):
         modality_vectors,
         adversarial_discriminator,
         device='cpu',
+        condition=None,
+        n_batches=0
     ):
         super().__init__()
 
@@ -38,7 +40,9 @@ class MultiVAETorch(nn.Module):
         self.modality_vectors = modality_vectors
         self.adv_disc = adversarial_discriminator
         self.device = device
+        self.condition = condition
         self.n_modality = len(self.encoders)
+        self.n_batches = n_batches
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -64,8 +68,14 @@ class MultiVAETorch(nn.Module):
         params = list(self.adv_disc.parameters())
         return params
 
-    def encode(self, x, i):
+    def encode(self, x, i, batch_label):
+        # add batch labels
+        if self.condition == '0':
+            x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
         h = self.x_to_h(x, i)
+        # add batch labels and modality labels to hidden representation
+        if self.condition == '1':
+            h = torch.stack([torch.cat((cell, self.modal_vector(i)[0], self.batch_vector(batch_label)[0])) for cell in h])
         z = self.h_to_z(h, i)
         return self.bottleneck(z)
 
@@ -80,13 +90,17 @@ class MultiVAETorch(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
-    def decode(self, z, i):
+    def decode(self, z, i, batch_label):
+        if self.condition == '0':
+            z = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in z])
         h = self.z_to_h(z, i)
+        if self.condition == '1':
+            h = torch.stack([torch.cat((cell, self.modal_vector(i)[0], self.batch_vector(batch_label)[0])) for cell in h])
         x = self.h_to_x(h, i)
         return x
 
-    def to_latent(self, x, i):
-        z, _, _ = self.encode(x, i)
+    def to_latent(self, x, i, batch_label):
+        z, _, _ = self.encode(x, i, batch_label)
         return z
 
     def x_to_h(self, x, i):
@@ -109,12 +123,12 @@ class MultiVAETorch(nn.Module):
         y_pred = self.adversarial_discriminator(z)
         return nn.CrossEntropyLoss()(y_pred, y)
 
-    def forward(self, xs, modalities):
-        zs = [self.encode(x, mod) for x, mod in zip(xs, modalities)]
+    def forward(self, xs, modalities, batch_labels):
+        zs = [self.encode(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
         mus = [z[1] for z in zs]
         logvars = [z[2] for z in zs]
         zs = [z[0] for z in zs]
-        rs = [self.decode(z, mod) for z, mod in zip(zs, modalities)]
+        rs = [self.decode(z, mod, batch_label) for z, mod, batch_label in zip(zs, modalities, batch_labels)]
         return rs, zs, mus, logvars
 
     def calc_adv_loss(self, zs):
@@ -124,6 +138,9 @@ class MultiVAETorch(nn.Module):
 
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modality).float().to(self.device)
+
+    def batch_vector(self, i):
+        return F.one_hot(torch.tensor([i]).long(), self.n_batches).float().to(self.device)
 
     def test(self, *xs):
         outputs, loss, losses = self.forward(*xs)
@@ -135,8 +152,8 @@ class MultiVAETorch(nn.Module):
             v += self.modal_vector(j)
         return z + v @ self.modality_vectors.weight
 
-    def integrate(self, x, i, j=None):
-        zi = self.to_latent(x, i)
+    def integrate(self, x, i, batch_label, j=None):
+        zi = self.to_latent(x, i, batch_label)
         zij = self.convert(zi, i, j)
         return zij
 
@@ -147,7 +164,7 @@ class MultiVAE:
         adatas,
         names,
         pair_groups,
-        cond = False,
+        condition = None,
         z_dim=10,
         h_dim=32,
         hiddens=[],
@@ -186,33 +203,41 @@ class MultiVAE:
         self.integ_coef = integ_coef
         self.cycle_coef = cycle_coef
         self.adversarial = adversarial
-        self.cond = cond
+        self.condition = condition
 
         # reshape hiddens into a dict for easier use in the following
         x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
         n_modality = len(x_dims)
-        if cond:
-            self.n_batches = len([item for sublist in pair_groups for item in sublist])
+
+        if condition == '0':
+            self.n_batch_labels = len([item for sublist in pair_groups for item in sublist])
+            self.n_batch_and_mod_labels = 0
+        elif condition == '1':
+            self.n_batch_labels = 0
+            self.n_batch_and_mod_labels = len([item for sublist in pair_groups for item in sublist]) + n_modality
         else:
-            self.n_batches = 0
+            self.n_batch_labels = 0
+            self.n_batch_and_mod_labels = 0
+
         self.adatas = self.reshape_adatas(adatas, names, pair_groups)
 
         # create modules
-        self.encoders = [MLP(x_dim + self.n_batches, h_dim, hs, output_activation='leakyrelu',
+        self.encoders = [MLP(x_dim + self.n_batch_labels, h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(x_dims, hiddens)]
-        self.decoders = [MLP(h_dim, x_dim + self.n_batches, hs[::-1], output_activation=out_act,
+        self.decoders = [MLP(h_dim self.n_batch_and_mod_labels, x_dim, hs[::-1], output_activation=out_act,
                              dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(x_dims, hiddens, output_activations)]
-        self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation='leakyrelu',
+        self.shared_encoder = MLP(h_dim + self.n_batch_and_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
-        self.shared_decoder = MLP(z_dim, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
+        self.shared_decoder = MLP(z_dim + self.n_batch_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
         self.modality_vecs = nn.Embedding(n_modality, z_dim)
         self.adv_disc = MLP(z_dim, n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
 
+        self.n_batch_labels = len([item for sublist in pair_groups for item in sublist])
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
-                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device)
+                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels)
 
     @property
     def history(self):
@@ -298,10 +323,10 @@ class MultiVAE:
             z = []
             celltypes = []
             for x, name, modality, _, celltype, batch_label in loader:
-                if self.cond:
-                    x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
+                #if self.condition == '0':
+                #    x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
                 x = x.to(self.device)
-                z_pred = self.model.integrate(x, modality)
+                z_pred = self.model.integrate(x, modality, batch_label)
                 z.append(z_pred)
                 celltypes.extend(celltype)
             z = torch.cat(z, dim=0)
@@ -348,12 +373,12 @@ class MultiVAE:
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
 
-            if self.cond:
-                for i, x in enumerate(xs):
-                    xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
+        #    if self.condition == '0':
+        #        for i, x in enumerate(xs):
+        #            xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
 
             # forward propagation
-            rs, zs, mus, logvars = self.model.forward(xs, modalities)
+            rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
 
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs)
@@ -425,13 +450,13 @@ class MultiVAE:
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
 
-            if self.cond:
-                for i, x in enumerate(xs):
-                    xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
+            #if self.condition == '0':
+            #    for i, x in enumerate(xs):
+            #        xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
 
 
             # forward propagation
-            rs, zs, mus, logvars = self.model.forward(xs, modalities)
+            rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
 
             # calculate the losses
             recon_loss += self.calc_recon_loss(xs, rs)
@@ -507,5 +532,6 @@ class MultiVAE:
             val_datasets.insert(modality, val_dataset)
 
         return train_datasets, val_datasets
+
     def batch_vector(self, i):
         return F.one_hot(torch.tensor([int(i)]).long(), self.n_batches).float()
