@@ -224,7 +224,7 @@ class MultiVAE:
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels, h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(x_dims, hiddens)]
-        self.decoders = [MLP(h_dim self.n_batch_and_mod_labels, x_dim, hs[::-1], output_activation=out_act,
+        self.decoders = [MLP(h_dim + self.n_batch_and_mod_labels, x_dim, hs[::-1], output_activation=out_act,
                              dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(x_dims, hiddens, output_activations)]
         self.shared_encoder = MLP(h_dim + self.n_batch_and_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
