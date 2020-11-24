@@ -46,7 +46,7 @@ class MultiVAETorch(nn.Module):
             self.add_module(f'decoder-{i}', dec)
 
         self = self.to(device)
-    
+
     def get_nonadversarial_params(self):
         params = []
         for enc in self.encoders:
@@ -59,7 +59,7 @@ class MultiVAETorch(nn.Module):
         params.extend(list(self.logvar.parameters()))
         params.extend(list(self.modality_vectors.parameters()))
         return params
-    
+
     def get_adversarial_params(self):
         params = list(self.adv_disc.parameters())
         return params
@@ -68,7 +68,7 @@ class MultiVAETorch(nn.Module):
         h = self.x_to_h(x, i)
         z = self.h_to_z(h, i)
         return self.bottleneck(z)
-        
+
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
@@ -84,26 +84,26 @@ class MultiVAETorch(nn.Module):
         h = self.z_to_h(z, i)
         x = self.h_to_x(h, i)
         return x
-    
+
     def to_latent(self, x, i):
         z, _, _ = self.encode(x, i)
         return z
-    
+
     def x_to_h(self, x, i):
         return self.encoders[i](x)
-    
+
     def h_to_z(self, h, i):
         z = self.shared_encoder(h)
         return z
-    
+
     def z_to_h(self, z, i):
         h = self.shared_decoder(z)
         return h
-    
+
     def h_to_x(self, h, i):
         x = self.decoders[i](h)
         return x
-    
+
     def adversarial_loss(self, z, y):
         y = torch.ones(z.size(0)).long().to(self.device) * y
         y_pred = self.adversarial_discriminator(z)
@@ -121,7 +121,7 @@ class MultiVAETorch(nn.Module):
         zs = [self.convert(z, i) for i, z in enumerate(zs)]  # remove the modality informations from the Zs
         loss = sum([self.adversarial_loss(z, i) for i, z in enumerate(zs)])
         return self.adversarial * loss, {'adver': loss}
-    
+
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modality).float().to(self.device)
 
@@ -147,6 +147,7 @@ class MultiVAE:
         adatas,
         names,
         pair_groups,
+        cond = False,
         z_dim=10,
         h_dim=32,
         hiddens=[],
@@ -166,7 +167,7 @@ class MultiVAE:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = device
-        
+
         # assertions
         if len(adatas) != len(names):
             raise ValueError(f'adatas and names arguments must be the same length. len(adatas) = {len(adatas)} != {len(names)} = len(names)')
@@ -185,16 +186,21 @@ class MultiVAE:
         self.integ_coef = integ_coef
         self.cycle_coef = cycle_coef
         self.adversarial = adversarial
+        self.cond = cond
 
         # reshape hiddens into a dict for easier use in the following
         x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
         n_modality = len(x_dims)
+        if cond:
+            self.n_batches = len([item for sublist in pair_groups for item in sublist])
+        else:
+            self.n_batches = 0
         self.adatas = self.reshape_adatas(adatas, names, pair_groups)
 
         # create modules
-        self.encoders = [MLP(x_dim, h_dim, hs, output_activation='leakyrelu',
+        self.encoders = [MLP(x_dim + self.n_batches, h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(x_dims, hiddens)]
-        self.decoders = [MLP(h_dim, x_dim, hs[::-1], output_activation=out_act,
+        self.decoders = [MLP(h_dim, x_dim + self.n_batches, hs[::-1], output_activation=out_act,
                              dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(x_dims, hiddens, output_activations)]
         self.shared_encoder = MLP(h_dim, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
@@ -203,11 +209,11 @@ class MultiVAE:
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
         self.modality_vecs = nn.Embedding(n_modality, z_dim)
-        self.adv_disc = MLP(z_dim, n_modality, adver_hiddens, dropout=dropout, batch_norm=True) 
+        self.adv_disc = MLP(z_dim, n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
 
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device)
-                                
+
     @property
     def history(self):
         return pd.DataFrame(self._val_history)
@@ -275,7 +281,7 @@ class MultiVAE:
         sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix)),
         sys.stdout.write(end)
         sys.stdout.flush()
-    
+
     def predict(
         self,
         adatas,
@@ -286,12 +292,14 @@ class MultiVAE:
         adatas = self.reshape_adatas(adatas, names)
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
-        
+
         zs = []
         for loader in dataloaders:
             z = []
             celltypes = []
-            for x, name, modality, _, celltype in loader:
+            for x, name, modality, _, celltype, batch_label in loader:
+                if self.cond:
+                    x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
                 x = x.to(self.device)
                 z_pred = self.model.integrate(x, modality)
                 z.append(z_pred)
@@ -302,7 +310,7 @@ class MultiVAE:
             z.obs[celltype_key] = celltypes
             zs.append(z)
         return sc.AnnData.concatenate(*zs)
-    
+
     def train(
         self,
         n_iters=10000,
@@ -338,10 +346,15 @@ class MultiVAE:
             xs = [data[0].to(self.device) for data in datas]
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
+            batch_labels = [data[-1] for data in datas]
+
+            if self.cond:
+                for i, x in enumerate(xs):
+                    xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
 
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
-        
+
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs)
             kl_loss = self.calc_kl_loss(mus, logvars)
@@ -351,7 +364,7 @@ class MultiVAE:
                       kl_coef * kl_loss + \
                       self.integ_coef * integ_loss
             loss_adv = -integ_loss
-            
+
             # AE backpropagation
             optimizer_ae.zero_grad()
             optimizer_adv.zero_grad()
@@ -364,7 +377,7 @@ class MultiVAE:
                 optimizer_adv.zero_grad()
                 loss_adv.backward()
                 optimizer_adv.step()
-            
+
             # update progress bar
             if iteration % print_every == 0:
                 self._train_history['iteration'].append(iteration)
@@ -390,13 +403,13 @@ class MultiVAE:
                 self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef)
                 self.model.train()
                 epoch_time = 0  # reset epoch time
-    
+
     def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
         if kl_coef is None:
             kl_coef = self.kl_coef
-        
+
         # we want mean losses of all validation batches
         recon_loss = 0
         kl_loss = 0
@@ -410,7 +423,13 @@ class MultiVAE:
             xs = [data[0].to(self.device) for data in datas]
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
-            
+            batch_labels = [data[-1] for data in datas]
+
+            if self.cond:
+                for i, x in enumerate(xs):
+                    xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
+
+
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities)
 
@@ -424,7 +443,7 @@ class MultiVAE:
                   kl_coef * kl_loss + \
                   self.integ_coef * integ_loss
         loss_adv = -integ_loss
-        
+
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
@@ -436,7 +455,7 @@ class MultiVAE:
 
     def calc_recon_loss(self, xs, rs):
         return sum([nn.MSELoss()(r, x) for x, r in zip(xs, rs)])
-    
+
     def calc_kl_loss(self, mus, logvars):
         return sum([KLD()(mu, logvar) for mu, logvar in zip(mus, logvars)])
 
@@ -452,7 +471,7 @@ class MultiVAE:
                 else:  # unpaired loss
                     loss += MMD()(zij, zj)
         return loss
-    
+
     def kl_anneal(self, iteration, anneal_iters):
         kl_coef = min(
             self.kl_coef,
@@ -480,9 +499,13 @@ class MultiVAE:
 
             train_adata = adata[train_indices]
             val_adata = adata[~train_indices]
-            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size)
-            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size)
+            counter=0
+            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=counter)
+            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=counter)
+            counter+=1
             train_datasets.insert(modality, train_dataset)
             val_datasets.insert(modality, val_dataset)
 
         return train_datasets, val_datasets
+    def batch_vector(self, i):
+        return F.one_hot(torch.tensor([int(i)]).long(), self.n_batches).float()
