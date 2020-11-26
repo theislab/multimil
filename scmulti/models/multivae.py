@@ -46,8 +46,8 @@ class MultiVAETorch(nn.Module):
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
-            self.add_module(f'encoder-{i}', enc)
-            self.add_module(f'decoder-{i}', dec)
+            self.add_module(f'encoder_{i}', enc)
+            self.add_module(f'decoder_{i}', dec)
 
         self = self.to(device)
 
@@ -165,6 +165,7 @@ class MultiVAE:
         names,
         pair_groups,
         condition = None,
+        batch_labels = None,
         z_dim=10,
         h_dim=32,
         hiddens=[],
@@ -204,57 +205,72 @@ class MultiVAE:
         self.cycle_coef = cycle_coef
         self.adversarial = adversarial
         self.condition = condition
+        self.hiddens = hiddens
+        self.h_dim = h_dim
+        self.z_dim = z_dim
+        self.shared_hiddens = shared_hiddens
+        self.dropout = dropout
+        self.output_activations = output_activations
+        self.pair_groups = pair_groups
+        self.batch_labels = batch_labels
 
         # reshape hiddens into a dict for easier use in the following
-        x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
-        n_modality = len(x_dims)
+        self.x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
+        self.n_modality = len(self.x_dims)
 
         if condition == '0':
-            self.n_batch_labels = len([item for sublist in pair_groups for item in sublist])
-            self.n_batch_and_mod_labels = 0
+            n_batch_labels = len(set([item for sublist in batch_labels for item in sublist]))
+            n_batch_and_mod_labels = 0
         elif condition == '1':
-            self.n_batch_labels = 0
-            self.n_batch_and_mod_labels = len([item for sublist in pair_groups for item in sublist]) + n_modality
+            n_batch_labels = 0
+            n_batch_and_mod_labels = len(set([item for sublist in batch_labels for item in sublist])) + self.n_modality
         else:
-            self.n_batch_labels = 0
-            self.n_batch_and_mod_labels = 0
+            n_batch_labels = 0
+            n_batch_and_mod_labels = 0
 
-        self.adatas = self.reshape_adatas(adatas, names, pair_groups)
+        self.adatas = self.reshape_adatas(adatas, names, pair_groups, batch_labels)
 
         # create modules
-        self.encoders = [MLP(x_dim + self.n_batch_labels, h_dim, hs, output_activation='leakyrelu',
-                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(x_dims, hiddens)]
-        self.decoders = [MLP(h_dim + self.n_batch_and_mod_labels, x_dim, hs[::-1], output_activation=out_act,
-                             dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(x_dims, hiddens, output_activations)]
-        self.shared_encoder = MLP(h_dim + self.n_batch_and_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
+        self.encoders = [MLP(x_dim + n_batch_labels, h_dim, hs, output_activation='leakyrelu',
+                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(self.x_dims, hiddens)]
+        self.decoders = [MLP(h_dim + n_batch_and_mod_labels, x_dim, hs[::-1], output_activation=out_act,
+                             dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(self.x_dims, hiddens, output_activations)]
+        self.shared_encoder = MLP(h_dim + n_batch_and_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
-        self.shared_decoder = MLP(z_dim + self.n_batch_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
+        self.shared_decoder = MLP(z_dim + n_batch_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
-        self.modality_vecs = nn.Embedding(n_modality, z_dim)
-        self.adv_disc = MLP(z_dim, n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
+        self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
+        self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
 
-        self.n_batch_labels = len([item for sublist in pair_groups for item in sublist])
+        n_batch_labels = len([item for sublist in pair_groups for item in sublist])
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
-                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels)
+                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, n_batch_labels)
 
     @property
     def history(self):
         return pd.DataFrame(self._val_history)
 
-    def reshape_adatas(self, adatas, names, pair_groups=None):
+    def reset_history(self):
+        self._train_history = defaultdict(list)
+        self._val_history = defaultdict(list)
+
+    def reshape_adatas(self, adatas, names, pair_groups=None, batch_labels=None):
         if pair_groups is None:
             pair_groups = names  # dummy pair_groups
             # TODO: refactor this hack
+        if batch_labels is None:
+            batch_labels = names
         reshaped_adatas = {}
-        for modality, (adata_set, name_set, pair_group_set) in enumerate(zip(adatas, names, pair_groups)):
+        for modality, (adata_set, name_set, pair_group_set, batch_label_set) in enumerate(zip(adatas, names, pair_groups, batch_labels)):
             # TODO: if sets are not lists, convert them to lists
-            for adata, name, pair_group in zip(adata_set, name_set, pair_group_set):
+            for adata, name, pair_group, batch_label in zip(adata_set, name_set, pair_group_set, batch_label_set):
                 reshaped_adatas[name] = {
                     'adata': adata,
                     'modality': modality,
-                    'pair_group': pair_group
+                    'pair_group': pair_group,
+                    'batch_label': batch_label
                 }
         return reshaped_adatas
 
@@ -311,10 +327,11 @@ class MultiVAE:
         self,
         adatas,
         names,
+        batch_labels=None,
         celltype_key='cell_type',
         batch_size=64,
     ):
-        adatas = self.reshape_adatas(adatas, names)
+        adatas = self.reshape_adatas(adatas, names, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
@@ -323,8 +340,6 @@ class MultiVAE:
             z = []
             celltypes = []
             for x, name, modality, _, celltype, batch_label in loader:
-                #if self.condition == '0':
-                #    x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
                 x = x.to(self.device)
                 z_pred = self.model.integrate(x, modality, batch_label)
                 z.append(z_pred)
@@ -372,10 +387,6 @@ class MultiVAE:
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
-
-        #    if self.condition == '0':
-        #        for i, x in enumerate(xs):
-        #            xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
 
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
@@ -450,11 +461,6 @@ class MultiVAE:
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
 
-            #if self.condition == '0':
-            #    for i, x in enumerate(xs):
-            #        xs[i] = torch.stack([torch.cat((cell, self.batch_vector(batch_labels[i])[0])) for cell in x])
-
-
             # forward propagation
             rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
 
@@ -511,7 +517,7 @@ class MultiVAE:
             adata = adatas[name]['adata']
             modality = adatas[name]['modality']
             pair_group = adatas[name]['pair_group']
-
+            batch_label = adatas[name]['batch_label']
             if pair_group in pair_groups_train_indices:
                 train_indices = pair_groups_train_indices[pair_group]
             else:
@@ -524,14 +530,11 @@ class MultiVAE:
 
             train_adata = adata[train_indices]
             val_adata = adata[~train_indices]
-            counter=0
-            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=counter)
-            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=counter)
-            counter+=1
+            #counter=0
+            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label)
+            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label)
+            #counter+=1
             train_datasets.insert(modality, train_dataset)
             val_datasets.insert(modality, val_dataset)
 
         return train_datasets, val_datasets
-
-    def batch_vector(self, i):
-        return F.one_hot(torch.tensor([int(i)]).long(), self.n_batches).float()
