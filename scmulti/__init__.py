@@ -41,22 +41,8 @@ def operate(network, adatas, names, pair_groups):
         for j, batch_label in enumerate(modality_batch_labels):
             modality_batch_labels[j] = batch_label + network.n_batch_labels[i]
     new_network.batch_labels = batch_labels
-#    print('old')
-    #print(network.n_batch_labels)
-    #print(network.batch_labels)
-    #print('new')
-    #print(n_new_batch_labels)
-    #print(batch_labels)
-
     new_network.adatas = new_network.reshape_adatas(adatas, names, pair_groups, batch_labels)
 
-#    old_encoders = network.encoders
-#    old_decoders = network.decoders
-
-#    old_shared_encoder = network.shared_encoder
-#    old_shared_decoder = network.shared_decoder
-
-    #print(n_new_batch_labels)
     if new_network.condition:
         encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',
                                  dropout=network.dropout, batch_norm=True, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(network.x_dims, network.hiddens))]
