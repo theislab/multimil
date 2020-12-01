@@ -27,7 +27,7 @@ class MultiVAETorch(nn.Module):
         adversarial_discriminator,
         device='cpu',
         condition=None,
-        n_batches=0
+        n_batch_labels=None
     ):
         super().__init__()
 
@@ -42,7 +42,7 @@ class MultiVAETorch(nn.Module):
         self.device = device
         self.condition = condition
         self.n_modality = len(self.encoders)
-        self.n_batches = n_batches
+        self.n_batch_labels = n_batch_labels
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -70,12 +70,12 @@ class MultiVAETorch(nn.Module):
 
     def encode(self, x, i, batch_label):
         # add batch labels
-        if self.condition == '0':
-            x = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in x])
+        if self.condition:
+            x = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in x])
         h = self.x_to_h(x, i)
         # add batch labels and modality labels to hidden representation
         if self.condition == '1':
-            h = torch.stack([torch.cat((cell, self.modal_vector(i)[0], self.batch_vector(batch_label)[0])) for cell in h])
+            h = torch.stack([torch.cat((cell, self.modal_vector(i)[0])) for cell in h])
         z = self.h_to_z(h, i)
         return self.bottleneck(z)
 
@@ -91,11 +91,11 @@ class MultiVAETorch(nn.Module):
         return z, mu, logvar
 
     def decode(self, z, i, batch_label):
-        if self.condition == '0':
-            z = torch.stack([torch.cat((cell, self.batch_vector(batch_label)[0])) for cell in z])
-        h = self.z_to_h(z, i)
         if self.condition == '1':
-            h = torch.stack([torch.cat((cell, self.modal_vector(i)[0], self.batch_vector(batch_label)[0])) for cell in h])
+            z = torch.stack([torch.cat((cell, self.modal_vector(i)[0])) for cell in z])
+        h = self.z_to_h(z, i)
+        if self.condition:
+            h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
         x = self.h_to_x(h, i)
         return x
 
@@ -139,8 +139,8 @@ class MultiVAETorch(nn.Module):
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modality).float().to(self.device)
 
-    def batch_vector(self, i):
-        return F.one_hot(torch.tensor([i]).long(), self.n_batches).float().to(self.device)
+    def batch_vector(self, i, modality):
+        return F.one_hot(torch.tensor([i]).long(), self.n_batch_labels[modality]).float().to(self.device)
 
     def test(self, *xs):
         outputs, loss, losses = self.forward(*xs)
@@ -165,7 +165,6 @@ class MultiVAE:
         names,
         pair_groups,
         condition = None,
-        batch_labels = None,
         z_dim=10,
         h_dim=32,
         hiddens=[],
@@ -212,41 +211,39 @@ class MultiVAE:
         self.dropout = dropout
         self.output_activations = output_activations
         self.pair_groups = pair_groups
-        self.batch_labels = batch_labels
 
         # reshape hiddens into a dict for easier use in the following
         self.x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
         self.n_modality = len(self.x_dims)
 
-        if condition == '0':
-            n_batch_labels = len(set([item for sublist in batch_labels for item in sublist]))
-            n_batch_and_mod_labels = 0
-        elif condition == '1':
-            n_batch_labels = 0
-            n_batch_and_mod_labels = len(set([item for sublist in batch_labels for item in sublist])) + self.n_modality
-        else:
-            n_batch_labels = 0
-            n_batch_and_mod_labels = 0
+        self.batch_labels = [list(range(len(modality_adatas))) for modality_adatas in adatas]
+        self.adatas = self.reshape_adatas(adatas, names, pair_groups, self.batch_labels)
 
-        self.adatas = self.reshape_adatas(adatas, names, pair_groups, batch_labels)
+        self.n_batch_labels = [0]*self.n_modality
+        n_mod_labels = 0
+        if condition == '0':
+            self.n_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
+        elif condition == '1':
+            self.n_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
+            n_mod_labels = self.n_modality
 
         # create modules
-        self.encoders = [MLP(x_dim + n_batch_labels, h_dim, hs, output_activation='leakyrelu',
-                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for x_dim, hs in zip(self.x_dims, hiddens)]
-        self.decoders = [MLP(h_dim + n_batch_and_mod_labels, x_dim, hs[::-1], output_activation=out_act,
-                             dropout=dropout, batch_norm=True) for x_dim, hs, out_act in zip(self.x_dims, hiddens, output_activations)]
-        self.shared_encoder = MLP(h_dim + n_batch_and_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
+        self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
+                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
+        self.decoders = [MLP(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
+                             dropout=dropout, batch_norm=True) for i, (x_dim, hs, out_act) in enumerate(zip(self.x_dims, hiddens, output_activations))]
+        self.shared_encoder = MLP(h_dim + n_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
-        self.shared_decoder = MLP(z_dim + n_batch_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
+        self.shared_decoder = MLP(z_dim + n_mod_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
         self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
         self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
 
-        n_batch_labels = len([item for sublist in pair_groups for item in sublist])
+        #n_batch_labels = len([item for sublist in pair_groups for item in sublist])
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
-                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, n_batch_labels)
+                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels)
 
     @property
     def history(self):
@@ -327,11 +324,11 @@ class MultiVAE:
         self,
         adatas,
         names,
-        batch_labels=None,
         celltype_key='cell_type',
         batch_size=64,
     ):
-        adatas = self.reshape_adatas(adatas, names, batch_labels=batch_labels)
+
+        adatas = self.reshape_adatas(adatas, names, batch_labels=self.batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
@@ -414,13 +411,17 @@ class MultiVAE:
                 loss_adv.backward()
                 optimizer_adv.step()
 
+            # TODO: fix this, if there is one one dataset then integration loss is 0
             # update progress bar
             if iteration % print_every == 0:
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
-                self._train_history['integ'].append(integ_loss.detach().cpu().item())
+                if integ_loss != 0:
+                    self._train_history['integ'].append(integ_loss.detach().cpu().item())
+                else:
+                    self._train_history['integ'] = [-1]
                 self.print_progress_train(n_iters)
 
             # add this iteration to the epoch time
@@ -479,7 +480,10 @@ class MultiVAE:
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
-        self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
+        if integ_loss != 0:
+            self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
+        else:
+            self._val_history['val_integ'] = [-1]
 
         val_time = time.time() - tik
         self.print_progress_val(n_iters, train_time + val_time)
