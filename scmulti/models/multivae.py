@@ -208,12 +208,15 @@ class MultiVAE:
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.shared_hiddens = shared_hiddens
+        self.adver_hiddens = adver_hiddens
         self.dropout = dropout
         self.output_activations = output_activations
         self.pair_groups = pair_groups
 
         # reshape hiddens into a dict for easier use in the following
-        self.x_dims = [modality_adatas[0].shape[1] for modality_adatas in adatas]  # the feature set size of each modality
+
+        # TODO: change this hack with else 0
+        self.x_dims = [modality_adatas[0].shape[1] if len(modality_adatas) > 0 else 0 for modality_adatas in adatas]  # the feature set size of each modality
         self.n_modality = len(self.x_dims)
 
         self.batch_labels = [list(range(len(modality_adatas))) for modality_adatas in adatas]
@@ -229,9 +232,9 @@ class MultiVAE:
 
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
-                             dropout=dropout, batch_norm=True, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
+                             dropout=dropout, batch_norm=True, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
         self.decoders = [MLP(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
-                             dropout=dropout, batch_norm=True) for i, (x_dim, hs, out_act) in enumerate(zip(self.x_dims, hiddens, output_activations))]
+                             dropout=dropout, batch_norm=True) if x_dim > 0 else None for i, (x_dim, hs, out_act) in enumerate(zip(self.x_dims, hiddens, output_activations))]
         self.shared_encoder = MLP(h_dim + n_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.shared_decoder = MLP(z_dim + n_mod_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
@@ -326,9 +329,11 @@ class MultiVAE:
         names,
         celltype_key='cell_type',
         batch_size=64,
+        batch_labels=None
     ):
-
-        adatas = self.reshape_adatas(adatas, names, batch_labels=self.batch_labels)
+        if not batch_labels:
+            batch_labels = self.batch_labels
+        adatas = self.reshape_adatas(adatas, names, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
@@ -534,10 +539,8 @@ class MultiVAE:
 
             train_adata = adata[train_indices]
             val_adata = adata[~train_indices]
-            #counter=0
             train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label)
             val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label)
-            #counter+=1
             train_datasets.insert(modality, train_dataset)
             val_datasets.insert(modality, val_dataset)
 
