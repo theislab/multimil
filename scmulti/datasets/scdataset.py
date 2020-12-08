@@ -13,12 +13,14 @@ class SingleCellDataset(torch.utils.data.Dataset):
         pair_group,
         celltype_key='cell_type',
         batch_size=64,
+        batch_label=None
     ):
         self.adata = adata
         self.name = name
         self.modality = modality
         self.pair_group = pair_group
         self.celltype_key = celltype_key
+        self.batch_label = batch_label
 
         self.x = self._create_tensor(adata.X)
         self.loader = torch.utils.data.DataLoader(
@@ -39,7 +41,7 @@ class SingleCellDataset(torch.utils.data.Dataset):
         x = [b[0] for b in batch]
         celltype = [b[1] for b in batch]
         x = torch.stack(x, dim=0)
-        return x, self.name, self.modality, self.pair_group, celltype
+        return x, self.name, self.modality, self.pair_group, celltype, self.batch_label
 
     def __len__(self):
         return len(self.adata)
