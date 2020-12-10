@@ -48,7 +48,7 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights'):
     new_network.n_batch_labels = [new + old for new, old in zip(n_new_batch_labels, network.n_batch_labels)]
 
     batch_labels = [list(range(len(modality_adatas))) for modality_adatas in adatas]
-    batch_labels = [[batch_label + n_batch_labels[i] for j, batch_label in enumerate(modality_batch_labels)] for i, modality_batch_labels in enumerate(batch_labels)]
+    batch_labels = [[batch_label + network.n_batch_labels[i] for j, batch_label in enumerate(modality_batch_labels)] for i, modality_batch_labels in enumerate(batch_labels)]
 
     new_network.batch_labels = batch_labels
     new_network.adatas = new_network.reshape_adatas(adatas, names, pair_groups, batch_labels)
