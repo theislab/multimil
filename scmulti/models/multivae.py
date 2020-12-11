@@ -229,21 +229,22 @@ class MultiVAE:
 
     def print_progress_train(self, n_iters):
         current_iter = self._train_history['iteration'][-1]
-        msg_train = 'iter={:d}/{:d}, loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}'.format(
+        msg_train = 'iter={:d}/{:d}, loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}, cycle={:.4f}'.format(
             current_iter+1,
             n_iters,
             self._train_history['loss'][-1],
             self._train_history['recon'][-1],
             self._train_history['kl'][-1],
-            self._train_history['integ'][-1]
+            self._train_history['integ'][-1],
+            self._train_history['cycle'][-1]
         )
         self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train)
 
     def print_progress_val(self, n_iters, time_):
         current_iter = self._val_history['iteration'][-1]
         msg_train = 'iter={:d}/{:d}, time={:.2f}(s)' \
-            ', loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}' \
-            ', val_loss={:.4f}, val_recon={:.4f}, val_kl={:.4f}, val_integ={:.4f}'.format(
+            ', loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}, cycle={:.4f}' \
+            ', val_loss={:.4f}, val_recon={:.4f}, val_kl={:.4f}, val_integ={:.4f}, val_cycle={:.4f}'.format(
             current_iter+1,
             n_iters,
             time_,
@@ -251,10 +252,12 @@ class MultiVAE:
             self._val_history['train_recon'][-1],
             self._val_history['train_kl'][-1],
             self._val_history['train_integ'][-1],
+            self._val_history['train_cycle'][-1],
             self._val_history['val_loss'][-1],
             self._val_history['val_recon'][-1],
             self._val_history['val_kl'][-1],
-            self._val_history['val_integ'][-1]
+            self._val_history['val_integ'][-1],
+            self._val_history['val_cycle'][-1]
         )
         self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train, end='\n')
 
@@ -287,21 +290,23 @@ class MultiVAE:
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
         
-        zs = []
-        for loader in dataloaders:
-            z = []
-            celltypes = []
-            for x, name, modality, _, celltype in loader:
-                x = x.to(self.device)
-                z_pred = self.model.integrate(x, modality)
-                z.append(z_pred)
-                celltypes.extend(celltype)
-            z = torch.cat(z, dim=0)
-            z = sc.AnnData(z.detach().cpu().numpy())
-            z.obs['modality'] = name
-            z.obs[celltype_key] = celltypes
-            zs.append(z)
-        return sc.AnnData.concatenate(*zs)
+        with torch.no_grad():
+            self.model.eval()
+            zs = []
+            for loader in dataloaders:
+                z = []
+                celltypes = []
+                for x, name, modality, _, celltype in loader:
+                    x = x.to(self.device)
+                    z_pred = self.model.integrate(x, modality)
+                    z.append(z_pred)
+                    celltypes.extend(celltype)
+                z = torch.cat(z, dim=0)
+                z = sc.AnnData(z.detach().cpu().numpy())
+                z.obs['modality'] = name
+                z.obs[celltype_key] = celltypes
+                zs.append(z)
+            return sc.AnnData.concatenate(*zs)
     
     def train(
         self,
@@ -346,10 +351,12 @@ class MultiVAE:
             recon_loss = self.calc_recon_loss(xs, rs)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
+            cycle_loss = self.calc_cycle_loss(zs, modalities)
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
                       kl_coef * kl_loss + \
-                      self.integ_coef * integ_loss
+                      self.integ_coef * integ_loss + \
+                      self.cycle_coef * cycle_loss
             loss_adv = -integ_loss
             
             # AE backpropagation
@@ -372,6 +379,7 @@ class MultiVAE:
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
                 self._train_history['integ'].append(integ_loss.detach().cpu().item())
+                self._train_history['cycle'].append(cycle_loss.detach().cpu().item())
                 self.print_progress_train(n_iters)
 
             # add this iteration to the epoch time
@@ -385,6 +393,7 @@ class MultiVAE:
                 self._val_history['train_recon'].append(np.mean(self._train_history['recon'][-(validate_every//print_every):]))
                 self._val_history['train_kl'].append(np.mean(self._train_history['kl'][-(validate_every//print_every):]))
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
+                self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
 
                 self.model.eval()
                 self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef)
@@ -401,6 +410,7 @@ class MultiVAE:
         recon_loss = 0
         kl_loss = 0
         integ_loss = 0
+        cycle_loss = 0
         for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
             # iterate until all of the dataloaders run out of data
             if iteration >= val_n_iters:
@@ -418,11 +428,13 @@ class MultiVAE:
             recon_loss += self.calc_recon_loss(xs, rs)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
+            cycle_loss += self.calc_cycle_loss(zs, modalities)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
                   kl_coef * kl_loss + \
-                  self.integ_coef * integ_loss
+                  self.integ_coef * integ_loss + \
+                  self.cycle_coef * cycle_loss
         loss_adv = -integ_loss
         
         # logging
@@ -430,6 +442,7 @@ class MultiVAE:
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
+        self._val_history['val_cycle'].append(cycle_loss.detach().cpu().item() / val_n_iters)
 
         val_time = time.time() - tik
         self.print_progress_val(n_iters, train_time + val_time)
@@ -453,6 +466,18 @@ class MultiVAE:
                     loss += MMD()(zij, zj)
         return loss
     
+    def calc_cycle_loss(self, zs, modalities):
+        loss = 0
+        for i, (zi, modi) in enumerate(zip(zs, modalities)):
+            for j, modj in enumerate(modalities):
+                if i == j:  # do not make a dataset cycle consistent with itself
+                    continue
+                zij = self.model.convert(zi, modi, modj)
+                rij = self.model.decode(zij, modj)
+                ziji = self.model.convert(self.model.to_latent(rij, modj), modj, modi)
+                loss += nn.MSELoss()(zi, ziji)
+        return loss
+    
     def kl_anneal(self, iteration, anneal_iters):
         kl_coef = min(
             self.kl_coef,
@@ -462,27 +487,37 @@ class MultiVAE:
 
     def make_datasets(self, adatas, val_split, celltype_key, batch_size):
         train_datasets, val_datasets = [], []
-        pair_groups_train_indices = {}
+        pair_group_train_masks = {}
         for name in adatas:
             adata = adatas[name]['adata']
             modality = adatas[name]['modality']
             pair_group = adatas[name]['pair_group']
 
-            if pair_group in pair_groups_train_indices:
-                train_indices = pair_groups_train_indices[pair_group]
+            if pair_group in pair_group_train_masks:
+                train_mask = pair_group_train_masks[pair_group]
             else:
-                train_indices = np.arange(len(adata))
-                np.random.shuffle(train_indices)
+                train_mask = np.zeros(len(adata), dtype=np.bool)
                 train_size = int(len(adata) * (1 - val_split))
-                train_indices = train_indices[:train_size]
+                train_mask[:train_size] = 1
+                np.random.shuffle(train_mask)
                 if pair_group is not None:
-                    pair_groups_train_indices[pair_group] = train_indices
+                    pair_group_train_masks[pair_group] = train_mask 
 
-            train_adata = adata[train_indices]
-            val_adata = adata[~train_indices]
+            train_adata = adata[train_mask]
+            val_adata = adata[~train_mask]
             train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size)
             val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size)
             train_datasets.insert(modality, train_dataset)
             val_datasets.insert(modality, val_dataset)
 
         return train_datasets, val_datasets
+
+    def save(self, path):
+        torch.save({
+            'state_dict' : self.model.state_dict(),
+            # TODO add history
+        }, path, pickle_protocol=4)
+
+    def load(self, path):
+        model_file = torch.load(path, map_location=self.device)
+        self.model.load_state_dict(model_file['state_dict'])

@@ -8,29 +8,30 @@ from .multisccae import MultiScCAE
 from .multisccvae import MultiScCVAE
 
 
-def create_model(config, device='cpu'):
-    model_name = config['name']
-    model = model_factory(model_name, device, config['params'])
+def create_model(name, params):
+    model = model_factory(name, params)
     return model
 
 
-def model_factory(model_name, device, params):
-    if model_name == 'mlp':
-        model = MLP(**params, device=device)
-    elif model_name == 'multiscae':
-        model = MultiScAE(**params, device=device)
-    elif model_name == 'multiscvae':
-        model = MultiScVAE(**params, device=device)
-    elif model_name == 'multisccae':
-        model = MultiScCAE(**params, device=device)
-    elif model_name == 'multisccvae':
-        model = MultiScCVAE(**params, device=device)
+def model_factory(name, params):
+    if name == 'MLP':
+        model = MLP(**params)
+    elif name == 'MultiVAE':
+        model = MultiVAE(**params)
+    elif name == 'MultiScAE':
+        model = MultiScAE(**params)
+    elif name == 'MultiScVAE':
+        model = MultiScVAE(**params)
+    elif name == 'MultiScCAE':
+        model = MultiScCAE(**params)
+    elif name == 'MultiScCVAE':
+        model = MultiScCVAE(**params)
     else:
-        raise NotImplementedError(f'No model {model_name} is implemented.')
+        raise NotImplementedError(f'No model {name} is implemented.')
     return model
 
 
-def load_model(config, model_path, device='cpu'):
+def load_model(config, model_path, device='cpu'):  # TODO refactor
     model = create_model(config, device)
     model.load_state_dict(torch.load(model_path))
     return model
