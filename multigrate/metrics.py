@@ -4,7 +4,7 @@ import scanpy as sc
 import sklearn
 from scipy.stats import itemfreq, entropy
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score
+from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score, silhouette_samples
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
 from scipy import sparse
@@ -79,8 +79,61 @@ def asw(adata, label_key='modal'):
     labels_encoded = LabelEncoder().fit_transform(labels)
     return silhouette_score(adata.X, labels_encoded).item()
 
+def silhouette(adata, group_key, metric='euclidean', embed='X_pca', scale=True):
+    """
+    wrapper for sklearn silhouette function values range from [-1, 1] with 1 being an ideal fit, 0 indicating overlapping clusters and -1 indicating misclassified cells
+    """
+    if embed not in adata.obsm.keys():
+        print(adata.obsm.keys())
+        raise KeyError(f'{embed} not in obsm')
+    asw = sklearn.metrics.silhouette_score(adata.obsm[embed], adata.obs[group_key], metric=metric)
+    if scale:
+        asw = (asw + 1)/2
+    return asw
 
-def nmi(adata, label_key='modal'):
+def silhouette_batch(adata, batch_key, group_key, metric='euclidean',
+                     embed='X_pca', verbose=False, scale=True):
+    """
+    Silhouette score of batch labels subsetted for each group.
+    params:
+        batch_key: batches to be compared against
+        group_key: group labels to be subsetted by e.g. cell type
+        metric: see sklearn silhouette score
+        embed: name of column in adata.obsm
+    returns:
+        all scores: absolute silhouette scores per group label
+        group means: if `mean=True`
+    """
+    if embed not in adata.obsm.keys():
+        if embed == 'X_pca':
+            sc.tl.pca(adata)
+        else:
+            print(adata.obsm.keys())
+            raise KeyError(f'{embed} not in obsm')
+
+    sil_all = pd.DataFrame(columns=['group', 'silhouette_score'])
+
+    for group in adata.obs[group_key].unique():
+        adata_group = adata[adata.obs[group_key] == group]
+        if adata_group.obs[batch_key].nunique() == 1:
+            continue
+        sil_per_group = sklearn.metrics.silhouette_samples(adata_group.obsm[embed], adata_group.obs[batch_key],
+                                                           metric=metric)
+        # take only absolute value
+        sil_per_group = [abs(i) for i in sil_per_group]
+        if scale:
+            # scale s.t. highest number is optimal
+            sil_per_group = [1 - i for i in sil_per_group]
+        d = pd.DataFrame({'group' : [group]*len(sil_per_group), 'silhouette_score' : sil_per_group})
+        sil_all = sil_all.append(d)
+    sil_all = sil_all.reset_index(drop=True)
+    sil_means = sil_all.groupby('group').mean()
+
+    if verbose:
+        print(f'mean silhouette per cell: {sil_means}')
+    return sil_all, sil_means
+
+def nmi_old(adata, label_key='modal'):
     adata = remove_sparsity(adata)
 
     n_labels = len(adata.obs[label_key].unique().tolist())
@@ -91,6 +144,41 @@ def nmi(adata, label_key='modal'):
     labels_encoded = LabelEncoder().fit_transform(labels)
 
     return normalized_mutual_info_score(labels_encoded, labels_pred)
+
+def nmi(adata, group1, group2, method="arithmetic"):
+    """
+    Normalized mutual information NMI based on 2 different cluster assignments `group1` and `group2`
+    params:
+        adata: Anndata object
+        group1: column name of `adata.obs` or group assignment
+        group2: column name of `adata.obs` or group assignment
+        method: NMI implementation
+            'max': scikit method with `average_method='max'`
+            'min': scikit method with `average_method='min'`
+            'geometric': scikit method with `average_method='geometric'`
+            'arithmetic': scikit method with `average_method='arithmetic'`
+        return:
+        normalized mutual information (NMI)
+    """
+
+    if isinstance(group1, str):
+        group1 = adata.obs[group1].tolist()
+    elif isinstance(group1, pd.Series):
+        group1 = group1.tolist()
+
+    if isinstance(group2, str):
+        group2 = adata.obs[group2].tolist()
+    elif isinstance(group2, pd.Series):
+        group2 = group2.tolist()
+
+    if len(group1) != len(group2):
+        raise ValueError(f'different lengths in group1 ({len(group1)}) and group2 ({len(group2)})')
+
+    if method in ['max', 'min', 'geometric', 'arithmetic']:
+        nmi_value = sklearn.metrics.normalized_mutual_info_score(group1, group2, average_method=method)
+    else:
+        raise ValueError(f"Method {method} not valid")
+    return nmi_value
 
 
 def knn_purity(adata, label_key='modal', n_neighbors=30):
@@ -143,7 +231,7 @@ def ari(adata, group1, group2='louvain'):
 
 ### Isolated label score
 def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster",
-                    cluster=True, n=None, all_=False, verbose=True):
+                    cluster=True, n=None, all_=False, verbose=False):
     """
     score how well labels of isolated labels are distiguished in the dataset by
         1. clustering-based approach
@@ -463,25 +551,52 @@ def graph_connectivity(adata_post, label_key):
 
     return np.mean(clust_res)
 
-def metrics(adata, batch_key, label_key, asw_label=True, asw_batch=True,
-            pcr_batch=True, graph_connectivity_batch=True, nmi_label=True, ari_label=True,
-            isolated_label_asw=False):
+def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=True,
+            pcr_batch=True, graph_connectivity_batch=True, nmi_=True, ari_=True,
+            isolated_label_asw=True, save=None, method='multigrate', name=''):
+
+    if nmi_ or ari_:
+        print('Clustering...')
+        cluster_key = 'cluster'
+        res_max, nmi_max, nmi_all = opt_louvain(adata,
+                label_key=label_key, cluster_key=cluster_key, function=nmi,
+                plot=False, verbose=False, inplace=True, force=True)
+
     results = {}
     # batch correction
     if asw_batch:
-        results['ASW_label/batch'] = asw(adata, batch_key)
+        print('ASW label/batch...')
+        _, sil_clus = silhouette_batch(adata, batch_key=batch_key, group_key=label_key)
+        results['ASW_label/batch'] = sil_clus.silhouette_score.mean()
     if pcr_batch:
-        results['PCR_batch'] = pcr(adata, batch_key)
+        print('PCR batch...')
+        results['PCR_batch'] = pcr_comparison(adata_old, adata, covariate=batch_key)
     if graph_connectivity_batch:
-        results['Graph_connectivity'] = graph_connectivity(adata, batch_key)
+        print('Graph connectivity...')
+        results['graph_conn'] = graph_connectivity(adata, label_key)
+
     # bio conservation
     if asw_label:
-        results['ASW_label'] = asw(adata, label_key)
-    if nmi_label:
-        results['NMI_cluster/label'] = asw(adata, label_key)
-    if ari_label:
-        results['ARI_cluster/label'] = ari(adata, label_key)
+        print('ASW label...')
+        results['ASW_label'] = silhouette(adata, group_key=label_key)
+    if nmi_:
+        print('NMI cluster/label...')
+        results['NMI_cluster/label'] = nmi(adata, cluster_key, label_key)
+    if ari_:
+        print('ARI cluster/label...')
+        results['ARI_cluster/label'] = ari(adata, cluster_key, label_key)
     if isolated_label_asw:
-        results['Isolated_label_ASW'] = isolated_labels(adata, label_key, batch_key)
+        print('Isolated label silhouette...')
+        results['isolated_label_silhouette'] = isolated_labels(adata, label_key, batch_key, cluster=False)
 
-    return pd.DataFrame.from_dict(results, orient='index', columns=['score'])
+    df = pd.DataFrame.from_dict(results, orient='index', columns=['score'])
+    df_return = df.copy()
+
+    if save:
+        df = df.transpose()
+        df['method'] = method
+        df['reference_time'] = 0
+        df['query_time'] = 0
+        df['data'] = name
+        df.to_csv(save, index=False, sep=',')
+    return df_return
