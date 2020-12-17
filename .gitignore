@@ -9,3 +9,4 @@ outputs/
 *.o*
 slurm-*.out
 experiments*/*
+.Rhistory
