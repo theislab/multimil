@@ -244,7 +244,6 @@ class MultiVAE:
         self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
         self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
 
-        #n_batch_labels = len([item for sublist in pair_groups for item in sublist])
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels)
 
@@ -336,7 +335,6 @@ class MultiVAE:
         adatas = self.reshape_adatas(adatas, names, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
-
         zs = []
         for loader in dataloaders:
             z = []
@@ -351,7 +349,14 @@ class MultiVAE:
             z.obs['modality'] = name
             z.obs[celltype_key] = celltypes
             zs.append(z)
-        return sc.AnnData.concatenate(*zs)
+
+        obs_names = []
+        for name in adatas.keys():
+            obs_names.append(list(adatas[name]['adata'].obs_names))
+        obs_names = [obs for sublist in obs_names for obs in sublist]
+        res = sc.AnnData.concatenate(*zs)
+        res.obs_names = obs_names
+        return res
 
     def train(
         self,
