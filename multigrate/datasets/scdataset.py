@@ -13,7 +13,8 @@ class SingleCellDataset(torch.utils.data.Dataset):
         pair_group,
         celltype_key='cell_type',
         batch_size=64,
-        batch_label=None
+        batch_label=None,
+        layer=None
     ):
         self.adata = adata
         self.name = name
@@ -22,7 +23,11 @@ class SingleCellDataset(torch.utils.data.Dataset):
         self.celltype_key = celltype_key
         self.batch_label = batch_label
 
-        self.x = self._create_tensor(adata.X)
+        if layer:
+            self.x = self._create_tensor(adata.layers[layer])
+        else:
+            self.x = self._create_tensor(adata.X)
+
         self.loader = torch.utils.data.DataLoader(
             dataset=self,
             batch_size=batch_size,
@@ -36,7 +41,7 @@ class SingleCellDataset(torch.utils.data.Dataset):
             return torch.FloatTensor(x)
         else:
             return torch.FloatTensor(x)
-    
+
     def _collate_fn(self, batch):
         x = [b[0] for b in batch]
         celltype = [b[1] for b in batch]

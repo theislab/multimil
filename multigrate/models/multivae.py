@@ -11,7 +11,8 @@ from sklearn.model_selection import train_test_split
 from itertools import cycle
 from ..datasets import SingleCellDataset
 from .mlp import MLP
-from .losses import MMD, KLD
+from .mlp_decoder import MLP_decoder
+from .losses import MMD, KLD, NB, ZINB
 
 
 class MultiVAETorch(nn.Module):
@@ -96,6 +97,7 @@ class MultiVAETorch(nn.Module):
         h = self.z_to_h(z, i)
         if self.condition:
             h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
+
         x = self.h_to_x(h, i)
         return x
 
@@ -168,6 +170,7 @@ class MultiVAE:
         z_dim=10,
         h_dim=32,
         hiddens=[],
+        losses=[],
         output_activations=[],
         shared_hiddens=[],
         adver_hiddens=[],
@@ -178,6 +181,9 @@ class MultiVAE:
         adversarial=True,
         dropout=0.2,
         device=None,
+        loss_coefs=[],
+        layers=[],
+        theta=None
     ):
         # configure to CUDA if is available
         if device is None:
@@ -212,15 +218,31 @@ class MultiVAE:
         self.dropout = dropout
         self.output_activations = output_activations
         self.pair_groups = pair_groups
-
         # reshape hiddens into a dict for easier use in the following
-
         # TODO: change this hack with else 0
         self.x_dims = [modality_adatas[0].shape[1] if len(modality_adatas) > 0 else 0 for modality_adatas in adatas]  # the feature set size of each modality
         self.n_modality = len(self.x_dims)
 
+
+        if len(losses) == 0:
+            self.losses = ['mse']*self.n_modality
+        elif len(losses) == self.n_modality:
+            self.losses = losses
+        else:
+            raise ValueError(f'adatas and losses arguments must be the same length or losses has to be []. len(adatas) = {len(adatas)} != {len(losses)} = len(losses)')
+
+        if len(loss_coefs) == 0:
+            self.loss_coefs = [1.0]*self.n_modality
+        elif len(loss_coefs) == self.n_modality:
+            self.loss_coefs = loss_coefs
+        else:
+            raise ValueError(f'adatas and loss_coefs arguments must be the same length or loss_coefs has to be []. len(adatas) = {len(adatas)} != {len(loss_coefs)} = len(loss_coefs)')
+
+        self.loss_coef_dict = {}
+        for i, loss in enumerate(self.losses):
+            self.loss_coef_dict[loss] = self.loss_coefs[i]
+
         self.batch_labels = [list(range(len(modality_adatas))) for modality_adatas in adatas]
-        self.adatas = self.reshape_adatas(adatas, names, pair_groups, self.batch_labels)
 
         self.n_batch_labels = [0]*self.n_modality
         n_mod_labels = 0
@@ -230,11 +252,26 @@ class MultiVAE:
             self.n_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
             n_mod_labels = self.n_modality
 
+        if len(layers) == 0:
+            self.layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
+        elif len(layers) == self.n_modality:
+            self.layers = layers
+        else:
+            raise ValueError(f'adatas and layers arguments must be the same shape or layers has to be []. len(adatas) = {len(adatas)} != {len(layers)} = len(layers)')
+
+        self.adatas = self.reshape_adatas(adatas, names, self.layers, pair_groups, self.batch_labels)
+        # assume for now that can only use nb/zinb once, i.e. for RNA-seq modality
+        self.theta = theta
+        if self.theta == None:
+            for i, loss in enumerate(losses):
+                if loss in ["nb", "zinb"]:
+                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1)))
+
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
-        self.decoders = [MLP(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
-                             dropout=dropout, batch_norm=True) if x_dim > 0 else None for i, (x_dim, hs, out_act) in enumerate(zip(self.x_dims, hiddens, output_activations))]
+        self.decoders = [MLP_decoder(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
+                             dropout=dropout, batch_norm=True, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.x_dims, hiddens, output_activations, self.losses))]
         self.shared_encoder = MLP(h_dim + n_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
         self.shared_decoder = MLP(z_dim + n_mod_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
@@ -244,7 +281,6 @@ class MultiVAE:
         self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
         self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
 
-        #n_batch_labels = len([item for sublist in pair_groups for item in sublist])
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels)
 
@@ -256,18 +292,19 @@ class MultiVAE:
         self._train_history = defaultdict(list)
         self._val_history = defaultdict(list)
 
-    def reshape_adatas(self, adatas, names, pair_groups=None, batch_labels=None):
+    def reshape_adatas(self, adatas, names, layers, pair_groups=None, batch_labels=None):
         if pair_groups is None:
             pair_groups = names  # dummy pair_groups
             # TODO: refactor this hack
         if batch_labels is None:
             batch_labels = names
         reshaped_adatas = {}
-        for modality, (adata_set, name_set, pair_group_set, batch_label_set) in enumerate(zip(adatas, names, pair_groups, batch_labels)):
+        for modality, (adata_set, name_set, layer_set, pair_group_set, batch_label_set) in enumerate(zip(adatas, names, layers, pair_groups, batch_labels)):
             # TODO: if sets are not lists, convert them to lists
-            for adata, name, pair_group, batch_label in zip(adata_set, name_set, pair_group_set, batch_label_set):
+            for adata, name, layer, pair_group, batch_label in zip(adata_set, name_set, layer_set, pair_group_set, batch_label_set):
                 reshaped_adatas[name] = {
                     'adata': adata,
+                    'layer': layer,
                     'modality': modality,
                     'pair_group': pair_group,
                     'batch_label': batch_label
@@ -329,11 +366,14 @@ class MultiVAE:
         names,
         celltype_key='cell_type',
         batch_size=64,
-        batch_labels=None
+        batch_labels=None,
+        layers=[]
     ):
         if not batch_labels:
             batch_labels = self.batch_labels
-        adatas = self.reshape_adatas(adatas, names, batch_labels=batch_labels)
+        if len(layers) == 0:
+            layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
+        adatas = self.reshape_adatas(adatas, names, layers, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
@@ -362,7 +402,7 @@ class MultiVAE:
         val_split=0.1,
         adv_iters=0,
         celltype_key='cell_type',
-        validate_every=1000,
+        validate_every=1000
     ):
         # configure training parameters
         print_every = n_iters // 50
@@ -394,7 +434,7 @@ class MultiVAE:
             rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
 
             # calculate the losses
-            recon_loss = self.calc_recon_loss(xs, rs)
+            recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
@@ -471,7 +511,7 @@ class MultiVAE:
             rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
 
             # calculate the losses
-            recon_loss += self.calc_recon_loss(xs, rs)
+            recon_loss += self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
 
@@ -493,8 +533,24 @@ class MultiVAE:
         val_time = time.time() - tik
         self.print_progress_val(n_iters, train_time + val_time)
 
-    def calc_recon_loss(self, xs, rs):
-        return sum([nn.MSELoss()(r, x) for x, r in zip(xs, rs)])
+    def calc_recon_loss(self, xs, rs, losses, batch_labels):
+        loss = 0
+        for x, r, loss_type, batch in zip(xs, rs, losses, batch_labels):
+            if loss_type == 'mse':
+                loss += self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
+            elif loss_type == 'nb':
+                dispersion = self.theta.T[batch]
+                dispersion = torch.exp(dispersion)
+                loss -= self.loss_coef_dict['nb']*NB()(x, r, dispersion)
+            elif loss_type == 'zinb':
+                dec_mean, dec_dropout = r
+                dispersion = self.theta.T[batch]
+                dispersion = torch.exp(dispersion)
+                loss = -self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
+            elif loss_type == 'bce':
+                loss += self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
+
+        return loss
 
     def calc_kl_loss(self, mus, logvars):
         return sum([KLD()(mu, logvar) for mu, logvar in zip(mus, logvars)])
@@ -522,11 +578,13 @@ class MultiVAE:
     def make_datasets(self, adatas, val_split, celltype_key, batch_size):
         train_datasets, val_datasets = [], []
         pair_groups_train_indices = {}
+
         for name in adatas:
             adata = adatas[name]['adata']
             modality = adatas[name]['modality']
             pair_group = adatas[name]['pair_group']
             batch_label = adatas[name]['batch_label']
+            layer = adatas[name]['layer']
             if pair_group in pair_groups_train_indices:
                 train_indices = pair_groups_train_indices[pair_group]
             else:
@@ -539,8 +597,9 @@ class MultiVAE:
 
             train_adata = adata[train_indices]
             val_adata = adata[~train_indices]
-            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label)
-            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label)
+
+            train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label, layer=layer)
+            val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label, layer=layer)
             train_datasets.insert(modality, train_dataset)
             val_datasets.insert(modality, val_dataset)
 

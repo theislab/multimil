@@ -9,6 +9,7 @@ from . import metrics
 
 from .models.multivae import MultiVAETorch, MultiVAE
 from .models.mlp import MLP
+from .models.mlp_decoder import MLP_decoder
 
 __author__ = ', '.join([
     'Alireza Omidi',
@@ -20,7 +21,7 @@ __email__ = ', '.join([
     'ga58som@mytum.de', #test
 ])
 
-def operate(network, adatas, names, pair_groups, fine_tune='cond_weights'):
+def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layers=[]):
 
     if len(adatas) != network.model.n_modality:
         raise ValueError(f'new modalities and the old modalities must be the same length. new_modalities = {len(adatas)} != {network.model.n_modality} = old_modalities')
@@ -37,7 +38,12 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights'):
                                     integ_coef=network.integ_coef,
                                     cycle_coef=network.cycle_coef,
                                     adversarial=network.adversarial,
-                                    dropout=network.dropout)
+                                    dropout=network.dropout,
+                                    losses=network.losses,
+                                    loss_coefs=network.loss_coefs,
+                                    theta=network.theta,
+                                    layers=layers,
+                                    )
 
     n_new_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
     changed_modalities_idx = []
@@ -51,14 +57,17 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights'):
     batch_labels = [[batch_label + network.n_batch_labels[i] for j, batch_label in enumerate(modality_batch_labels)] for i, modality_batch_labels in enumerate(batch_labels)]
 
     new_network.batch_labels = batch_labels
-    new_network.adatas = new_network.reshape_adatas(adatas, names, pair_groups, batch_labels)
+    new_network.adatas = new_network.reshape_adatas(adatas, names, new_network.layers, pair_groups, batch_labels)
     new_network.x_dims = network.x_dims
 
     if new_network.condition:
         encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',
                                  dropout=network.dropout, batch_norm=True, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(network.x_dims, network.hiddens))]
-        decoders = [MLP(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
-                             dropout=network.dropout, batch_norm=True) for i, (x_dim, hs, out_act) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations))]
+        #decoders = [MLP(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
+        #                     dropout=network.dropout, batch_norm=True) for i, (x_dim, hs, out_act) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations))]
+        decoders = [MLP_decoder(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
+                             dropout=network.dropout, batch_norm=True, loss=loss) for i, (x_dim, hs, out_act, loss) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations, network.losses))]
+
         new_network.model = MultiVAETorch(encoders, decoders, copy.deepcopy(network.shared_encoder), copy.deepcopy(network.shared_decoder),
                                    copy.deepcopy(network.mu), copy.deepcopy(network.logvar), copy.deepcopy(network.modality_vecs), copy.deepcopy(network.adv_disc), network.device, network.condition, new_network.n_batch_labels)
     else:
@@ -77,7 +86,7 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights'):
 
     if fine_tune == 'cond_weights':
         for name, layer in new_network.model.named_modules():
-            if isinstance(layer, nn.Linear) and (name.startswith('encoder_') or name.startswith('decoder_')) and int(name[8]) in changed_modalities_idx:
+            if isinstance(layer, nn.Linear) and (name.startswith('encoder_') or name.startswith('decoder_')) and (int(name[8]) in changed_modalities_idx) and layer.weight.requires_grad:
                 n_idx_to_freeze = n_new_batch_labels[int(name[8])]
                 freeze_linear_params(layer, n_idx_to_freeze)
 
