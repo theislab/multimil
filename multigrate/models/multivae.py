@@ -274,7 +274,7 @@ class MultiVAE:
                 }
         return reshaped_adatas
 
-    def print_progress_train(self, n_iters):
+    def print_progress_train(self, n_iters, end=''):
         current_iter = self._train_history['iteration'][-1]
         msg_train = 'iter={:d}/{:d}, loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}, cycle={:.4f}'.format(
             current_iter+1,
@@ -285,9 +285,9 @@ class MultiVAE:
             self._train_history['integ'][-1],
             self._train_history['cycle'][-1]
         )
-        self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train)
+        self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train, end=end)
 
-    def print_progress_val(self, n_iters, time_):
+    def print_progress_val(self, n_iters, time_, end='\n'):
         current_iter = self._val_history['iteration'][-1]
         msg_train = 'iter={:d}/{:d}, time={:.2f}(s)' \
             ', loss={:.4f}, recon={:.4f}, kl={:.4f}, integ={:.4f}, cycle={:.4f}' \
@@ -306,7 +306,7 @@ class MultiVAE:
             self._val_history['val_integ'][-1],
             self._val_history['val_cycle'][-1]
         )
-        self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train, end='\n')
+        self._print_progress_bar(current_iter+1, n_iters, prefix='', suffix=msg_train, end=end)
 
     def _print_progress_bar(
         self,
@@ -368,6 +368,7 @@ class MultiVAE:
         adv_iters=0,
         celltype_key='cell_type',
         validate_every=1000,
+        verbose=1,
     ):
         # configure training parameters
         print_every = n_iters // 50
@@ -396,13 +397,13 @@ class MultiVAE:
             batch_labels = [data[-1] for data in datas]
 
             # forward propagation
-            rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
+            rs, zs, mus, logvars = self.model(xs, modalities, batch_labels)
 
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
-            cycle_loss = self.calc_cycle_loss(zs, modalities)
+            cycle_loss = self.calc_cycle_loss(xs, zs, modalities, batch_labels)
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
                       kl_coef * kl_loss + \
@@ -432,7 +433,8 @@ class MultiVAE:
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
                 self._train_history['integ'].append(integ_loss.detach().cpu().item())
                 self._train_history['cycle'].append(cycle_loss.detach().cpu().item())
-                self.print_progress_train(n_iters)
+                if verbose >= 2:
+                    self.print_progress_train(n_iters)
 
             # add this iteration to the epoch time
             epoch_time += time.time() - tik
@@ -448,11 +450,11 @@ class MultiVAE:
                 self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
 
                 self.model.eval()
-                self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef)
+                self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef, verbose=verbose)
                 self.model.train()
                 epoch_time = 0  # reset epoch time
 
-    def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None):
+    def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None, verbose=1):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
         if kl_coef is None:
@@ -475,13 +477,13 @@ class MultiVAE:
             batch_labels = [data[-1] for data in datas]
 
             # forward propagation
-            rs, zs, mus, logvars = self.model.forward(xs, modalities, batch_labels)
+            rs, zs, mus, logvars = self.model(xs, modalities, batch_labels)
 
             # calculate the losses
             recon_loss += self.calc_recon_loss(xs, rs)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
-            cycle_loss += self.calc_cycle_loss(zs, modalities)
+            cycle_loss += self.calc_cycle_loss(xs, zs, modalities, batch_labels)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
@@ -497,7 +499,10 @@ class MultiVAE:
         self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_cycle'].append(cycle_loss.detach().cpu().item() / val_n_iters)
         val_time = time.time() - tik
-        self.print_progress_val(n_iters, train_time + val_time)
+        if verbose == 1:
+            self.print_progress_val(n_iters, train_time + val_time, end='')
+        elif verbose >= 2:
+            self.print_progress_val(n_iters, train_time + val_time, end='\n')
 
     def calc_recon_loss(self, xs, rs):
         return sum([nn.MSELoss()(r, x) for x, r in zip(xs, rs)])
@@ -512,22 +517,24 @@ class MultiVAE:
                 if i == j:  # do not integrate one dataset with itself
                     continue
                 zij = self.model.convert(zi, modi, modj)
+                zj = zj.detach()  # do not compute derivative for zj, since we want to move zi in the latent space, not zj. zj is the destination zi should move to
                 if pgi is not None and pgi == pgj:  # paired loss
                     loss += nn.MSELoss()(zij, zj)
                 else:  # unpaired loss
                     loss += MMD()(zij, zj)
         return loss
     
-    def calc_cycle_loss(self, zs, modalities):
+    def calc_cycle_loss(self, xs, zs, modalities, batch_labels):
         loss = 0
-        for i, (zi, modi) in enumerate(zip(zs, modalities)):
-            for j, modj in enumerate(modalities):
+        for i, (xi, zi, modi, batchi) in enumerate(zip(xs, zs, modalities, batch_labels)):
+            for j, (modj, batchj) in enumerate(zip(modalities, batch_labels)):
                 if i == j:  # do not make a dataset cycle consistent with itself
                     continue
                 zij = self.model.convert(zi, modi, modj)
-                rij = self.model.decode(zij, modj)
-                ziji = self.model.convert(self.model.to_latent(rij, modj), modj, modi)
-                loss += nn.MSELoss()(zi, ziji)
+                rij = self.model.decode(zij, modj, batchj)
+                ziji = self.model.convert(self.model.to_latent(rij, modj, batchj), modj, modi)
+                xiji = self.model.decode(ziji, modi, batchi)
+                loss += nn.MSELoss()(xiji, xi)
         return loss
     
     def kl_anneal(self, iteration, anneal_iters):
