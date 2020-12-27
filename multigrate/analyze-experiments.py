@@ -139,7 +139,7 @@ def plot_semisupervised(experiments, metrics, save_dir, prefix=''):
     for metric in metrics:
         plt.plot(experiments['pair-split'], experiments[metric], '.-', label=metric)
     plt.legend()
-    plt.xlabel('% Paired data')
+    plt.xlabel('Paired data')
     plt.ylabel('Metrics')
     plt.savefig(os.path.join(save_dir, f'{prefix}.png'), dpi=200, bbox_inches='tight')
     plt.clf()
@@ -196,15 +196,25 @@ def plot_integ_coef_effect(experiments, metrics, save_dir, prefix=''):
 
 
 def plot_cycle_consistency(experiments, metrics, save_dir, prefix=''):
-    return
     experiments = experiments.sort_values('cycle-coef')
+    experiments = experiments[experiments['cycle-coef'] > 0]  # we want cycle consistency!
     for metric in metrics:
-        plt.plot(np.log10(1e-6 + experiments['cycle-coef']), experiments[metric], '.-', label=metric)
+        plt.plot(np.log10(experiments['cycle-coef']), experiments[metric], '.-', label=metric)
     plt.legend()
     plt.xlabel('Cycle consistency weight (log scale)')
     plt.ylabel('Metrics')
     plt.savefig(os.path.join(save_dir, f'{prefix}.png'), dpi=200, bbox_inches='tight')
     plt.clf()
+
+    # plot umaps
+    umaps = []
+    for _, exp in experiments.iterrows():
+        umap = plt.imread(os.path.join(exp['dir'], 'umap-z.png'))
+        umaps.append(umap)
+    if umaps:
+        umap_all = np.concatenate(umaps, axis=1)
+        plt.imsave(os.path.join(save_dir, f'{prefix}-umaps.png'), umap_all, dpi=200)
+        plt.clf()
             
 
 def parse_args():
