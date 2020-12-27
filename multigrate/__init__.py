@@ -3,7 +3,6 @@ import torch
 from torch import nn
 
 from . import utils
-from . import models
 from . import datasets
 from . import metrics
 
