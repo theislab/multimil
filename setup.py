@@ -11,7 +11,7 @@ except ImportError:  # Deps not yet installed
 
 setup(name='multigrate',
       version='0.1.0',
-      description='Multi-omic data integration and transformation for signle-cell genomics',
+      description='Multi-omic data integration and transformation for single-cell genomics',
       long_description=long_description,
       long_description_content_type="text/markdown",
       url='https://github.com/theislab/multigrate',
