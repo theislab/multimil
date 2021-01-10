@@ -9,4 +9,6 @@ outputs/
 *.o*
 slurm-*.out
 experiments*/*
+hyperoptim*/*
 .Rhistory
+build/
