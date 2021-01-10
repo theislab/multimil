@@ -553,7 +553,7 @@ def graph_connectivity(adata_post, label_key):
 
 def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=True,
             pcr_batch=True, graph_connectivity_batch=True, nmi_=True, ari_=True,
-            isolated_label_asw=True, save=None, method='multigrate', name=''):
+            isolated_label_asw=True, isolated_label_f1=True, save=None, method='multigrate', name=''):
 
     if nmi_ or ari_:
         print('Clustering...')
@@ -588,6 +588,9 @@ def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=Tr
     if isolated_label_asw:
         print('Isolated label silhouette...')
         results['isolated_label_silhouette'] = isolated_labels(adata, label_key, batch_key, cluster=False)
+    if isolated_label_f1:
+        print('Isolated label F1...')
+        results['isolated_label_F1'] = isolated_labels(adata, label_key, batch_key, cluster=True)
 
     df = pd.DataFrame.from_dict(results, orient='index', columns=['score'])
     df_return = df.copy()
