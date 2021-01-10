@@ -330,14 +330,16 @@ class MultiVAE:
         self,
         adatas,
         names,
+        modality_key='modality',
         celltype_key='cell_type',
+        target_modality=0,
         batch_size=64,
         batch_labels=None
     ):
         if not batch_labels:
             batch_labels = self.batch_labels
         adatas = self.reshape_adatas(adatas, names, batch_labels=batch_labels)
-        datasets, _ = self.make_datasets(adatas, val_split=0, celltype_key=celltype_key, batch_size=batch_size)
+        datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
         with torch.no_grad():
@@ -348,12 +350,12 @@ class MultiVAE:
                 celltypes = []
                 for x, name, modality, _, celltype, batch_label in loader:
                     x = x.to(self.device)
-                    z_pred = self.model.integrate(x, modality, batch_label)
+                    z_pred = self.model.integrate(x, modality, batch_label, j=target_modality)
                     z.append(z_pred)
                     celltypes.extend(celltype)
                 z = torch.cat(z, dim=0)
                 z = sc.AnnData(z.detach().cpu().numpy())
-                z.obs['modality'] = name
+                z.obs[modality_key] = name
                 z.obs[celltype_key] = celltypes
                 zs.append(z)
             return sc.AnnData.concatenate(*zs)
@@ -366,6 +368,7 @@ class MultiVAE:
         kl_anneal_iters=3000,
         val_split=0.1,
         adv_iters=0,
+        modality_key='modality',
         celltype_key='cell_type',
         validate_every=1000,
         verbose=1,
@@ -374,7 +377,7 @@ class MultiVAE:
         print_every = n_iters // 50
 
         # create data loaders
-        train_datasets, val_datasets = self.make_datasets(self.adatas, val_split, celltype_key, batch_size)
+        train_datasets, val_datasets = self.make_datasets(self.adatas, val_split, modality_key, celltype_key, batch_size)
         train_dataloaders = [d.loader for d in train_datasets]
         val_dataloaders = [d.loader for d in val_datasets]
 
@@ -544,12 +547,12 @@ class MultiVAE:
         )
         return kl_coef
 
-    def make_datasets(self, adatas, val_split, celltype_key, batch_size):
+    def make_datasets(self, adatas, val_split, modality_key, celltype_key, batch_size):
         train_datasets, val_datasets = [], []
         pair_group_train_masks = {}
         for name in adatas:
             adata = adatas[name]['adata']
-            modality = adatas[name]['modality']
+            modality = adatas[name][modality_key]
             pair_group = adatas[name]['pair_group']
             batch_label = adatas[name]['batch_label']
             if pair_group in pair_group_train_masks:
