@@ -36,10 +36,12 @@ def analyze(root_dir):
                    f'adver{int(setting["adversarial"])}_' + \
                    f'pair{setting["pair-split"]}'
         plot_kl_coef_effect(exp, [
-            f'ASW_label/batch',
-            f'ASW_label',
-            f'ARI_cluster/label',
-            f'NMI_cluster/label'
+            'ASW_label/batch',
+            'graph_conn',
+            'ASW_label',
+            # 'ARI_cluster/label',
+            'NMI_cluster/label',
+            'isolated_label_silhouette'
         ], analyze_dir, prefix=f'kl-{exp_name}')
 
     # plot semi-supervised settings: the effect of pairness
@@ -52,10 +54,12 @@ def analyze(root_dir):
                           (experiments['adversarial'] == setting['adversarial'])]
         exp_name = exp.iloc[0]['name']
         plot_semisupervised(exp, [
-            f'ASW_label/batch',
-            f'ASW_label',
-            f'ARI_cluster/label',
-            f'NMI_cluster/label'
+            'ASW_label/batch',
+            'graph_conn',
+            'ASW_label',
+            # 'ARI_cluster/label',
+            'NMI_cluster/label',
+            'isolated_label_silhouette'
         ], analyze_dir, prefix=f'semisupervised-{exp_name}')
         
     # plot the effect of integration loss
@@ -72,10 +76,12 @@ def analyze(root_dir):
                    f'adver{int(setting["adversarial"])}_' + \
                    f'pair{setting["pair-split"]}'
         plot_integ_coef_effect(exp, [
-            f'ASW_label/batch',
-            f'ASW_label',
-            f'ARI_cluster/label',
-            f'NMI_cluster/label'
+            'ASW_label/batch',
+            'graph_conn',
+            'ASW_label',
+            # 'ARI_cluster/label',
+            'NMI_cluster/label',
+            'isolated_label_silhouette'
         ], analyze_dir, prefix=f'integration-{exp_name}')
     
     # plot the effect of cycle consistency loss
@@ -92,10 +98,12 @@ def analyze(root_dir):
                    f'adver{int(setting["adversarial"])}_' + \
                    f'pair{setting["pair-split"]}'
         plot_cycle_consistency(exp, [
-            f'ASW_label/batch',
-            f'ASW_label',
-            f'ARI_cluster/label',
-            f'NMI_cluster/label'
+            'ASW_label/batch',
+            'graph_conn',
+            'ASW_label',
+            # 'ARI_cluster/label',
+            'NMI_cluster/label',
+            'isolated_label_silhouette'
         ], analyze_dir, prefix=f'cycleconsistency-{exp_name}')
 
     

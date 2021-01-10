@@ -8,7 +8,7 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 import scanpy as sc
 from .utils import parse_config_file, split_adatas
-from . import metrics
+from .metrics import metrics 
 from .datasets import load_dataset
 from .models import create_model
 import torch
@@ -19,6 +19,10 @@ def validate(experiment_name, output_dir, config):
     experiment_config = config['experiment']
     random_seed = experiment_config['seed']
     pair_split = experiment_config.get('pair-split', None)
+
+    train_params = config['model']['train']
+    modality_key = train_params.get('modality_key', 'modality')
+    celltype_key = train_params.get('celltype_key', 'cell_type')
     # torch.manual_seed(random_seed)
 
     # load adatas
@@ -46,26 +50,29 @@ def validate(experiment_name, output_dir, config):
     # validate the model
     with torch.no_grad():
         # predict the shared latent space
-        z = model.predict(adatas, names, batch_size=config['model']['train']['batch_size'])
+        z = model.predict(
+            adatas,
+            names,
+            batch_size=train_params['batch_size'],
+            modality_key=modality_key,
+            celltype_key=celltype_key
+        )
 
         # plot the unintegrated latents 
         sc.pp.neighbors(z)
         sc.tl.umap(z)
-        sc.pl.umap(z, color=['modality', 'cell_type'], ncols=1)
+        sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1)
         plt.savefig(os.path.join(output_dir, f'umap-z.png'), dpi=200, bbox_inches='tight')
 
         # calculate metrics and save them
         sc.pp.pca(z)
-        mtrcs = metrics.scibmetrics.metrics(
+        mtrcs = metrics(
             z, z,
-            batch_key='modality',
-            label_key='cell_type',
-            hvg_score_=False,
-            nmi_=True,
-            ari_=True,
-            silhouette_=True,
+            batch_key=modality_key,
+            label_key=celltype_key,
         )
-        json.dump(mtrcs.to_dict()[0], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
+        print(mtrcs.to_dict())
+        json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
 
 
 def parse_args():
