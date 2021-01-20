@@ -381,14 +381,17 @@ class MultiVAE:
         for loader in dataloaders:
             z = []
             celltypes = []
-            for x, name, modality, _, celltype, batch_label in loader:
+            indices_all = []
+            for x, name, modality, _, celltype, indices, batch_label in loader:
                 x = x.to(self.device)
                 z_pred = self.model.integrate(x, modality, batch_label)
                 z.append(z_pred)
                 celltypes.extend(celltype)
+                indices_all.extend(indices)
             z = torch.cat(z, dim=0)
             z = sc.AnnData(z.detach().cpu().numpy())
             z.obs['modality'] = name
+            z.obs['barcode'] = list(indices_all)
             z.obs[celltype_key] = celltypes
             zs.append(z)
         return sc.AnnData.concatenate(*zs)
@@ -537,18 +540,24 @@ class MultiVAE:
         loss = 0
         for x, r, loss_type, batch in zip(xs, rs, losses, batch_labels):
             if loss_type == 'mse':
-                loss += self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
+                mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
+                loss += mse_loss
+                #print(f'mse loss: {mse_loss}')
             elif loss_type == 'nb':
                 dispersion = self.theta.T[batch]
                 dispersion = torch.exp(dispersion)
-                loss -= self.loss_coef_dict['nb']*NB()(x, r, dispersion)
+                nb_loss = self.loss_coef_dict['nb']*NB()(x, r, dispersion)
+                #print(f'nb_loss: {nb_loss}')
+                loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
                 dispersion = self.theta.T[batch]
                 dispersion = torch.exp(dispersion)
                 loss = -self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
             elif loss_type == 'bce':
-                loss += self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
+                bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
+                #print(f'bce_loss: {bce_loss}')
+                loss += bce_loss
 
         return loss
 
