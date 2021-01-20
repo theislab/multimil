@@ -172,8 +172,9 @@ class MultiVAE:
         shared_hiddens=[],
         adver_hiddens=[],
         recon_coef=1,
-        kl_coef=1e-5,
-        integ_coef=1e-1,
+        kl_coef=1e-4,
+        paired_integ_coef=1e-1,
+        unpaired_integ_coef=1e-1,
         cycle_coef=1e-2,
         adversarial=True,
         dropout=0.2,
@@ -200,7 +201,8 @@ class MultiVAE:
         self._val_history = defaultdict(list)
         self.recon_coef = recon_coef
         self.kl_coef = kl_coef
-        self.integ_coef = integ_coef
+        self.paired_integ_coef = paired_integ_coef
+        self.unpaired_integ_coef = unpaired_integ_coef
         self.cycle_coef = cycle_coef
         self.adversarial = adversarial
         self.condition = condition
@@ -404,14 +406,15 @@ class MultiVAE:
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs)
             kl_loss = self.calc_kl_loss(mus, logvars)
-            integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
+            paired_integ_loss, unpaired_integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
             cycle_loss = self.calc_cycle_loss(xs, zs, modalities, batch_labels)
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
                       kl_coef * kl_loss + \
-                      self.integ_coef * integ_loss + \
+                      self.paired_integ_coef * paired_integ_loss + \
+                      self.unpaired_integ_coef * unpaired_integ_loss + \
                       self.cycle_coef * cycle_loss
-            loss_adv = -integ_loss
+            loss_adv = -(paired_integ_loss + unpaired_integ_loss)
 
             # AE backpropagation
             optimizer_ae.zero_grad()
@@ -433,7 +436,8 @@ class MultiVAE:
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
-                self._train_history['integ'].append(integ_loss.detach().cpu().item())
+                self._train_history['mse'].append(paired_integ_loss.detach().cpu().item())
+                self._train_history['mmd'].append(unpaired_integ_loss.detach().cpu().item())
                 self._train_history['cycle'].append(cycle_loss.detach().cpu().item())
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
@@ -465,7 +469,8 @@ class MultiVAE:
         # we want mean losses of all validation batches
         recon_loss = 0
         kl_loss = 0
-        integ_loss = 0
+        paired_integ_loss = 0
+        unpaired_integ_loss = 0
         cycle_loss = 0
         for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
             # iterate until all of the dataloaders run out of data
@@ -484,21 +489,25 @@ class MultiVAE:
             # calculate the losses
             recon_loss += self.calc_recon_loss(xs, rs)
             kl_loss += self.calc_kl_loss(mus, logvars)
-            integ_loss += self.calc_integ_loss(zs, modalities, pair_groups)
+            cur_paired_integ_loss, cur_unpaired_integ_loss = self.calc_integ_loss(zs, modalities, pair_groups)
+            paired_integ_loss += cur_paired_integ_loss
+            unpaired_integ_loss += cur_unpaired_integ_loss
             cycle_loss += self.calc_cycle_loss(xs, zs, modalities, batch_labels)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
                   kl_coef * kl_loss + \
-                  self.integ_coef * integ_loss + \
+                  self.paired_integ_coef * paired_integ_loss + \
+                  self.unpaired_integ_coef * unpaired_integ_loss + \
                   self.cycle_coef * cycle_loss
-        loss_adv = -integ_loss
+        loss_adv = -(paired_integ_loss + unpaired_integ_loss)
 
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
-        self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
+        self._val_history['val_mse'].append(paired_integ_loss.detach().cpu().item() / val_n_iters)
+        self._val_history['val_mmd'].append(unpaired_integ_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_cycle'].append(cycle_loss.detach().cpu().item() / val_n_iters)
         val_time = time.time() - tik
         if verbose == 1:
@@ -513,7 +522,8 @@ class MultiVAE:
         return sum([KLD()(mu, logvar) for mu, logvar in zip(mus, logvars)])
 
     def calc_integ_loss(self, zs, modalities, pair_groups):
-        loss = 0
+        paired_loss = 0
+        unpaired_loss = 0
         for i, (zi, modi, pgi) in enumerate(zip(zs, modalities, pair_groups)):
             for j, (zj, modj, pgj) in enumerate(zip(zs, modalities, pair_groups)):
                 if i == j:  # do not integrate one dataset with itself
@@ -521,10 +531,10 @@ class MultiVAE:
                 zij = self.model.convert(zi, modi, modj)
                 zj = zj.detach()  # do not compute derivative for zj, since we want to move zi in the latent space, not zj. zj is the destination zi should move to
                 if pgi is not None and pgi == pgj:  # paired loss
-                    loss += nn.MSELoss()(zij, zj)
+                    paired_loss += nn.MSELoss()(zij, zj)
                 else:  # unpaired loss
-                    loss += MMD()(zij, zj)
-        return loss
+                    unpaired_loss += MMD()(zij, zj)
+        return paired_loss, unpaired_loss
     
     def calc_cycle_loss(self, xs, zs, modalities, batch_labels):
         loss = 0
