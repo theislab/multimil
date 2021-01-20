@@ -1,6 +1,7 @@
 import torch
 import os
 from .mlp import MLP
+from .mlp_decoder import MLP_decoder
 from .multivae import MultiVAE
 
 
