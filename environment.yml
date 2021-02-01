@@ -1,4 +1,4 @@
-name: scanpy
+name: multigrate
 channels:
   - pytorch
   - conda-forge
@@ -15,9 +15,12 @@ dependencies:
   - requests
   - scikit-learn
   - seaborn
+  - gdown
+  - hyperopt
   - torchvision
   - tqdm
+  - jupyterlab
   - pip:
-    - episcanpy==0.1.10
-    - anndata==0.7.3
+    - episcanpy==0.2.2
+    - anndata
     - scanpy==1.5.1

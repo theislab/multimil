@@ -4,7 +4,6 @@ from torch import nn
 from collections import Counter
 
 from . import utils
-from . import models
 from . import datasets
 from . import metrics
 

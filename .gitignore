@@ -9,6 +9,6 @@ outputs/
 *.o*
 slurm-*.out
 experiments*/*
+hyperoptim*/*
 .Rhistory
-example/figures/*
-*.png
+build/
