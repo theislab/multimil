@@ -66,23 +66,9 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
             theta_to_add = torch.randn(new_network.x_dims[i], n_new_batch_labels[i])
             new_network.theta = torch.cat((network.theta, theta_to_add), 1)
 
-    #pair_groups_flat = [group for modal_pairs in pair_groups for group in modal_pairs]
-    #new_network.pair_counts = Counter(pair_groups_flat)
-    #pair_count = [k for k, v in new_network.pair_counts.items() if v > 1]
-    #new_network.pair_groups_dict = {v: i for i, v in enumerate(pair_count)}
-
-    #new_network.modalities_per_group = {}
-    #for pair in set(pair_groups_flat):
-    #    new_network.modalities_per_group[pair] = []
-    #    for i, group in enumerate(pair_groups):
-    #        if pair in group:
-    #            new_network.modalities_per_group[pair].append(i)
-
     if new_network.condition:
         encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',
                                  dropout=network.dropout, batch_norm=True, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(network.x_dims, network.hiddens))]
-        #decoders = [MLP(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
-        #                     dropout=network.dropout, batch_norm=True) for i, (x_dim, hs, out_act) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations))]
         decoders = [MLP_decoder(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
                              dropout=network.dropout, batch_norm=True, loss=loss) for i, (x_dim, hs, out_act, loss) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations, network.losses))]
 
