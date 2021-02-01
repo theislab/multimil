@@ -125,8 +125,7 @@ class MultiVAETorch(nn.Module):
         z = self.h_to_z(h)
         return self.bottleneck(z)
 
-    # depricated
-    def encode(self, x, i, pair_group, batch_label):
+    def encode(self, x, i, batch_label):
         # add batch labels
         if self.condition:
             x = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in x])
@@ -156,20 +155,18 @@ class MultiVAETorch(nn.Module):
         x = self.h_to_x(h, i)
         return x
 
-    # depricated
-    def decode(self, z, i, pair_group, batch_label):
+    def decode(self, z, i, batch_label):
         # depricated
         # if self.condition == '1':
         #    z = torch.stack([torch.cat((cell, self.modal_vector(i)[0])) for cell in z])
-        h = self.z_to_h(z, i)
+        h = self.z_to_h(z)
         if self.condition:
             h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
         x = self.h_to_x(h, i)
         return x
 
-    # depricated
-    def to_latent(self, x, i, pair_group, batch_label):
-        z, _, _ = self.encode(x, i, pair_group, batch_label)
+    def to_latent(self, x, i, batch_label):
+        z, _, _ = self.encode(x, i, batch_label)
         return z
 
     def x_to_h(self, x, i):
@@ -179,7 +176,7 @@ class MultiVAETorch(nn.Module):
         z = self.shared_encoder(h)
         return z
 
-    def z_to_h(self, z, i):
+    def z_to_h(self, z):
         h = self.shared_decoder(z)
         return h
 
@@ -202,11 +199,12 @@ class MultiVAETorch(nn.Module):
         logvars = [z[2] for z in zs]
         zs = [z[0] for z in zs]
         # decode
-        hs_concat = [self.z_to_h(z, mod) for z, mod in zip(zs, modalities)]
-        hs, pair_groups2 = self.decode_pairs(hs_concat, concat_pair_groups)
+        hs_concat = [self.z_to_h(z) for z in zs]
+        hs, pair_groups = self.decode_pairs(hs_concat, concat_pair_groups)
         rs = [self.decode_from_shared(h, mod, pair_group, batch_label) for h, mod, pair_group, batch_label in zip(hs, modalities, pair_groups, batch_labels)]
-        return rs, zs, mus, logvars
+        return rs, zs, mus, logvars, concat_pair_groups
 
+    # depricated
     def calc_adv_loss(self, zs):
         zs = [self.convert(z, i) for i, z in enumerate(zs)]  # remove the modality informations from the Zs
         loss = sum([self.adversarial_loss(z, i) for i, z in enumerate(zs)])
@@ -218,17 +216,26 @@ class MultiVAETorch(nn.Module):
     def batch_vector(self, i, modality):
         return F.one_hot(torch.tensor([i]).long(), self.n_batch_labels[modality]).float().to(self.device)
 
+    # depricated
     def test(self, *xs):
         outputs, loss, losses = self.forward(*xs)
         return loss, losses
 
-    def convert(self, z, pair, destination_pair=None):
+    def convert(self, z, source, source_pair, dest=None, dest_pair=None):
         v = torch.zeros(1, self.n_modality).to(self.device)
-        for mod in self.modalities_per_group[pair]:
-            v -= self.modal_vector(mod)
-        if destination_pair is not None:
-            for mod in self.modalities_per_group[pair]:
-                v += self.modal_vector(mod)
+        if not source_pair:
+            v -= self.modal_vector(source)
+        else:
+            for mod in self.modalities_per_group[source]:
+                v -= self.modal_vector(mod)
+
+        if dest is not None:
+            if not dest_pair:
+                v += self.modal_vector(dest)
+            else:
+                for mod in self.modalities_per_group[dest]:
+                    v += self.modal_vector(mod)
+
         return z + v @ self.modality_vectors.weight
 
     def integrate(self, xs, mods, pair_groups, batch_labels, j=None):
@@ -237,7 +244,7 @@ class MultiVAETorch(nn.Module):
         zs = [self.encode_shared(h) for h in hs_concat]
         zs = [z[0] for z in zs]
         for i, zi in enumerate(zs):
-            zs[i] = self.convert(zs[i], pair_groups[i], j)
+            zs[i] = self.convert(zs[i], pair_groups[i], source_pair=True, dest=j)
         return zs, pair_groups
 
 class MultiVAE:
@@ -305,7 +312,7 @@ class MultiVAE:
         self.x_dims = [modality_adatas[0].shape[1] if len(modality_adatas) > 0 else 0 for modality_adatas in adatas]  # the feature set size of each modality
         self.n_modality = len(self.x_dims)
 
-        self.prep_paired_groups(pair_groups)
+        pair_count = self.prep_paired_groups(pair_groups)
 
         if len(losses) == 0:
             self.losses = ['mse']*self.n_modality
@@ -469,13 +476,14 @@ class MultiVAE:
         if not batch_labels:
             batch_labels = self.batch_labels
 
-        # if len(layers) == 0:
-        #    layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
-        adatas = self.reshape_adatas(adatas, names, pair_group=pair_groups, batch_labels=batch_labels)
+        if len(layers) == 0:
+            layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
+
+        adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
-        self.prep_paired_groups(pair_groups)
+        pair_count = self.prep_paired_groups(pair_groups)
 
         self.model.paired_dict = self.pair_groups_dict
         self.model.pair_counts = self.pair_counts
@@ -550,13 +558,14 @@ class MultiVAE:
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
             # forward propagation
-            rs, zs, mus, logvars = self.model(xs, modalities, pair_groups, batch_labels)
+            rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss = self.calc_kl_loss(mus, logvars)
-            integ_loss = self.calc_integ_loss(zs, pair_groups)
-            cycle_loss = self.calc_cycle_loss(xs, zs, modalities, batch_labels)
+            #TODO fix this use new pair groups
+            integ_loss = self.calc_integ_loss(zs, new_pair_groups)
+            cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
                       kl_coef * kl_loss + \
@@ -577,7 +586,6 @@ class MultiVAE:
                 loss_adv.backward()
                 # optimizer_adv.step()
 
-            # TODO: fix this, if there is one one dataset then integration loss is 0
             # update progress bar
             if iteration % print_every == 0:
                 self._train_history['iteration'].append(iteration)
@@ -588,7 +596,10 @@ class MultiVAE:
                     self._train_history['integ'].append(integ_loss.detach().cpu().item())
                 else:
                     self._train_history['integ'] = [0]
-                self._train_history['cycle'].append(cycle_loss.detach().cpu().item())
+                if cycle_loss != 0:
+                    self._train_history['cycle'].append(cycle_loss.detach().cpu().item())
+                else:
+                    self._train_history['cycle'] = [0]
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
 
@@ -633,13 +644,13 @@ class MultiVAE:
             batch_labels = [data[-1] for data in datas]
 
             # forward propagation
-            rs, zs, mus, logvars = self.model(xs, modalities, pair_groups, batch_labels)
+            rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
             # calculate the losses
             recon_loss += self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss += self.calc_kl_loss(mus, logvars)
-            integ_loss += self.calc_integ_loss(zs, pair_groups)
-            cycle_loss += self.calc_cycle_loss(xs, zs, modalities, batch_labels)
+            integ_loss += self.calc_integ_loss(zs, new_pair_groups)
+            cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
@@ -656,7 +667,10 @@ class MultiVAE:
             self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
         else:
             self._val_history['val_integ'] = [0]
-        self._val_history['val_cycle'].append(cycle_loss.detach().cpu().item() / val_n_iters)
+        if cycle_loss != 0:
+            self._val_history['val_cycle'].append(cycle_loss.detach().cpu().item() / val_n_iters)
+        else:
+            self._val_history['val_cycle'] = [0]
 
         val_time = time.time() - tik
         if verbose == 1:
@@ -695,19 +709,20 @@ class MultiVAE:
             for j, (zj, pgj) in enumerate(zip(zs, pair_groups)):
                 if i == j:  # do not integrate one dataset with itself
                     continue
-                zij = self.model.convert(zi, pgi, pgj)
+                zij = self.model.convert(zi, pgi, source_pair=True, dest=pgj, dest_pair=True)
                 loss += MMD()(zij, zj)
         return loss
 
-    def calc_cycle_loss(self, xs, zs, modalities, batch_labels):
+    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups):
         loss = 0
-        for i, (xi, zi, modi, batchi) in enumerate(zip(xs, zs, modalities, batch_labels)):
-            for j, (modj, batchj) in enumerate(zip(modalities, batch_labels)):
+        for i, (xi, pgi, modi, batchi) in enumerate(zip(xs, pair_groups, modalities, batch_labels)):
+            for j, (pgj, modj, batchj) in enumerate(zip(pair_groups, modalities, batch_labels)):
                 if i == j:  # do not make a dataset cycle consistent with itself
                     continue
-                zij = self.model.convert(zi, modi, modj)
+                idx = np.argwhere(np.array(new_pair_groups) == pgi)[0][0]
+                zij = self.model.convert(zs[idx], pgi, source_pair=True, dest=modj, dest_pair=False)
                 rij = self.model.decode(zij, modj, batchj)
-                ziji = self.model.convert(self.model.to_latent(rij, modj, batchj), modj, modi)
+                ziji = self.model.convert(self.model.to_latent(rij, modj, batchj), modj, source_pair=False, dest=modi, dest_pair=False)
                 xiji = self.model.decode(ziji, modi, batchi)
                 loss += nn.MSELoss()(xiji, xi)
         return loss
@@ -761,6 +776,7 @@ class MultiVAE:
             for i, group in enumerate(pair_groups):
                 if pair in group:
                     self.modalities_per_group[pair].append(i)
+        return pair_count
 
     def save(self, path):
         torch.save({
