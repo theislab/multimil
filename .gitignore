@@ -10,3 +10,5 @@ outputs/
 slurm-*.out
 experiments*/*
 .Rhistory
+example/figures/*
+*.png
