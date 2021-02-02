@@ -1,6 +1,7 @@
 import copy
 import torch
 from torch import nn
+from collections import Counter
 
 from . import utils
 from . import datasets
@@ -59,18 +60,22 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
     new_network.adatas = new_network.reshape_adatas(adatas, names, new_network.layers, pair_groups, batch_labels)
     new_network.x_dims = network.x_dims
 
+    for i, loss in enumerate(network.losses):
+        if loss in ["nb", "zinb"] and n_new_batch_labels[i] >= 1:
+            theta_to_add = torch.randn(new_network.x_dims[i], n_new_batch_labels[i])
+            new_network.theta = torch.cat((network.theta, theta_to_add), 1)
+
     if new_network.condition:
         encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',
                                  dropout=network.dropout, batch_norm=True, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(network.x_dims, network.hiddens))]
-        #decoders = [MLP(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
-        #                     dropout=network.dropout, batch_norm=True) for i, (x_dim, hs, out_act) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations))]
         decoders = [MLP_decoder(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
                              dropout=network.dropout, batch_norm=True, loss=loss) for i, (x_dim, hs, out_act, loss) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations, network.losses))]
 
-        new_network.model = MultiVAETorch(encoders, decoders, copy.deepcopy(network.shared_encoder), copy.deepcopy(network.shared_decoder),
-                                   copy.deepcopy(network.mu), copy.deepcopy(network.logvar), copy.deepcopy(network.modality_vecs), copy.deepcopy(network.adv_disc), network.device, network.condition, new_network.n_batch_labels)
+        new_network.model = MultiVAETorch(encoders, decoders, copy.deepcopy(network.shared_encoder), copy.deepcopy(network.shared_decoder), copy.deepcopy(network.paired_encoders), copy.deepcopy(network.paired_decoders),
+                                   copy.deepcopy(network.mu), copy.deepcopy(network.logvar), copy.deepcopy(network.modality_vecs), copy.deepcopy(network.adv_disc), network.device, network.condition, new_network.n_batch_labels,
+                                   new_network.pair_groups_dict, new_network.pair_counts, new_network.modalities_per_group)
     else:
-        raise NotImplementedError('The original network should be conditioned (either "0" or "1").')
+        raise NotImplementedError('The original network should be conditioned.')
 
     # set new weights to old weights when possible and freeze some weights
     for (old_p, new_p) in zip(network.model.named_parameters(), new_network.model.named_parameters()):

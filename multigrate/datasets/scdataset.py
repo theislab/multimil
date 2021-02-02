@@ -22,6 +22,7 @@ class SingleCellDataset(torch.utils.data.Dataset):
         self.pair_group = pair_group
         self.celltype_key = celltype_key
         self.batch_label = batch_label
+        #self.indices = adata.obs_names
 
         if layer:
             self.x = self._create_tensor(adata.layers[layer])
@@ -45,11 +46,14 @@ class SingleCellDataset(torch.utils.data.Dataset):
     def _collate_fn(self, batch):
         x = [b[0] for b in batch]
         celltype = [b[1] for b in batch]
+        indices = [b[2][0] for b in batch]
         x = torch.stack(x, dim=0)
-        return x, self.name, self.modality, self.pair_group, celltype, self.batch_label
+        return x, self.name, self.modality, self.pair_group, celltype, indices, self.batch_label
 
     def __len__(self):
         return len(self.adata)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.adata[idx].obs[self.celltype_key].item()
+        #print(self.adata[idx].obs_names)
+
+        return self.x[idx], self.adata[idx].obs[self.celltype_key].item(), self.adata[idx].obs_names
