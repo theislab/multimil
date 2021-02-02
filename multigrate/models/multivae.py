@@ -264,8 +264,7 @@ class MultiVAE:
         adver_hiddens=[],
         recon_coef=1,
         kl_coef=1e-4,
-        paired_integ_coef=1e-1,
-        unpaired_integ_coef=1e-1,
+        integ_coef=1e-1,
         cycle_coef=1e-2,
         adversarial=True,
         dropout=0.2,
@@ -295,8 +294,7 @@ class MultiVAE:
         self._val_history = defaultdict(list)
         self.recon_coef = recon_coef
         self.kl_coef = kl_coef
-        self.paired_integ_coef = paired_integ_coef
-        self.unpaired_integ_coef = unpaired_integ_coef
+        self.integ_coef = integ_coef
         self.cycle_coef = cycle_coef
         self.adversarial = adversarial
         self.condition = condition
@@ -571,10 +569,9 @@ class MultiVAE:
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
                       kl_coef * kl_loss + \
-                      self.paired_integ_coef * paired_integ_loss + \
-                      self.unpaired_integ_coef * unpaired_integ_loss + \
+                      self.integ_coef * integ_loss + \
                       self.cycle_coef * cycle_loss
-            loss_adv = -(paired_integ_loss + unpaired_integ_loss)
+            loss_adv = -integ_loss
 
             # AE backpropagation
             optimizer_ae.zero_grad()
@@ -633,8 +630,7 @@ class MultiVAE:
         # we want mean losses of all validation batches
         recon_loss = 0
         kl_loss = 0
-        paired_integ_loss = 0
-        unpaired_integ_loss = 0
+        integ_loss = 0
         cycle_loss = 0
         for iteration, datas in enumerate(cycle(zip(*val_dataloaders))):
             # iterate until all of the dataloaders run out of data
@@ -659,10 +655,9 @@ class MultiVAE:
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
                   kl_coef * kl_loss + \
-                  self.paired_integ_coef * paired_integ_loss + \
-                  self.unpaired_integ_coef * unpaired_integ_loss + \
+                  self.integ_coef * integ_loss + \
                   self.cycle_coef * cycle_loss
-        loss_adv = -(paired_integ_loss + unpaired_integ_loss)
+        loss_adv = -integ_loss
 
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
@@ -749,7 +744,7 @@ class MultiVAE:
             pair_group = adatas[name]['pair_group']
             batch_label = adatas[name]['batch_label']
             layer = adatas[name]['layer']
-            if pair_group in pair_groups_train_indices:
+            if pair_group in pair_group_train_masks:
                 train_mask = pair_group_train_masks[pair_group]
             else:
                 train_mask = np.zeros(len(adata), dtype=np.bool)
