@@ -72,6 +72,11 @@ class MultiVAETorch(nn.Module):
             params.extend(list(enc.parameters()))
         for dec in self.decoders:
             params.extend(list(dec.parameters()))
+        for enc in self.paired_encoders:
+            params.extend(list(enc.parameters()))
+        for dec in self.paired_decoders:
+            params.extend(list(dec.parameters()))
+
         params.extend(list(self.shared_encoder.parameters()))
         params.extend(list(self.shared_decoder.parameters()))
         params.extend(list(self.mu.parameters()))
@@ -101,8 +106,7 @@ class MultiVAETorch(nn.Module):
                 for j in range(len(pair_groups)):
                     if pair_groups[j] == pair:
                         hs_pair.append(hs[j])
-                batch_size = hs[0].shape[0]
-                hs_pair = torch.stack(hs_pair).view(batch_size, -1)
+                hs_pair = torch.cat(hs_pair, dim=-1)
                 hs_concat.append(self.paired_encoders[self.paired_dict[pair]](hs_pair))
         return hs_concat, checked_pairs
 
@@ -308,7 +312,6 @@ class MultiVAE:
         self.output_activations = output_activations
         self.pair_groups = pair_groups
         # reshape hiddens into a dict for easier use in the following
-        # TODO: change this hack with else 0
         self.x_dims = [modality_adatas[0].shape[1] if len(modality_adatas) > 0 else 0 for modality_adatas in adatas]  # the feature set size of each modality
         self.n_modality = len(self.x_dims)
 
@@ -327,6 +330,9 @@ class MultiVAE:
             self.loss_coefs = loss_coefs
         else:
             raise ValueError(f'adatas and loss_coefs arguments must be the same length or loss_coefs has to be []. len(adatas) = {len(adatas)} != {len(loss_coefs)} = len(loss_coefs)')
+
+        if self.cycle_coef > 0 and ('nb' in self.losses or 'zinb' in self.losses):
+            raise ValueError('Cycle consistency loss can only be computed when all losses are either "mse" or "bce". Set "cycle_coef" to zero or remove "nb" and "zinb" from losses.')
 
         self.loss_coef_dict = {}
         for i, loss in enumerate(self.losses):
@@ -506,6 +512,8 @@ class MultiVAE:
                 for i, pair in enumerate(pair_groups):
                     group_indices[pair] = group_indices.get(pair, []) + [i]
 
+
+
                 # forward propagation
                 zs_pred, pair_groups = self.model.integrate(xs, modalities, pair_groups, batch_labels)
 
@@ -563,9 +571,11 @@ class MultiVAE:
             # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss = self.calc_kl_loss(mus, logvars)
-            #TODO fix this use new pair groups
             integ_loss = self.calc_integ_loss(zs, new_pair_groups)
-            cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
+            if self.cycle_coef > 0:
+                cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
+            else:
+                cycle_loss = 0
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
             loss_ae = self.recon_coef * recon_loss + \
                       kl_coef * kl_loss + \
@@ -592,14 +602,8 @@ class MultiVAE:
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
-                if integ_loss != 0:
-                    self._train_history['integ'].append(integ_loss.detach().cpu().item())
-                else:
-                    self._train_history['integ'] = [0]
-                if cycle_loss != 0:
-                    self._train_history['cycle'].append(cycle_loss.detach().cpu().item())
-                else:
-                    self._train_history['cycle'] = [0]
+                self._train_history['integ'].append(integ_loss.detach().cpu().item() if integ_loss != 0 else 0)
+                self._train_history['cycle'].append(cycle_loss.detach().cpu().item() if cycle_loss != 0 else 0)
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
 
@@ -650,7 +654,8 @@ class MultiVAE:
             recon_loss += self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, new_pair_groups)
-            cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
+            if self.cycle_coef > 0:
+                cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
@@ -666,11 +671,11 @@ class MultiVAE:
         if integ_loss != 0:
             self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
         else:
-            self._val_history['val_integ'] = [0]
+            self._val_history['val_integ'].append(0)
         if cycle_loss != 0:
             self._val_history['val_cycle'].append(cycle_loss.detach().cpu().item() / val_n_iters)
         else:
-            self._val_history['val_cycle'] = [0]
+            self._val_history['val_cycle'].append(0)
 
         val_time = time.time() - tik
         if verbose == 1:
@@ -687,13 +692,15 @@ class MultiVAE:
             elif loss_type == 'nb':
                 dispersion = self.theta.T[batch]
                 dispersion = torch.exp(dispersion)
+                # decoder returns mean so mean = r
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, r, dispersion)
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
                 dispersion = self.theta.T[batch]
                 dispersion = torch.exp(dispersion)
-                loss = -self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
+                zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
+                loss -= zinb_loss
             elif loss_type == 'bce':
                 bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
                 loss += bce_loss

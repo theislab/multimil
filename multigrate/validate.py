@@ -8,11 +8,10 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 import scanpy as sc
 from .utils import parse_config_file, split_adatas
-from .metrics import metrics 
+from .metrics import metrics
 from .datasets import load_dataset
 from .models import create_model
 import torch
-
 
 def validate(experiment_name, output_dir, config):
     # load experiment configurations
@@ -53,15 +52,16 @@ def validate(experiment_name, output_dir, config):
         z = model.predict(
             adatas,
             names,
+            pair_groups=pair_groups,
             batch_size=train_params['batch_size'],
             modality_key=modality_key,
             celltype_key=celltype_key
         )
 
-        # plot the unintegrated latents 
+        # plot the unintegrated latents
         sc.pp.neighbors(z)
         sc.tl.umap(z)
-        sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1)
+        sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1, show=False)
         plt.savefig(os.path.join(output_dir, f'umap-z.png'), dpi=200, bbox_inches='tight')
 
         # calculate metrics and save them
@@ -70,6 +70,9 @@ def validate(experiment_name, output_dir, config):
             z, z,
             batch_key=modality_key,
             label_key=celltype_key,
+            pcr_batch=False,
+            isolated_label_f1=False,
+            asw_batch=False
         )
         print(mtrcs.to_dict())
         json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
