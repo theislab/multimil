@@ -16,7 +16,7 @@ from functools import partial
 from copy import deepcopy
 
 
-def objective(params, base_experiment_name, output_dir, pair_split, config):
+def objective(params, base_experiment_name, output_dir, pair_split, save_losses, config):
     experiment_name = f'{base_experiment_name}_kl({params["kl_coef"]:.5f})_integ({params["integ_coef"]:.5f})_cycle({params["cycle_coef"]:.5f})_pair({pair_split:.2f})'
     output_dir = os.path.join(output_dir, experiment_name)
 
@@ -30,7 +30,7 @@ def objective(params, base_experiment_name, output_dir, pair_split, config):
     validate(base_experiment_name, output_dir, config)
 
     metrics = parse_config_file(os.path.join(output_dir, 'metrics.json'))
-    mean_integ_metrics = np.mean([metrics[i] for i in ['ASW_label/batch', 'PCR_batch', 'graph_conn']])
+    mean_integ_metrics = np.mean([metrics[i] for i in ['ASW_label/batch', 'graph_conn']]) #'PCR_batch',
     mean_bio_metrics = np.mean([metrics[i] for i in ['ASW_label', 'NMI_cluster/label', 'ARI_cluster/label', 'isolated_label_silhouette']])
 
     return {
@@ -40,7 +40,7 @@ def objective(params, base_experiment_name, output_dir, pair_split, config):
     }
 
 
-def hyper_optimize(base_experiment_name, output_dir, config, max_evals, kl_coefs_range, integ_coefs_range, cycle_coefs_range, pair_split):
+def hyper_optimize(base_experiment_name, output_dir, config, max_evals, kl_coefs_range, integ_coefs_range, cycle_coefs_range, pair_split, save_losses):
     # define the search space
     space = hp.choice('model_params', [{
         'kl_coef': hp.loguniform('kl_coef', *kl_coefs_range),
@@ -49,7 +49,7 @@ def hyper_optimize(base_experiment_name, output_dir, config, max_evals, kl_coefs
     }])
 
     trials = Trials()
-    fmin_objective = partial(objective, base_experiment_name=base_experiment_name, output_dir=output_dir, pair_split=pair_split, config=config)
+    fmin_objective = partial(objective, base_experiment_name=base_experiment_name, output_dir=output_dir, pair_split=pair_split, save_losses=save_losses, config=config)
     best = fmin(fmin_objective, space=space, algo=tpe.suggest, max_evals=max_evals, trials=trials)
     return best
 
@@ -63,6 +63,7 @@ def parse_args():
     parser.add_argument('--cycle-coefs-range', nargs=2, type=float, required=True)
     parser.add_argument('--pair-split', type=float, required=True)
     parser.add_argument('--max-evals', type=int, default=100)
+    parser.add_argument('--save-losses', type=bool, default=True)
     return parser.parse_args()
 
 
@@ -79,6 +80,7 @@ if __name__ == '__main__':
         args.kl_coefs_range,
         args.integ_coefs_range,
         args.cycle_coefs_range,
-        args.pair_split
+        args.pair_split,
+        args.save_losses
     )
     print(best)

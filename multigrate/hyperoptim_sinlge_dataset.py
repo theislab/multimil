@@ -18,7 +18,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
-def objective(params, base_experiment_name, output_dir, pair_split, config):
+def objective(params, base_experiment_name, output_dir, pair_split, save_losses, config):
     experiment_name = f'{base_experiment_name}_kl({params["kl_coef"]:.7f})_cycle({params["cycle_coef"]:.7f})_pair({pair_split:.2f})'
     output_dir = os.path.join(output_dir, experiment_name)
 
@@ -42,7 +42,7 @@ def objective(params, base_experiment_name, output_dir, pair_split, config):
     }
 
 
-def hyper_optimize(base_experiment_name, output_dir, config, max_evals, kl_coefs_range, cycle_coefs_range, pair_split):
+def hyper_optimize(base_experiment_name, output_dir, config, max_evals, kl_coefs_range, cycle_coefs_range, pair_split, save_losses):
     # define the search space
     space = hp.choice('model_params', [{
         'kl_coef': hp.loguniform('kl_coef', *kl_coefs_range),
@@ -50,7 +50,7 @@ def hyper_optimize(base_experiment_name, output_dir, config, max_evals, kl_coefs
     }])
 
     trials = Trials()
-    fmin_objective = partial(objective, base_experiment_name=base_experiment_name, output_dir=output_dir, pair_split=pair_split, config=config)
+    fmin_objective = partial(objective, base_experiment_name=base_experiment_name, output_dir=output_dir, pair_split=pair_split, config=config, save_losses=save_losses)
     best = fmin(fmin_objective, space=space, algo=tpe.suggest, max_evals=max_evals, trials=trials)
     return best
 
@@ -63,6 +63,7 @@ def parse_args():
     parser.add_argument('--cycle-coefs-range', nargs=2, type=float, required=True)
     parser.add_argument('--pair-split', type=float, required=True)
     parser.add_argument('--max-evals', type=int, default=100)
+    parser.add_argument('--save-losses', type=bool, default=True)
     return parser.parse_args()
 
 
@@ -78,6 +79,7 @@ if __name__ == '__main__':
         args.max_evals,
         args.kl_coefs_range,
         args.cycle_coefs_range,
-        args.pair_split
+        args.pair_split,
+        args.save_losses
     )
     print(best)
