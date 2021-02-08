@@ -13,7 +13,7 @@ from .datasets import load_dataset
 from .models import create_model
 import torch
 
-def validate(experiment_name, output_dir, config):
+def validate(experiment_name, output_dir, save_losses, config):
     # load experiment configurations
     experiment_config = config['experiment']
     random_seed = experiment_config['seed']
@@ -44,7 +44,9 @@ def validate(experiment_name, output_dir, config):
 
     # load the model
     model = create_model(config['model']['name'], model_params)
-    model.load(os.path.join(output_dir, 'last-model.pt'))
+    model.load(output_dir)
+    if save_losses:
+        save_losses_figure(model, output_dir)
 
     # validate the model
     with torch.no_grad():
@@ -63,16 +65,19 @@ def validate(experiment_name, output_dir, config):
         sc.tl.umap(z)
         sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1, show=False)
         plt.savefig(os.path.join(output_dir, f'umap-z.png'), dpi=200, bbox_inches='tight')
+        plt.close('all')
 
         # calculate metrics and save them
-        sc.pp.pca(z)
+        # sc.pp.pca(z)
+        z.obsm['X_latent'] = z.X
         mtrcs = metrics(
             z, z,
             batch_key=modality_key,
             label_key=celltype_key,
+            embed='X_latent',
             pcr_batch=False,
             isolated_label_f1=False,
-            asw_batch=False
+            asw_batch=True
         )
         print(mtrcs.to_dict())
         json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
@@ -83,6 +88,25 @@ def parse_args():
     parser.add_argument('--root-dir', type=str)
     return parser.parse_args()
 
+def save_losses_figure(model, output_dir):
+    plt.figure(figsize=(15, 10));
+
+    loss_names = ['recon', 'kl', 'integ', 'cycle']
+    nrows = int(np.ceil((len(loss_names)+1)/2))
+
+    plt.subplot(nrows, 2, 1)
+    plt.plot(model.history['iteration'], model.history['train_loss'], '.-', label='Train loss');
+    plt.plot(model.history['iteration'], model.history['val_loss'], '.-', label='Val loss');
+    plt.legend()
+
+    for i, name in enumerate(loss_names):
+        plt.subplot(nrows, 2, i+2)
+        plt.plot(model.history['iteration'], model.history[f'train_{name}'], '.-', label=f'Train {name} loss');
+        plt.plot(model.history['iteration'], model.history[f'val_{name}'], '.-', label=f'Val {name} loss');
+        plt.legend()
+
+    plt.savefig(os.path.join(output_dir, f'losses.png'), dpi=200, bbox_inches='tight')
+    plt.close('all')
 
 if __name__ == '__main__':
     args = parse_args()

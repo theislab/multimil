@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import pandas as pd
 import time
+import os
 from collections import defaultdict, Counter
 import scanpy as sc
 import torch
@@ -790,8 +791,10 @@ class MultiVAE:
         torch.save({
             'state_dict' : self.model.state_dict(),
             # TODO add history
-        }, path, pickle_protocol=4)
+        }, os.path.join(path, 'last-model.pt'), pickle_protocol=4)
+        pd.DataFrame(self._val_history).to_csv(os.path.join(path, 'history.csv'))
 
     def load(self, path):
-        model_file = torch.load(path, map_location=self.device)
+        model_file = torch.load(os.path.join(path, 'last-model.pt'), map_location=self.device)
         self.model.load_state_dict(model_file['state_dict'])
+        self._val_history = pd.read_csv(os.path.join(path, 'history.csv'), index_col=0)

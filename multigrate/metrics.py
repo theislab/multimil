@@ -112,10 +112,11 @@ def silhouette_batch(adata, batch_key, group_key, metric='euclidean',
             raise KeyError(f'{embed} not in obsm')
 
     sil_all = pd.DataFrame(columns=['group', 'silhouette_score'])
-
     for group in adata.obs[group_key].unique():
         adata_group = adata[adata.obs[group_key] == group]
         if adata_group.obs[batch_key].nunique() == 1:
+            continue
+        if len(adata_group.obs_names) <= 2:
             continue
         sil_per_group = sklearn.metrics.silhouette_samples(adata_group.obsm[embed], adata_group.obs[batch_key],
                                                            metric=metric)
@@ -231,7 +232,7 @@ def ari(adata, group1, group2='louvain'):
 
 ### Isolated label score
 def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster",
-                    cluster=True, n=None, all_=False, verbose=False):
+                    cluster=True, n=None, all_=False, verbose=False, **kwargs):
     """
     score how well labels of isolated labels are distiguished in the dataset by
         1. clustering-based approach
@@ -250,7 +251,7 @@ def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster",
     scores = {}
     isolated_labels = get_isolated_labels(adata, label_key, batch_key, cluster_key, n=n, verbose=verbose)
     for label in isolated_labels:
-        score = score_isolated_label(adata, label_key, cluster_key, label, cluster=cluster, verbose=verbose)
+        score = score_isolated_label(adata, label_key, cluster_key, label, cluster=cluster, verbose=verbose, **kwargs)
         scores[label] = score
 
     if all_:
@@ -553,7 +554,7 @@ def graph_connectivity(adata_post, label_key):
 
 def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=True,
             pcr_batch=True, graph_connectivity_batch=True, nmi_=True, ari_=True,
-            isolated_label_asw=True, isolated_label_f1=True, save=None, method='multigrate', name=''):
+            isolated_label_asw=True, isolated_label_f1=True, embed='X_pca', save=None, method='multigrate', name=''):
 
     if nmi_ or ari_:
         print('Clustering...')
@@ -566,7 +567,7 @@ def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=Tr
     # batch correction
     if asw_batch:
         print('ASW label/batch...')
-        _, sil_clus = silhouette_batch(adata, batch_key=batch_key, group_key=label_key)
+        _, sil_clus = silhouette_batch(adata, batch_key=batch_key, group_key=label_key, embed=embed)
         results['ASW_label/batch'] = sil_clus.silhouette_score.mean()
     if pcr_batch:
         print('PCR batch...')
@@ -578,7 +579,7 @@ def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=Tr
     # bio conservation
     if asw_label:
         print('ASW label...')
-        results['ASW_label'] = silhouette(adata, group_key=label_key)
+        results['ASW_label'] = silhouette(adata, group_key=label_key, embed=embed)
     if nmi_:
         print('NMI cluster/label...')
         results['NMI_cluster/label'] = nmi(adata, cluster_key, label_key)
@@ -587,7 +588,7 @@ def metrics(adata_old, adata, batch_key, label_key, asw_label=True, asw_batch=Tr
         results['ARI_cluster/label'] = ari(adata, cluster_key, label_key)
     if isolated_label_asw:
         print('Isolated label silhouette...')
-        results['isolated_label_silhouette'] = isolated_labels(adata, label_key, batch_key, cluster=False)
+        results['isolated_label_silhouette'] = isolated_labels(adata, label_key, batch_key, cluster=False, embed=embed)
     if isolated_label_f1:
         print('Isolated label F1...')
         results['isolated_label_F1'] = isolated_labels(adata, label_key, batch_key, cluster=True)

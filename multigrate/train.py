@@ -42,14 +42,14 @@ def train(experiment_name, output_dir, **config):
 
     # create the model to be trained
     model = create_model(config['model']['name'], model_params)
-
+    
     # train
     model.train(**config['model']['train'])
 
     # save the last state of the model
-    model.save(os.path.join(output_dir, 'last-model.pt'))
+    model.save(output_dir)
     torch.save(pair_group_masks, os.path.join(output_dir, 'pair-group-masks.pt'))
-    
+
     return model
 
 
