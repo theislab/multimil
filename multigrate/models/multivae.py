@@ -691,14 +691,14 @@ class MultiVAE:
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
                 loss += mse_loss
             elif loss_type == 'nb':
-                dispersion = self.theta.T[batch]
+                dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
                 dispersion = torch.exp(dispersion)
                 # decoder returns mean so mean = r
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, r, dispersion)
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
-                dispersion = self.theta.T[batch]
+                dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
                 dispersion = torch.exp(dispersion)
                 zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
                 loss -= zinb_loss
