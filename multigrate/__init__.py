@@ -63,7 +63,7 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
     for i, loss in enumerate(network.losses):
         if loss in ["nb", "zinb"] and n_new_batch_labels[i] >= 1:
             theta_to_add = torch.randn(new_network.x_dims[i], n_new_batch_labels[i])
-            new_network.theta = torch.cat((network.theta, theta_to_add), 1)
+            new_network.theta = torch.cat((network.theta, theta_to_add), 1).to(network.model.device)
 
     if new_network.condition:
         encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',
