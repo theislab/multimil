@@ -9,7 +9,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from sklearn.model_selection import train_test_split
-from itertools import cycle
+from itertools import cycle, zip_longest
 from ..datasets import SingleCellDataset
 from .mlp import MLP
 from .mlp_decoder import MLP_decoder
@@ -97,9 +97,11 @@ class MultiVAETorch(nn.Module):
     def encode_pairs(self, hs, pair_groups):
         hs_concat = []
         checked_pairs = []
+        order = []
         for i, pair in enumerate(pair_groups):
             if pair not in self.paired_dict:
                 hs_concat.append(hs[i])
+                order.append(i)
                 checked_pairs.append(pair)
             elif pair not in checked_pairs:
                 checked_pairs.append(pair)
@@ -107,9 +109,10 @@ class MultiVAETorch(nn.Module):
                 for j in range(len(pair_groups)):
                     if pair_groups[j] == pair:
                         hs_pair.append(hs[j])
+                        order.append(j)
                 hs_pair = torch.cat(hs_pair, dim=-1)
                 hs_concat.append(self.paired_encoders[self.paired_dict[pair]](hs_pair))
-        return hs_concat, checked_pairs
+        return hs_concat, checked_pairs, order
 
     def decode_pairs(self, hs_concat, concat_pair_groups):
         hs = []
@@ -197,7 +200,8 @@ class MultiVAETorch(nn.Module):
     def forward(self, xs, modalities, pair_groups, batch_labels):
         # encode
         hs = [self.to_shared_dim(x, mod, pair_group, batch_label) for x, mod, pair_group, batch_label in zip(xs, modalities, pair_groups, batch_labels)]
-        hs_concat, concat_pair_groups = self.encode_pairs(hs, pair_groups)
+        hs_concat, concat_pair_groups, order = self.encode_pairs(hs, pair_groups)
+        # change order according to how encode_pairs changed it
         zs = [self.encode_shared(h) for h in hs_concat]
         # bottleneck
         mus = [z[1] for z in zs]
@@ -206,6 +210,10 @@ class MultiVAETorch(nn.Module):
         # decode
         hs_concat = [self.z_to_h(z) for z in zs]
         hs, pair_groups = self.decode_pairs(hs_concat, concat_pair_groups)
+        # change the order of data back to the original as encode_pairs changes it
+        inverse_permutation = np.argsort(order)
+        hs = [hs[inverse_permutation[i]] for i in range(len(xs))]
+        pair_groups = [pair_groups[inverse_permutation[i]] for i in range(len(xs))]
         rs = [self.decode_from_shared(h, mod, pair_group, batch_label) for h, mod, pair_group, batch_label in zip(hs, modalities, pair_groups, batch_labels)]
         return rs, zs, mus, logvars, concat_pair_groups
 
@@ -245,7 +253,7 @@ class MultiVAETorch(nn.Module):
 
     def integrate(self, xs, mods, pair_groups, batch_labels, j=None):
         hs = [self.to_shared_dim(x, mod, pair_group, batch_label) for x, mod, pair_group, batch_label in zip(xs, mods, pair_groups, batch_labels)]
-        hs_concat, pair_groups = self.encode_pairs(hs, pair_groups)
+        hs_concat, pair_groups, order = self.encode_pairs(hs, pair_groups)
         zs = [self.encode_shared(h) for h in hs_concat]
         zs = [z[0] for z in zs]
         for i, zi in enumerate(zs):
@@ -332,9 +340,6 @@ class MultiVAE:
         else:
             raise ValueError(f'adatas and loss_coefs arguments must be the same length or loss_coefs has to be []. len(adatas) = {len(adatas)} != {len(loss_coefs)} = len(loss_coefs)')
 
-        if self.cycle_coef > 0 and ('nb' in self.losses or 'zinb' in self.losses):
-            raise ValueError('Cycle consistency loss can only be computed when all losses are either "mse" or "bce". Set "cycle_coef" to zero or remove "nb" and "zinb" from losses.')
-
         self.loss_coef_dict = {}
         for i, loss in enumerate(self.losses):
             self.loss_coef_dict[loss] = self.loss_coefs[i]
@@ -363,7 +368,7 @@ class MultiVAE:
         if self.theta == None:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
-                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1)))
+                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device)
 
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
@@ -500,7 +505,8 @@ class MultiVAE:
         with torch.no_grad():
             self.model.eval()
 
-            for datas in zip(*dataloaders):
+            for datas in zip_longest(*dataloaders):
+                datas = [data for data in datas if data is not None]
                 xs = [data[0].to(self.device) for data in datas]
                 names = [data[1] for data in datas]
                 modalities = [data[2] for data in datas]
@@ -512,8 +518,6 @@ class MultiVAE:
                 group_indices = {}
                 for i, pair in enumerate(pair_groups):
                     group_indices[pair] = group_indices.get(pair, []) + [i]
-
-
 
                 # forward propagation
                 zs_pred, pair_groups = self.model.integrate(xs, modalities, pair_groups, batch_labels)
@@ -569,12 +573,11 @@ class MultiVAE:
             # forward propagation
             rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
-            # calculate the losses
             recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, new_pair_groups)
             if self.cycle_coef > 0:
-                cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
+                cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, self.losses)
             else:
                 cycle_loss = 0
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
@@ -656,7 +659,7 @@ class MultiVAE:
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, new_pair_groups)
             if self.cycle_coef > 0:
-                cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups)
+                cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, self.losses)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
@@ -722,15 +725,17 @@ class MultiVAE:
                 loss += MMD()(zij, zj)
         return loss
 
-    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups):
+    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses):
         loss = 0
         for i, (xi, pgi, modi, batchi) in enumerate(zip(xs, pair_groups, modalities, batch_labels)):
-            for j, (pgj, modj, batchj) in enumerate(zip(pair_groups, modalities, batch_labels)):
+            for j, (pgj, modj, batchj, lossj) in enumerate(zip(pair_groups, modalities, batch_labels, losses)):
                 if i == j:  # do not make a dataset cycle consistent with itself
                     continue
                 idx = np.argwhere(np.array(new_pair_groups) == pgi)[0][0]
                 zij = self.model.convert(zs[idx], pgi, source_pair=True, dest=modj, dest_pair=False)
                 rij = self.model.decode(zij, modj, batchj)
+                if lossj in ['zinb']:
+                    rij = rij[0]
                 ziji = self.model.convert(self.model.to_latent(rij, modj, batchj), modj, source_pair=False, dest=modi, dest_pair=False)
                 xiji = self.model.decode(ziji, modi, batchi)
                 loss += nn.MSELoss()(xiji, xi)
