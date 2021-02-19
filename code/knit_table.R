@@ -33,10 +33,8 @@ scIB_knit_table <- function(
   column_info,
   row_info,
   palettes,
-  usability = FALSE,
-  atac = FALSE,
-  atac_best = FALSE,
-  remove_genes = FALSE
+  plot_time
+  
 ) {
   # no point in making these into parameters
   row_height <- 1.1
@@ -59,9 +57,9 @@ scIB_knit_table <- function(
   row_pos <-
     row_info %>%
     group_by(group) %>%
-    mutate(group_i = row_number()) %>%
+    dplyr::mutate(group_i = row_number()) %>%
     ungroup() %>%
-    mutate(
+    dplyr::mutate(
       row_i = row_number(),
       colour_background = group_i %% 2 == 1,
       do_spacing = c(FALSE, diff(as.integer(factor(group))) != 0),
@@ -86,7 +84,7 @@ scIB_knit_table <- function(
   
   column_pos <-
     column_info %>%
-    mutate(
+    dplyr::mutate(
       do_spacing = c(FALSE, diff(as.integer(factor(group))) != 0),
       xsep = case_when(
         overlay ~ c(0, -head(width, -1)),
@@ -166,28 +164,36 @@ scIB_knit_table <- function(
   )
   rect_data <- rect_data %>%
     add_column_if_missing(hjust = 0) %>%
-    mutate(
+    dplyr::mutate(
       xmin = xmin + (1 - value) * xwidth * hjust,
       xmax = xmax - (1 - value) * xwidth * (1 - hjust)
     )
   
   colors <- NULL
+  
   for(i in 1:ncol(dat_mat)){
-    palette <- colorRampPalette(rev(brewer.pal(9, col_palette$name_palette[[i]])))(nrow(data)-sum(is.na(dat_mat[,i])))
-    colors <- c(colors, palette[rank(dat_mat[,i], ties.method = "average", na.last = "keep")])
+    if(col_palette$name_palette[[i]] == "YlOrRd"){
+      palette <- colorRampPalette(brewer.pal(9, col_palette$name_palette[[i]]))(nrow(data)-sum(is.na(dat_mat[,i])))
+      colors <- c(colors, palette[rank(dat_mat[,i], ties.method = "average", na.last = "keep")])
+    } else{
+      palette <- colorRampPalette(rev(brewer.pal(9, col_palette$name_palette[[i]])))(nrow(data)-sum(is.na(dat_mat[,i])))
+      colors <- c(colors, palette[rank(dat_mat[,i], ties.method = "average", na.last = "keep")])
+    }
+    
   }
   
   rect_data$colors <- colors
   
-  
+  # Remove rows with NAs (bars that should not be plotted)
+  rect_data <- rect_data[complete.cases(rect_data),]
   
   # gather text data
   ind_text <- which(column_info$geom == "text")
+  print(data)
+  print(colnames(data))
   dat_mat <- as.matrix(data[, ind_text])
   
-  if(atac){
-    colnames(dat_mat)[1] <- "Method"
-  }
+  colnames(dat_mat) = colnames(data)[ind_text]
   
   text_data <- data.frame(label_value = as.vector(dat_mat), 
                           group = rep(colnames(dat_mat), each = nrow(dat_mat)),
@@ -201,25 +207,6 @@ scIB_knit_table <- function(
   
   text_data$colors <- "black"
   
-  
-  # ADD top3 ranking for each bar column
-  if(usability || atac_best){
-    cols_bar <- unique(rect_data$label)
-    cols_bar <- as.character(cols_bar[!is.na(cols_bar)])
-    for(c in cols_bar){
-      rect_tmp <- rect_data[rect_data$label == c,]
-      #rect_tmp <- rect_tmp[order(rect_tmp$value, decreasing = T),]
-      #rect_tmp <- rect_tmp[1:3, c("xmin", "xmax", "ymin", "ymax")]
-      #rect_tmp <- add_column(rect_tmp, "label_value" = c("1", "2", "3"), .before = "xmin")
-      rect_tmp <- add_column(rect_tmp, "label_value" = as.character(rank(-rect_tmp$value, ties.method = "min")))
-      rect_tmp <- rect_tmp[rect_tmp$label_value %in% c("1", "2", "3"), c("label_value", "xmin", "xmax", "ymin", "ymax")]
-      rect_tmp <- add_column(rect_tmp, "size" = 2.5, .after = "ymax")
-      rect_tmp <- add_column(rect_tmp, "colors" = "black", .after = "size")
-      rect_tmp <- add_column(rect_tmp, "fontface" = "plain", .after = "colors")
-      rect_tmp <- add_column(rect_tmp, "group" = "top3", .after = "fontface")
-      text_data <- bind_rows(text_data, rect_tmp)
-    }
-  }
   
   
   
@@ -255,14 +242,14 @@ scIB_knit_table <- function(
         y = (ymin + ymax) / 2
       ) %>%
       ungroup() %>%
-      mutate(xmin = -.5, xmax = 5) %>%
+      dplyr::mutate(xmin = -.5, xmax = 5) %>%
       filter(!is.na(group), group != "")
     
     text_data <- text_data %>% bind_rows(
       row_annotation %>%
         transmute(xmin, xmax, ymin = ymax + row_space, label_value = group %>% gsub("\n", " ", .), 
                   hjust = 0, vjust = .5, fontface = "bold", size = 4) %>%
-        mutate(ymax = ymin + row_height)
+        dplyr::mutate(ymax = ymin + row_height)
     )
   }
   
@@ -308,12 +295,20 @@ scIB_knit_table <- function(
   leg_min_x <- x_min_ranking
   rank_groups <- as.character(column_info[column_info$geom == "bar", "group"])
   
+  if(plot_time){
+    rank_minimum_x <- list("Score overall" = leg_min_x, 
+                           "Removal of batch effects" = leg_min_x+1, 
+                           "Cell type label variance" = leg_min_x+2,
+                           "Time" = leg_min_x+3)
+    leg_max_x <- leg_min_x+3
+  } else {
+    rank_minimum_x <- list("Score overall" = leg_min_x, 
+                           "Removal of batch effects" = leg_min_x+1, 
+                           "Cell type label variance" = leg_min_x+2
+    )
+    leg_max_x <- leg_min_x+2
+  }
   
-  rank_minimum_x <- list("Score overall" = leg_min_x, 
-                         "Removal of batch effects" = leg_min_x+1, 
-                         "Cell type label variance" = leg_min_x+2,
-                         "Time" = leg_min_x+3)
-  leg_max_x <- leg_min_x+3
   
   
   rank_title_data <- data.frame(xmin = leg_min_x, 
@@ -359,57 +354,57 @@ scIB_knit_table <- function(
   
   # CREATE LEGEND for circle scores
   # circle legend
-  if(!usability && !atac_best){
-    cir_minimum_x <- x_min_score
-    
-    cir_legend_size <- 1
-    cir_legend_space <- .1
-    
-    cir_legend_dat <-
-      data.frame(
-        value = seq(0, 1, by = .2),
-        r = row_height/2*seq(0, 1, by = .2)
-      )
-    cir_legend_dat$r <- rescale(cir_legend_dat$r, to = c(0.05, 0.55), from = range(cir_legend_dat$r, na.rm = T))
-    
-    x0 <- vector("integer", nrow(cir_legend_dat))
-    for(i in 1:length(x0)){
-      if(i == 1){
-        x0[i] <- cir_minimum_x + cir_legend_space + cir_legend_dat$r[i]
-      }
-      else {
-        x0[i] <- x0[i-1] + cir_legend_dat$r[i-1] + cir_legend_space + cir_legend_dat$r[i]
-      }
+  
+  cir_minimum_x <- x_min_score
+  
+  cir_legend_size <- 1
+  cir_legend_space <- .1
+  
+  cir_legend_dat <-
+    data.frame(
+      value = seq(0, 1, by = .2),
+      r = row_height/2*seq(0, 1, by = .2)
+    )
+  cir_legend_dat$r <- rescale(cir_legend_dat$r, to = c(0.05, 0.55), from = range(cir_legend_dat$r, na.rm = T))
+  
+  x0 <- vector("integer", nrow(cir_legend_dat))
+  for(i in 1:length(x0)){
+    if(i == 1){
+      x0[i] <- cir_minimum_x + cir_legend_space + cir_legend_dat$r[i]
     }
-    
-    cir_legend_dat$x0 <- x0
-    cir_legend_min_y <- leg_max_y-4
-    cir_legend_dat$y0 <- cir_legend_min_y + 1 + cir_legend_dat$r
-    
-    cir_legend_dat$colors <- NULL
-    cir_maximum_x <- max(cir_legend_dat$x0)
-    
-    cir_title_data <- data_frame(xmin = cir_minimum_x, 
-                                 xmax = cir_maximum_x, 
-                                 ymin = leg_max_y -1, 
-                                 ymax = leg_max_y,
-                                 label_value = "Score", 
-                                 hjust = 0, vjust = 0, fontface = "bold")
-    
-    cir_value_data <- data.frame(xmin = cir_legend_dat$x0 - cir_legend_dat$r,
-                                 xmax = cir_legend_dat$x0 + cir_legend_dat$r,
-                                 ymin = cir_legend_min_y,
-                                 ymax = cir_legend_min_y +3,
-                                 hjust = .5, vjust = 0, size = 2.5,
-                                 label_value = ifelse(cir_legend_dat$value %in% c(0, 1), 
-                                                      paste0(cir_legend_dat$value*100, "%"), ""))
-    
-    circle_data <- bind_rows(circle_data, cir_legend_dat)
-    text_data <- bind_rows(text_data, cir_title_data, cir_value_data)
-    
-    
-    
+    else {
+      x0[i] <- x0[i-1] + cir_legend_dat$r[i-1] + cir_legend_space + cir_legend_dat$r[i]
+    }
   }
+  
+  cir_legend_dat$x0 <- x0
+  cir_legend_min_y <- leg_max_y-4
+  cir_legend_dat$y0 <- cir_legend_min_y + 1 + cir_legend_dat$r
+  
+  cir_legend_dat$colors <- NULL
+  cir_maximum_x <- max(cir_legend_dat$x0)
+  
+  cir_title_data <- data_frame(xmin = cir_minimum_x, 
+                               xmax = cir_maximum_x, 
+                               ymin = leg_max_y -1, 
+                               ymax = leg_max_y,
+                               label_value = "Score", 
+                               hjust = 0, vjust = 0, fontface = "bold")
+  
+  cir_value_data <- data.frame(xmin = cir_legend_dat$x0 - cir_legend_dat$r,
+                               xmax = cir_legend_dat$x0 + cir_legend_dat$r,
+                               ymin = cir_legend_min_y,
+                               ymax = cir_legend_min_y +3,
+                               hjust = .5, vjust = 0, size = 2.5,
+                               label_value = ifelse(cir_legend_dat$value %in% c(0, 1), 
+                                                    paste0(cir_legend_dat$value*100, "%"), ""))
+  
+  circle_data <- bind_rows(circle_data, cir_legend_dat)
+  text_data <- bind_rows(text_data, cir_title_data, cir_value_data)
+  
+  
+  
+  
   
   minimum_y <- min(minimum_y, min(text_data$ymin, na.rm = TRUE))
   
@@ -446,7 +441,7 @@ scIB_knit_table <- function(
     # add defaults for optional values
     rect_data <- rect_data %>%
       add_column_if_missing(alpha = 1, border = TRUE, border_colour = "black") %>%
-      mutate(border_colour = ifelse(border, border_colour, NA))
+      dplyr::mutate(border_colour = ifelse(border, border_colour, NA))
     
     g <- g + geom_rect(aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = colors, colour = border_colour, alpha = alpha), rect_data, size = .25)
   }
@@ -465,7 +460,7 @@ scIB_knit_table <- function(
         lineheight = 1,
         angle = 0
       ) %>%
-      mutate(
+      dplyr::mutate(
         angle2 = angle / 360 * 2 * pi,
         cosa = cos(angle2) %>% round(2),
         sina = sin(angle2) %>% round(2),
@@ -477,21 +472,15 @@ scIB_knit_table <- function(
       filter(label_value != "")
     # Set fontface for legend bold
     text_data[text_data$label_value == "Ranking", "fontface"] <- "bold"
-    # Set fontface for ranking numbers bold
-    if(usability || atac_best){
-      text_data[1:nrow(data), "fontface"] <- "bold"
-    }
+    
     # subset text_data to left-aligned rows
     text_data_left <- text_data[which(text_data$group == "Method" | text_data$group == "top3"), ]
     text_data <- text_data[-which(text_data$group == "Method" | text_data$group == "top3"), ]
     
     g <- g + geom_text(aes(x = x, y = y, label = label_value, colour = colors, hjust = hjust, vjust = vjust, size = size, fontface = fontface, angle = angle), data = text_data)
     
-    text_data_left[text_data_left$group == "Method", "x"] <- text_data_left[text_data_left$group == "Method", "x"] - 3
-    if(usability || atac_best){
-      text_data_left[text_data_left$group == "top3", "x"] <- text_data_left[text_data_left$group == "top3", "xmin"] + .3
-      text_data_left[text_data_left$group == "Method", "x"] <- text_data_left[text_data_left$group == "Method", "x"] + .5
-    }
+    text_data_left[text_data_left$group == "Method", "x"] <- text_data_left[text_data_left$group == "Method", "x"] - 3.5
+    
     g <- g + geom_text(aes(x = x, y = y, label = label_value, colour = colors, hjust = "left", vjust = vjust, size = size, fontface = fontface, angle = angle), data = text_data_left)
   }
   

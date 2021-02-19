@@ -33,8 +33,8 @@ class MultiVAETorch(nn.Module):
         condition=None,
         n_batch_labels=None,
         paired_dict={},
-        pair_counts={},
-        modalities_per_group={}
+        modalities_per_group={},
+        paired_networks_per_modality_pairs={}
     ):
         super().__init__()
 
@@ -53,8 +53,9 @@ class MultiVAETorch(nn.Module):
         self.n_modality = len(self.encoders)
         self.n_batch_labels = n_batch_labels
         self.paired_dict = paired_dict
-        self.pair_counts = pair_counts
+        #self.unique_pairs_of_modalities = unique_pairs_of_modalities
         self.modalities_per_group = modalities_per_group
+        self.paired_networks_per_modality_pairs = paired_networks_per_modality_pairs
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -111,7 +112,13 @@ class MultiVAETorch(nn.Module):
                         hs_pair.append(hs[j])
                         order.append(j)
                 hs_pair = torch.cat(hs_pair, dim=-1)
-                hs_concat.append(self.paired_encoders[self.paired_dict[pair]](hs_pair))
+
+#                idx = None
+#                for key in self.unique_pairs_of_modalities:
+#                    if self.unique_pairs_of_modalities[key] == self.modalities_per_group[pair]:
+#                        idx = key
+#                        break
+                hs_concat.append(self.paired_encoders[self.paired_networks_per_modality_pairs[pair]](hs_pair))
         return hs_concat, checked_pairs, order
 
     def decode_pairs(self, hs_concat, concat_pair_groups):
@@ -123,9 +130,13 @@ class MultiVAETorch(nn.Module):
                 pair_groups.append(pair)
             else: # unique anyway
                 n_dim = hs_concat[0].shape[1]
-                h_split = torch.split(self.paired_decoders[self.paired_dict[pair]](hs_concat[i]), n_dim, dim=1)
+
+                h_split = torch.split(self.paired_decoders[self.paired_networks_per_modality_pairs[pair]](hs_concat[i]), n_dim, dim=1)
                 hs.extend(h_split)
-                pair_groups.extend([pair]*self.pair_counts[pair])
+                #TODO change pair counts to unique_pairs_of_modalities
+
+                #for self.unique_pairs_of_modalities:
+                pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
 
         return hs, pair_groups
 
@@ -380,10 +391,10 @@ class MultiVAE:
         self.shared_decoder = MLP(z_dim + n_mod_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, batch_norm=True, regularize_last_layer=True)
 
-        self.paired_encoders = [MLP(self.pair_counts[pair]*self.h_dim, self.h_dim, paired_hiddens, output_activation='leakyrelu',
-                            dropout=dropout, batch_norm=True, regularize_last_layer=True) for pair in pair_count]
-        self.paired_decoders = [MLP(self.h_dim, self.pair_counts[pair]*self.h_dim, paired_hiddens, output_activation='leakyrelu',
-                            dropout=dropout, batch_norm=True, regularize_last_layer=True) for pair in pair_count]
+        self.paired_encoders = [MLP(len(self.unique_pairs_of_modalities[pair])*self.h_dim, self.h_dim, paired_hiddens, output_activation='leakyrelu',
+                            dropout=dropout, batch_norm=True, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
+        self.paired_decoders = [MLP(self.h_dim, len(self.unique_pairs_of_modalities[pair])*self.h_dim, paired_hiddens, output_activation='leakyrelu',
+                            dropout=dropout, batch_norm=True, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
 
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
@@ -392,7 +403,7 @@ class MultiVAE:
 
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder, self.paired_encoders, self.paired_decoders,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels,
-                                   self.pair_groups_dict, self.pair_counts, self.modalities_per_group)
+                                   self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
 
     @property
     def history(self):
@@ -498,8 +509,9 @@ class MultiVAE:
         pair_count = self.prep_paired_groups(pair_groups)
 
         self.model.paired_dict = self.pair_groups_dict
-        self.model.pair_counts = self.pair_counts
+        self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
         self.model.modalities_per_group = self.modalities_per_group
+        self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
 
         zs = []
         with torch.no_grad():
@@ -790,12 +802,27 @@ class MultiVAE:
             for i, group in enumerate(pair_groups):
                 if pair in group:
                     self.modalities_per_group[pair].append(i)
+
+        # unique modality pairs
+        list_of_pairs = [val for val in self.modalities_per_group.values()]
+        unique_list_of_pairs = [list(x) for x in set(tuple(x) for x in list_of_pairs)]
+        self.unique_pairs_of_modalities = {}
+        for i, pair_of_modalities in enumerate(unique_list_of_pairs):
+            self.unique_pairs_of_modalities[i] = pair_of_modalities
+
+        # which paired encoder/decoder to use for each pair
+        self.paired_networks_per_modality_pairs = {}
+        for index in self.unique_pairs_of_modalities:
+            for pair in self.modalities_per_group:
+                if self.unique_pairs_of_modalities[index] == self.modalities_per_group[pair]:
+                    self.paired_networks_per_modality_pairs[pair] = index
+
         return pair_count
 
     def save(self, path):
         torch.save({
             'state_dict' : self.model.state_dict(),
-            # TODO add history
+            #  add history
         }, os.path.join(path, 'last-model.pt'), pickle_protocol=4)
         pd.DataFrame(self._val_history).to_csv(os.path.join(path, 'history.csv'))
 
