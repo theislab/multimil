@@ -4,6 +4,7 @@ import pandas as pd
 import time
 import os
 from collections import defaultdict, Counter
+from operator import itemgetter, attrgetter
 import scanpy as sc
 import torch
 from torch import nn
@@ -53,7 +54,6 @@ class MultiVAETorch(nn.Module):
         self.n_modality = len(self.encoders)
         self.n_batch_labels = n_batch_labels
         self.paired_dict = paired_dict
-        #self.unique_pairs_of_modalities = unique_pairs_of_modalities
         self.modalities_per_group = modalities_per_group
         self.paired_networks_per_modality_pairs = paired_networks_per_modality_pairs
 
@@ -90,7 +90,7 @@ class MultiVAETorch(nn.Module):
         params = list(self.adv_disc.parameters())
         return params
 
-    def to_shared_dim(self, x, i, pair_group, batch_label):
+    def to_shared_dim(self, x, i, batch_label):
         if self.condition:
             x = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in x])
         return self.x_to_h(x, i)
@@ -98,28 +98,25 @@ class MultiVAETorch(nn.Module):
     def encode_pairs(self, hs, pair_groups):
         hs_concat = []
         checked_pairs = []
-        order = []
-        for i, pair in enumerate(pair_groups):
+
+        # go through pairs and feed paired datasets through paired encoders
+        i = 0
+        while i < len(pair_groups):
+            pair = pair_groups[i]
+            checked_pairs.append(pair)
             if pair not in self.paired_dict:
                 hs_concat.append(hs[i])
-                order.append(i)
-                checked_pairs.append(pair)
-            elif pair not in checked_pairs:
-                checked_pairs.append(pair)
+                i += 1
+            else:
                 hs_pair = []
-                for j in range(len(pair_groups)):
-                    if pair_groups[j] == pair:
-                        hs_pair.append(hs[j])
-                        order.append(j)
+                hs_pair.append(hs[i])
+                while i+1 < len(pair_groups) and pair_groups[i] == pair_groups[i+1]:
+                    hs_pair.append(hs[i+1])
+                    i = i+1
+                i += 1
                 hs_pair = torch.cat(hs_pair, dim=-1)
-
-#                idx = None
-#                for key in self.unique_pairs_of_modalities:
-#                    if self.unique_pairs_of_modalities[key] == self.modalities_per_group[pair]:
-#                        idx = key
-#                        break
                 hs_concat.append(self.paired_encoders[self.paired_networks_per_modality_pairs[pair]](hs_pair))
-        return hs_concat, checked_pairs, order
+        return hs_concat, checked_pairs
 
     def decode_pairs(self, hs_concat, concat_pair_groups):
         hs = []
@@ -133,9 +130,6 @@ class MultiVAETorch(nn.Module):
 
                 h_split = torch.split(self.paired_decoders[self.paired_networks_per_modality_pairs[pair]](hs_concat[i]), n_dim, dim=1)
                 hs.extend(h_split)
-                #TODO change pair counts to unique_pairs_of_modalities
-
-                #for self.unique_pairs_of_modalities:
                 pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
 
         return hs, pair_groups
@@ -210,9 +204,8 @@ class MultiVAETorch(nn.Module):
 
     def forward(self, xs, modalities, pair_groups, batch_labels):
         # encode
-        hs = [self.to_shared_dim(x, mod, pair_group, batch_label) for x, mod, pair_group, batch_label in zip(xs, modalities, pair_groups, batch_labels)]
-        hs_concat, concat_pair_groups, order = self.encode_pairs(hs, pair_groups)
-        # change order according to how encode_pairs changed it
+        hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
+        hs_concat, concat_pair_groups = self.encode_pairs(hs, pair_groups)
         zs = [self.encode_shared(h) for h in hs_concat]
         # bottleneck
         mus = [z[1] for z in zs]
@@ -222,9 +215,6 @@ class MultiVAETorch(nn.Module):
         hs_concat = [self.z_to_h(z) for z in zs]
         hs, pair_groups = self.decode_pairs(hs_concat, concat_pair_groups)
         # change the order of data back to the original as encode_pairs changes it
-        inverse_permutation = np.argsort(order)
-        hs = [hs[inverse_permutation[i]] for i in range(len(xs))]
-        pair_groups = [pair_groups[inverse_permutation[i]] for i in range(len(xs))]
         rs = [self.decode_from_shared(h, mod, pair_group, batch_label) for h, mod, pair_group, batch_label in zip(hs, modalities, pair_groups, batch_labels)]
         return rs, zs, mus, logvars, concat_pair_groups
 
@@ -263,8 +253,8 @@ class MultiVAETorch(nn.Module):
         return z + v @ self.modality_vectors.weight
 
     def integrate(self, xs, mods, pair_groups, batch_labels, j=None):
-        hs = [self.to_shared_dim(x, mod, pair_group, batch_label) for x, mod, pair_group, batch_label in zip(xs, mods, pair_groups, batch_labels)]
-        hs_concat, pair_groups, order = self.encode_pairs(hs, pair_groups)
+        hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, mods, batch_labels)]
+        hs_concat, pair_groups = self.encode_pairs(hs, pair_groups)
         zs = [self.encode_shared(h) for h in hs_concat]
         zs = [z[0] for z in zs]
         for i, zi in enumerate(zs):
@@ -331,7 +321,6 @@ class MultiVAE:
         self.dropout = dropout
         self.output_activations = output_activations
         self.pair_groups = pair_groups
-        # reshape hiddens into a dict for easier use in the following
         self.x_dims = [modality_adatas[0].shape[1] if len(modality_adatas) > 0 else 0 for modality_adatas in adatas]  # the feature set size of each modality
         self.n_modality = len(self.x_dims)
 
@@ -400,7 +389,6 @@ class MultiVAE:
         self.logvar = MLP(z_dim, z_dim)
         self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
         self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
-
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder, self.paired_encoders, self.paired_decoders,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
@@ -414,14 +402,14 @@ class MultiVAE:
         self._val_history = defaultdict(list)
 
     def reshape_adatas(self, adatas, names, layers, pair_groups=None, batch_labels=None):
+        # TODO: check if names are unique?
         if pair_groups is None:
             pair_groups = names  # dummy pair_groups
-            # TODO: refactor this hack
+        # TODO: this should never happen
         if batch_labels is None:
             batch_labels = names
         reshaped_adatas = {}
         for modality, (adata_set, name_set, layer_set, pair_group_set, batch_label_set) in enumerate(zip(adatas, names, layers, pair_groups, batch_labels)):
-            # TODO: if sets are not lists, convert them to lists
             for adata, name, layer, pair_group, batch_label in zip(adata_set, name_set, layer_set, pair_group_set, batch_label_set):
                 reshaped_adatas[name] = {
                     'adata': adata,
@@ -502,16 +490,17 @@ class MultiVAE:
         if len(layers) == 0:
             layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
 
-        adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
-        datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
-        dataloaders = [d.loader for d in datasets]
-
         pair_count = self.prep_paired_groups(pair_groups)
 
+        # TODO: check if need unique_pairs_of_modalities
         self.model.paired_dict = self.pair_groups_dict
         self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
         self.model.modalities_per_group = self.modalities_per_group
         self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
+
+        adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
+        datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
+        dataloaders = [d.loader for d in datasets]
 
         zs = []
         with torch.no_grad():
@@ -577,7 +566,6 @@ class MultiVAE:
             if iteration >= n_iters:
                 break
 
-            # TODO: refactor datas to be like (xs, modalities, pair_groups)
             xs = [data[0].to(self.device) for data in datas]
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
@@ -657,7 +645,6 @@ class MultiVAE:
             if iteration >= val_n_iters:
                 break
 
-            # TODO: refactor datas to be like (xs, modalities, pair_groups)
             xs = [data[0].to(self.device) for data in datas]
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
@@ -781,11 +768,13 @@ class MultiVAE:
 
             train_adata = adata[train_mask]
             val_adata = adata[~train_mask]
+
             train_dataset = SingleCellDataset(train_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label, layer=layer)
             val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label, layer=layer)
-            train_datasets.insert(modality, train_dataset)
-            val_datasets.insert(modality, val_dataset)
-
+            train_datasets.append(train_dataset)
+            val_datasets.append(val_dataset)
+        train_datasets = sorted(train_datasets, key=attrgetter('pair_group', 'modality'))
+        val_datasets = sorted(val_datasets, key=attrgetter('pair_group', 'modality'))
         return train_datasets, val_datasets
 
     def prep_paired_groups(self, pair_groups):
@@ -822,7 +811,6 @@ class MultiVAE:
     def save(self, path):
         torch.save({
             'state_dict' : self.model.state_dict(),
-            #  add history
         }, os.path.join(path, 'last-model.pt'), pickle_protocol=4)
         pd.DataFrame(self._val_history).to_csv(os.path.join(path, 'history.csv'))
 

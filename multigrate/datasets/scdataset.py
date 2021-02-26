@@ -2,7 +2,6 @@ import numpy as np
 from scipy import sparse
 import torch
 
-
 class SingleCellDataset(torch.utils.data.Dataset):
 
     def __init__(
@@ -22,7 +21,6 @@ class SingleCellDataset(torch.utils.data.Dataset):
         self.pair_group = pair_group
         self.celltype_key = celltype_key
         self.batch_label = batch_label
-        #self.indices = adata.obs_names
 
         if layer:
             self.x = self._create_tensor(adata.layers[layer])
@@ -54,6 +52,4 @@ class SingleCellDataset(torch.utils.data.Dataset):
         return len(self.adata)
 
     def __getitem__(self, idx):
-        #print(self.adata[idx].obs_names)
-
         return self.x[idx], self.adata[idx].obs[self.celltype_key].item(), self.adata[idx].obs_names

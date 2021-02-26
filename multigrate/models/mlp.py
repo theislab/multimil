@@ -10,6 +10,7 @@ class MLP(nn.Module):
                  batch_norm=True,
                  regularize_last_layer=False,
                  device='cpu'):
+                 
         super(MLP, self).__init__()
 
         # create network architecture
