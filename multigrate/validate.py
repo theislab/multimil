@@ -13,11 +13,12 @@ from .datasets import load_dataset
 from .models import create_model
 import torch
 
-def validate(experiment_name, output_dir, save_losses, config):
+def validate(experiment_name, output_dir, config, save_losses=True):
     # load experiment configurations
     experiment_config = config['experiment']
     random_seed = experiment_config['seed']
     pair_split = experiment_config.get('pair-split', None)
+    batches_present = experiment_config['batch']
 
     train_params = config['model']['train']
     modality_key = train_params.get('modality_key', 'modality')
@@ -64,7 +65,7 @@ def validate(experiment_name, output_dir, save_losses, config):
         sc.pp.neighbors(z)
         sc.tl.umap(z)
         sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1, show=False)
-        plt.savefig(os.path.join(output_dir, f'umap-z.png'), dpi=200, bbox_inches='tight')
+        plt.savefig(os.path.join(output_dir, 'umap-z.png'), dpi=200, bbox_inches='tight')
         plt.close('all')
 
         # calculate metrics and save them
@@ -77,7 +78,7 @@ def validate(experiment_name, output_dir, save_losses, config):
             embed='X_latent',
             pcr_batch=False,
             isolated_label_f1=False,
-            asw_batch=True
+            asw_batch=batches_present
         )
         print(mtrcs.to_dict())
         json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
