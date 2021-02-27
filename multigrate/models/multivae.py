@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from sklearn.model_selection import train_test_split
-from itertools import cycle, zip_longest
+from itertools import cycle, zip_longest, groupby
 from ..datasets import SingleCellDataset
 from .mlp import MLP
 from .mlp_decoder import MLP_decoder
@@ -97,26 +97,22 @@ class MultiVAETorch(nn.Module):
 
     def encode_pairs(self, hs, pair_groups):
         hs_concat = []
-        checked_pairs = []
+        new_pair_groups = []
+        current = 0
 
-        # go through pairs and feed paired datasets through paired encoders
-        i = 0
-        while i < len(pair_groups):
-            pair = pair_groups[i]
-            checked_pairs.append(pair)
-            if pair not in self.paired_dict:
-                hs_concat.append(hs[i])
-                i += 1
+        for pair, group in groupby(pair_groups):
+            group_size = len(list(group))
+            if group_size == 1:
+                hs_concat.append(hs[current])
             else:
-                hs_pair = []
-                hs_pair.append(hs[i])
-                while i+1 < len(pair_groups) and pair_groups[i] == pair_groups[i+1]:
-                    hs_pair.append(hs[i+1])
-                    i = i+1
-                i += 1
+                hs_pair = hs[current:current+group_size]
                 hs_pair = torch.cat(hs_pair, dim=-1)
                 hs_concat.append(self.paired_encoders[self.paired_networks_per_modality_pairs[pair]](hs_pair))
-        return hs_concat, checked_pairs
+
+            new_pair_groups.append(pair)
+            current += group_size
+
+        return hs_concat, new_pair_groups
 
     def decode_pairs(self, hs_concat, concat_pair_groups):
         hs = []
@@ -395,6 +391,7 @@ class MultiVAE:
 
     @property
     def history(self):
+        # TODO: check if all the same length, if not take the smallest or sth like that
         return pd.DataFrame(self._val_history)
 
     def reset_history(self):
