@@ -19,6 +19,7 @@ def validate(experiment_name, output_dir, config, save_losses=True):
     random_seed = experiment_config['seed']
     pair_split = experiment_config.get('pair-split', None)
     batches_present = experiment_config['batch']
+    batch_key = experiment_config.get('batch_key', 'batch')
 
     train_params = config['model']['train']
     modality_key = train_params.get('modality_key', 'modality')
@@ -64,7 +65,10 @@ def validate(experiment_name, output_dir, config, save_losses=True):
         # plot the unintegrated latents
         sc.pp.neighbors(z)
         sc.tl.umap(z)
-        sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1, show=False)
+        if batches_present:
+            sc.pl.umap(z, color=[modality_key, celltype_key, batch_key], ncols=1, show=False)
+        else:
+            sc.pl.umap(z, color=[modality_key, celltype_key], ncols=1, show=False)
         plt.savefig(os.path.join(output_dir, 'umap-z.png'), dpi=200, bbox_inches='tight')
         plt.close('all')
 
@@ -73,7 +77,7 @@ def validate(experiment_name, output_dir, config, save_losses=True):
         z.obsm['X_latent'] = z.X
         mtrcs = metrics(
             z, z,
-            batch_key=modality_key,
+            batch_key=batch_key,
             label_key=celltype_key,
             embed='X_latent',
             pcr_batch=False,

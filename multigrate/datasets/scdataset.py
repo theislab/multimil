@@ -24,8 +24,12 @@ class SingleCellDataset(torch.utils.data.Dataset):
 
         if layer:
             self.x = self._create_tensor(adata.layers[layer])
+            self.size_factors = adata.layers[layer].sum(1)
         else:
             self.x = self._create_tensor(adata.X)
+            self.size_factors = adata.X.sum(1)
+
+        #self.size_factors = np.log(adata.X.sum(1))
 
         self.loader = torch.utils.data.DataLoader(
             dataset=self,
@@ -45,11 +49,13 @@ class SingleCellDataset(torch.utils.data.Dataset):
         x = [b[0] for b in batch]
         celltype = [b[1] for b in batch]
         indices = [b[2][0] for b in batch]
+        size_factors = [b[3] for b in batch]
         x = torch.stack(x, dim=0)
-        return x, self.name, self.modality, self.pair_group, celltype, indices, self.batch_label
+        size_factors = torch.Tensor(size_factors)
+        return x, self.name, self.modality, self.pair_group, celltype, indices, size_factors, self.batch_label
 
     def __len__(self):
         return len(self.adata)
 
     def __getitem__(self, idx):
-        return self.x[idx], self.adata[idx].obs[self.celltype_key].item(), self.adata[idx].obs_names
+        return self.x[idx], self.adata[idx].obs[self.celltype_key].item(), self.adata[idx].obs_names, self.size_factors[idx].item()

@@ -56,6 +56,7 @@ class MultiVAETorch(nn.Module):
         self.paired_dict = paired_dict
         self.modalities_per_group = modalities_per_group
         self.paired_networks_per_modality_pairs = paired_networks_per_modality_pairs
+        #self.theta = theta
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -65,6 +66,8 @@ class MultiVAETorch(nn.Module):
         for i, (enc, dec) in enumerate(zip(self.paired_encoders, self.paired_decoders)):
             self.add_module(f'paired_encoder_{i}', enc)
             self.add_module(f'paired_decoder_{i}', dec)
+
+        #self.add_module('theta', nn.ParameterList(self.theta))
 
         self = self.to(device)
 
@@ -364,8 +367,7 @@ class MultiVAE:
         if self.theta == None:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
-                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device)
-
+                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device)#.detach().requires_grad_(True)
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, batch_norm=True, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
@@ -552,7 +554,9 @@ class MultiVAE:
         val_dataloaders = [d.loader for d in val_datasets]
 
         # create optimizers
-        optimizer_ae = torch.optim.Adam(self.model.get_nonadversarial_params(), lr)
+        params = self.model.get_nonadversarial_params()
+        params.extend([self.theta])
+        optimizer_ae = torch.optim.Adam(params, lr)
         optimizer_adv = torch.optim.Adam(self.model.get_adversarial_params(), lr)
 
         # the training loop
@@ -567,10 +571,12 @@ class MultiVAE:
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
+            size_factors = [data[-2] for data in datas]
+
             # forward propagation
             rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
-            recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels)
+            recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels, size_factors)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, new_pair_groups)
             if self.cycle_coef > 0:
@@ -646,12 +652,13 @@ class MultiVAE:
             modalities = [data[2] for data in datas]
             pair_groups = [data[3] for data in datas]
             batch_labels = [data[-1] for data in datas]
+            size_factors = [data[-2] for data in datas]
 
             # forward propagation
             rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
             # calculate the losses
-            recon_loss += self.calc_recon_loss(xs, rs, self.losses, batch_labels)
+            recon_loss += self.calc_recon_loss(xs, rs, self.losses, batch_labels, size_factors)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, new_pair_groups)
             if self.cycle_coef > 0:
@@ -683,24 +690,35 @@ class MultiVAE:
         elif verbose >= 2:
             self.print_progress_val(n_iters, train_time + val_time, end='\n')
 
-    def calc_recon_loss(self, xs, rs, losses, batch_labels):
+    def calc_recon_loss(self, xs, rs, losses, batch_labels, size_factors):
         loss = 0
-        for x, r, loss_type, batch in zip(xs, rs, losses, batch_labels):
+
+        for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
                 loss += mse_loss
+                print(f'MSE loss = {mse_loss}')
             elif loss_type == 'nb':
+                #if self.condition:
+                #    dispertion = torch.narrow(self.theta.T, 0, batch, 1)
+                dec_mean = r
+                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
+                dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
+                #else:
+                #    dispersion = torch.narrow(self.theta.T, 0, 0, 1)
                 dispersion = torch.exp(dispersion)
-                # decoder returns mean so mean = r
-                nb_loss = self.loss_coef_dict['nb']*NB()(x, r, dispersion)
+                nb_loss = self.loss_coef_dict['nb']*NB()(x, dec_mean, dispersion)
+                print(f'NB loss = {-nb_loss}')
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
+                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
                 dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
                 dispersion = torch.exp(dispersion)
                 zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
                 loss -= zinb_loss
+                print(f'NB loss = {-zinb_loss}')
             elif loss_type == 'bce':
                 bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
                 loss += bce_loss
@@ -770,8 +788,10 @@ class MultiVAE:
             val_dataset = SingleCellDataset(val_adata, name, modality, pair_group, celltype_key, batch_size, batch_label=batch_label, layer=layer)
             train_datasets.append(train_dataset)
             val_datasets.append(val_dataset)
+
         train_datasets = sorted(train_datasets, key=attrgetter('pair_group', 'modality'))
         val_datasets = sorted(val_datasets, key=attrgetter('pair_group', 'modality'))
+
         return train_datasets, val_datasets
 
     def prep_paired_groups(self, pair_groups):
