@@ -266,8 +266,9 @@ class MultiVAE:
         adatas,
         names,
         pair_groups,
-        condition = None,
-        z_dim=10,
+        condition=None,
+        normalization='layer',
+        z_dim=15,
         h_dim=32,
         hiddens=[],
         losses=[],
@@ -279,7 +280,7 @@ class MultiVAE:
         kl_coef=1e-4,
         integ_coef=1e-1,
         cycle_coef=1e-2,
-        adversarial=True,
+        adversarial=False,
         dropout=0.2,
         device=None,
         loss_coefs=[],
@@ -324,6 +325,11 @@ class MultiVAE:
         self.n_modality = len(self.x_dims)
 
         pair_count = self.prep_paired_groups(pair_groups)
+
+        if normalization not in ['layer', 'batch']:
+            raise ValueError(f'normalization has to be one of ["layer", "batch"]')
+
+        self.normalization = normalization
 
         if len(losses) == 0:
             self.losses = ['mse']*self.n_modality
@@ -370,23 +376,23 @@ class MultiVAE:
                     self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device)#.detach().requires_grad_(True)
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
-                             dropout=dropout, batch_norm=True, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
+                             dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
         self.decoders = [MLP_decoder(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
-                             dropout=dropout, batch_norm=True, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.x_dims, hiddens, output_activations, self.losses))]
+                             dropout=dropout, norm=normalization, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.x_dims, hiddens, output_activations, self.losses))]
         self.shared_encoder = MLP(h_dim + n_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
-                                  dropout=dropout, batch_norm=True, regularize_last_layer=True)
+                                  dropout=dropout, norm=normalization, regularize_last_layer=True)
         self.shared_decoder = MLP(z_dim + n_mod_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
-                                  dropout=dropout, batch_norm=True, regularize_last_layer=True)
+                                  dropout=dropout, norm=normalization, regularize_last_layer=True)
 
         self.paired_encoders = [MLP(len(self.unique_pairs_of_modalities[pair])*self.h_dim, self.h_dim, paired_hiddens, output_activation='leakyrelu',
-                            dropout=dropout, batch_norm=True, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
+                            dropout=dropout, norm=normalization, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
         self.paired_decoders = [MLP(self.h_dim, len(self.unique_pairs_of_modalities[pair])*self.h_dim, paired_hiddens, output_activation='leakyrelu',
-                            dropout=dropout, batch_norm=True, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
+                            dropout=dropout, norm=normalization, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
 
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
         self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
-        self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, batch_norm=True)
+        self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, norm='layer')
         self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder, self.paired_encoders, self.paired_decoders,
                                    self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
@@ -697,7 +703,7 @@ class MultiVAE:
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
                 loss += mse_loss
-                print(f'MSE loss = {mse_loss}')
+                #print(f'MSE loss = {mse_loss}')
             elif loss_type == 'nb':
                 #if self.condition:
                 #    dispertion = torch.narrow(self.theta.T, 0, batch, 1)
@@ -709,7 +715,7 @@ class MultiVAE:
                 #    dispersion = torch.narrow(self.theta.T, 0, 0, 1)
                 dispersion = torch.exp(dispersion)
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, dec_mean, dispersion)
-                print(f'NB loss = {-nb_loss}')
+                #print(f'NB loss = {-nb_loss}')
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
@@ -718,7 +724,7 @@ class MultiVAE:
                 dispersion = torch.exp(dispersion)
                 zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
                 loss -= zinb_loss
-                print(f'NB loss = {-zinb_loss}')
+                #print(f'NB loss = {-zinb_loss}')
             elif loss_type == 'bce':
                 bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
                 loss += bce_loss
