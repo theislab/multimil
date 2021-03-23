@@ -373,7 +373,7 @@ class MultiVAE:
         if self.theta == None:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
-                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device)#.detach().requires_grad_(True)
+                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach()#.requires_grad_(True)
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
@@ -477,6 +477,66 @@ class MultiVAE:
         sys.stdout.write(end)
         sys.stdout.flush()
 
+    def impute(
+        self,
+        adatas,
+        names,
+        pair_groups,
+        target_modality,
+        batch_labels,
+        modality_key='modality',
+        celltype_key='cell_type',
+        layers=[],
+        batch_size=64,
+    ):
+
+        pair_count = self.prep_paired_groups(pair_groups)
+
+        if len(layers) == 0:
+            layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
+
+        self.model.paired_dict = self.pair_groups_dict
+        self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
+        self.model.modalities_per_group = self.modalities_per_group
+        self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
+
+        adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
+        datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
+        dataloaders = [d.loader for d in datasets]
+
+        zs = []
+        with torch.no_grad():
+            self.model.eval()
+
+            for datas in zip_longest(*dataloaders):
+                datas = [data for data in datas if data is not None]
+                xs = [data[0].to(self.device) for data in datas]
+                names = [data[1] for data in datas]
+                modalities = [data[2] for data in datas]
+                pair_groups = [data[3] for data in datas]
+                celltypes = [data[4] for data in datas]
+                indices = [data[5] for data in datas]
+                batch_labels = [data[-1] for data in datas]
+
+                group_indices = {}
+                for i, pair in enumerate(pair_groups):
+                    group_indices[pair] = group_indices.get(pair, []) + [i]
+
+                # TODO: deal with batches
+                for x, pair, mod, batch in zip(xs, pair_groups, modalities, batch_labels):
+                    zi = self.model.to_latent(x, mod, batch)
+                    zij = self.model.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
+                    xij = self.model.decode(zij, target_modality, batch)
+
+                    z = sc.AnnData(xij.detach().cpu().numpy())
+                    modalities = np.array(names)[group_indices[pair], ]
+                    z.obs['modality'] = '-'.join(modalities)
+                    z.obs['barcode'] = list(indices[group_indices[pair][0]])
+                    z.obs[celltype_key] = celltypes[group_indices[pair][0]]
+                    zs.append(z)
+
+        return sc.AnnData.concatenate(*zs)
+
     def predict(
         self,
         adatas,
@@ -484,7 +544,6 @@ class MultiVAE:
         pair_groups,
         modality_key='modality',
         celltype_key='cell_type',
-        target_modality=0,
         batch_size=64,
         batch_labels=None,
         layers=[]
@@ -708,7 +767,7 @@ class MultiVAE:
                 #if self.condition:
                 #    dispertion = torch.narrow(self.theta.T, 0, batch, 1)
                 dec_mean = r
-                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
+                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
                 #else:
