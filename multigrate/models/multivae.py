@@ -126,7 +126,6 @@ class MultiVAETorch(nn.Module):
                 pair_groups.append(pair)
             else: # unique anyway
                 n_dim = hs_concat[0].shape[1]
-
                 h_split = torch.split(self.paired_decoders[self.paired_networks_per_modality_pairs[pair]](hs_concat[i]), n_dim, dim=1)
                 hs.extend(h_split)
                 pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
@@ -338,6 +337,7 @@ class MultiVAE:
         else:
             raise ValueError(f'adatas and losses arguments must be the same length or losses has to be []. len(adatas) = {len(adatas)} != {len(losses)} = len(losses)')
 
+        # don't need this actually
         if len(loss_coefs) == 0:
             self.loss_coefs = [1.0]*self.n_modality
         elif len(loss_coefs) == self.n_modality:
@@ -484,21 +484,22 @@ class MultiVAE:
         pair_groups,
         target_modality,
         batch_labels,
+        target_pair,
         modality_key='modality',
         celltype_key='cell_type',
         layers=[],
         batch_size=64,
     ):
 
-        pair_count = self.prep_paired_groups(pair_groups)
+        #pair_count = self.prep_paired_groups(pair_groups)
 
         if len(layers) == 0:
             layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
 
-        self.model.paired_dict = self.pair_groups_dict
-        self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
-        self.model.modalities_per_group = self.modalities_per_group
-        self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
+        #self.model.paired_dict = self.pair_groups_dict
+        #self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
+        #self.model.modalities_per_group = self.modalities_per_group
+        #self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
 
         adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
@@ -526,7 +527,12 @@ class MultiVAE:
                 for x, pair, mod, batch in zip(xs, pair_groups, modalities, batch_labels):
                     zi = self.model.to_latent(x, mod, batch)
                     zij = self.model.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
-                    xij = self.model.decode(zij, target_modality, batch)
+
+                    # assume data is paired for the decoder
+                    hs = self.model.z_to_h(zij)
+                    hs, pair_groups = self.model.decode_pairs([hs], [target_pair])
+                    index_of_the_modality = np.where(np.array(self.modalities_per_group[target_pair]) == target_modality)[0][0]
+                    xij = self.model.decode_from_shared(hs[index_of_the_modality], target_modality, target_pair, batch)
 
                     z = sc.AnnData(xij.detach().cpu().numpy())
                     modalities = np.array(names)[group_indices[pair], ]
@@ -558,7 +564,7 @@ class MultiVAE:
 
         # TODO: check if need unique_pairs_of_modalities
         self.model.paired_dict = self.pair_groups_dict
-        self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
+        #self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
         self.model.modalities_per_group = self.modalities_per_group
         self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
 
@@ -609,6 +615,7 @@ class MultiVAE:
         celltype_key='cell_type',
         validate_every=1000,
         verbose=1,
+        print_losses=False
     ):
         # configure training parameters
         print_every = n_iters // 50
@@ -641,11 +648,13 @@ class MultiVAE:
             # forward propagation
             rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
-            recon_loss = self.calc_recon_loss(xs, rs, self.losses, batch_labels, size_factors)
+            losses = [self.losses[mod] for mod in modalities]
+
+            recon_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, new_pair_groups)
             if self.cycle_coef > 0:
-                cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, self.losses)
+                cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
             else:
                 cycle_loss = 0
             kl_coef = self.kl_anneal(iteration, kl_anneal_iters)  # KL annealing
@@ -719,15 +728,17 @@ class MultiVAE:
             batch_labels = [data[-1] for data in datas]
             size_factors = [data[-2] for data in datas]
 
+            losses = [self.losses[mod] for mod in modalities]
+            
             # forward propagation
             rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
 
             # calculate the losses
-            recon_loss += self.calc_recon_loss(xs, rs, self.losses, batch_labels, size_factors)
+            recon_loss += self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, new_pair_groups)
             if self.cycle_coef > 0:
-                cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, self.losses)
+                cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
 
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
@@ -757,7 +768,6 @@ class MultiVAE:
 
     def calc_recon_loss(self, xs, rs, losses, batch_labels, size_factors):
         loss = 0
-
         for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
@@ -787,6 +797,7 @@ class MultiVAE:
             elif loss_type == 'bce':
                 bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
                 loss += bce_loss
+                #print(f'BCE loss = {bce_loss}')
 
         return loss
 
