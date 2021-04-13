@@ -6,7 +6,10 @@ class MMD(torch.nn.Module):
         super(MMD, self).__init__()
         self.kernel_type = kernel_type
 
-    def gaussian_kernel(self, x, y, gamma=[0.001, 0.01, 0.1, 1, 10, 100, 1000]):
+    def gaussian_kernel(self, x, y, gamma=[
+        1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 5, 10, 15, 20, 25, 30, 35, 100,
+        1e3, 1e4, 1e5, 1e6
+    ]):
         D = torch.cdist(x, y).pow(2)
         K = torch.zeros_like(D)
 

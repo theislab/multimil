@@ -34,7 +34,8 @@ class MLP(nn.Module):
         self = self.to(device)
 
     def _fc(self, n_inputs, n_outputs, activation='leakyrelu', dropout=None, norm='layer'):
-        layers = [nn.Linear(n_inputs, n_outputs, bias=True if norm=='layer' else False)]
+        bias = norm != 'batch'
+        layers = [nn.Linear(n_inputs, n_outputs, bias=bias)]
         if norm == 'batch':
             layers.append(nn.BatchNorm1d(n_outputs))
         elif norm == 'layer':

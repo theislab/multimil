@@ -52,7 +52,7 @@ class MLP_decoder(nn.Module):
         self = self.to(device)
 
     def _fc(self, n_inputs, n_outputs, activation='leakyrelu', dropout=None, norm='layer'):
-        bias = norm=='layer' or norm=='no_reg'
+        bias = norm != 'batch'
         layers = [nn.Linear(n_inputs, n_outputs, bias=bias)]
         if norm == 'batch':
             layers.append(nn.BatchNorm1d(n_outputs))
