@@ -1,6 +1,5 @@
 import torch
 
-
 class MMD(torch.nn.Module):
     def __init__(self, kernel_type="gaussian"):
         super(MMD, self).__init__()
