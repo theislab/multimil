@@ -46,10 +46,7 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
                                     )
 
     n_new_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
-    changed_modalities_idx = []
-    for i, n in enumerate(n_new_batch_labels):
-        if n>0:
-            changed_modalities_idx.append(i)
+    changed_modalities_idx = [i for i, n in enumerate(n_new_batch_labels) if n > 0]
 
     new_network.n_batch_labels = [new + old for new, old in zip(n_new_batch_labels, network.n_batch_labels)]
 
@@ -65,7 +62,7 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
             theta_to_add = torch.randn(new_network.x_dims[i], n_new_batch_labels[i]).to(network.model.device)
             # the new theta has to be a leaf node
             new_theta = torch.cat((network.theta, theta_to_add), 1)
-            new_network.theta = new_theta.detach().clone()
+            new_network.theta = new_theta.detach().clone().requires_grad_(True)
 
     if new_network.condition:
         encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',

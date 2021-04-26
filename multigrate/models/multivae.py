@@ -57,18 +57,11 @@ class MultiVAETorch(nn.Module):
         self.paired_dict = paired_dict
         self.modalities_per_group = modalities_per_group
         self.paired_networks_per_modality_pairs = paired_networks_per_modality_pairs
-        #self.theta = theta
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
             self.add_module(f'encoder_{i}', enc)
             self.add_module(f'decoder_{i}', dec)
-
-        #for i, (enc, dec) in enumerate(zip(self.paired_encoders, self.paired_decoders)):
-        #    self.add_module(f'paired_encoder_{i}', enc)
-        #    self.add_module(f'paired_decoder_{i}', dec)
-
-        #self.add_module('theta', nn.ParameterList(self.theta))
 
         self = self.to(device)
 
@@ -78,10 +71,6 @@ class MultiVAETorch(nn.Module):
             params.extend(list(enc.parameters()))
         for dec in self.decoders:
             params.extend(list(dec.parameters()))
-        #for enc in self.paired_encoders:
-        #    params.extend(list(enc.parameters()))
-        #for dec in self.paired_decoders:
-        #    params.extend(list(dec.parameters()))
 
         params.extend(list(self.shared_encoder.parameters()))
         params.extend(list(self.shared_decoder.parameters()))
@@ -103,99 +92,38 @@ class MultiVAETorch(nn.Module):
         hs_concat = []
         new_pair_groups = []
         current = 0
-        # print('ENCODING........')
-        # print(len(hs))
-        # print(pair_groups)
         for pair, group in groupby(pair_groups):
-            #print(pair)
             group_size = len(list(group))
             hs_group = hs[current:current+group_size]
-            #print(len(hs_group))
             j = 0
             hs_group_concat = []
             for n in range(self.n_modality):
                 if n in self.modalities_per_group[pair]:
-                    #print('modality ' + str(n) + ' is in pair')
                     hs_group_concat.append(hs_group[j])
                     j += 1
                 else:
-                    #print('modality ' + str(n) + ' is NOT in pair')
                     hs_group_concat.append(torch.zeros_like(hs[current])) # doesn't matter which one
-            #print(hs_group_concat)
             hs_group_concat = torch.cat(hs_group_concat, dim=-1)
-            #print(hs_group_concat)
             hs_concat.append(self.shared_encoder(hs_group_concat))
             new_pair_groups.append(pair)
             current += group_size
-            #
-            # if group_size == 1:
-            #     if version == 'old':
-            #         print('old unique')
-            #         hs_concat.append(hs[current])
-            #     else:
-            #     # todo move to device
-            #         print('new unique')
-            #         hs_tmp = torch.zeros_like(hs[current])
-            #         hs_pair = torch.cat([hs[current], hs_tmp], dim=-1)
-            #         hs_concat.append(self.paired_encoders[0](hs_pair))
-            # else:
-            #     print('paired')
-            #     hs_pair = hs[current:current+group_size]
-            #     hs_pair = torch.cat(hs_pair, dim=-1)
-            #     hs_concat.append(self.paired_encoders[self.paired_networks_per_modality_pairs[pair]](hs_pair))
-            #
-            # new_pair_groups.append(pair)
-            # current += group_size
-        # print('AFTER ALL')
-        # print(hs_concat)
-        # print(new_pair_groups)
+
         return hs_concat, new_pair_groups
 
     def decode_pairs(self, hs_concat, concat_pair_groups, version):
         hs = []
         pair_groups = []
-        # print('DECODING........')
-        # print(len(hs_concat))
-        # print(concat_pair_groups)
-        # or zip?
         for h, pair in zip(hs_concat, concat_pair_groups):
-            #print(h)
             hs_pair = self.shared_decoder(h)
-            #print(hs_pair)
 
             n_dim = len(hs_pair[0]) // self.n_modality
             hs_pair = torch.split(hs_pair, n_dim, dim=1)
-            #print(hs_pair)
             hs_pair_filtered = [] # leave only necessary modalities
             for mod in self.modalities_per_group[pair]:
-            #    print('modality ' + str(mod))
                 hs_pair_filtered.append(hs_pair[mod])
 
             hs.extend(hs_pair_filtered)
-            #print(hs)
             pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
-            #print(pair_groups)
-
-        # for i, pair in enumerate(concat_pair_groups):
-        #     if pair not in self.paired_dict:
-        #         if version == 'old':
-        #             print('old unique')
-        #             hs.append(hs_concat[i])
-        #             pair_groups.append(pair)
-        #         else:
-        #             print('new unique')
-        #             n_dim = hs_concat[0].shape[1]
-        #             h_split = torch.split(self.paired_decoders[0](hs_concat[i]), n_dim, dim=1)
-        #             hs.append(h_split[0])
-        #             pair_groups.extend([pair])
-        #         #hs.append(hs_concat[i])
-        #         #pair_groups.append(pair)
-        #     else: # unique anyway
-        #         print('paired')
-        #         n_dim = hs_concat[0].shape[1]
-        #         h_split = torch.split(self.paired_decoders[self.paired_networks_per_modality_pairs[pair]](hs_concat[i]), n_dim, dim=1)
-        #         hs.extend(h_split)
-        #         pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
 
         return hs, pair_groups
 
@@ -412,7 +340,8 @@ class MultiVAE:
         if normalization not in ['layer', 'batch', None]:
             raise ValueError(f'normalization has to be one of ["layer", "batch"]')
 
-        #self.normalization = normalization
+        # need for surgery
+        self.normalization = normalization
 
         if len(losses) == 0:
             self.losses = ['mse']*self.n_modality
@@ -457,7 +386,7 @@ class MultiVAE:
         if self.theta == None:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
-                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach()#.requires_grad_(True)
+                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach().requires_grad_(True)
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
@@ -723,10 +652,6 @@ class MultiVAE:
                     # z.obs[celltype_key] = celltypes[group_indices[pair][0]]
                     # ad_hs_concat.append(z)
 
-                # print(celltypes)
-                # print(len(hs))
-                # print(pair_groups)
-                # print(modalities)
                 for h, pg, mod, cell_type in zip(hs, pair_groups, modalities, celltypes):
                     z = sc.AnnData(h.detach().cpu().numpy())
                     z.obs['modality'] = mod
@@ -891,7 +816,8 @@ class MultiVAE:
                 self._train_history['integ'].append(integ_loss.detach().cpu().item() if integ_loss != 0 else 0)
                 self._train_history['cycle'].append(cycle_loss.detach().cpu().item() if cycle_loss != 0 else 0)
                 self._train_history['norm_mod_vector0'].append(torch.linalg.norm(self.model.modality_vectors.weight[0]).detach().cpu().item())
-                #self._train_history['norm_mod_vector1'].append(torch.linalg.norm(self.model.modality_vectors.weight[1]).detach().cpu().item())
+                self._train_history['norm_mod_vector1'].append(torch.linalg.norm(self.model.modality_vectors.weight[1]).detach().cpu().item())
+                #self._train_history['norm_mod_vector2'].append(torch.linalg.norm(self.model.modality_vectors.weight[2]).detach().cpu().item())
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
 
@@ -912,8 +838,8 @@ class MultiVAE:
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
                 self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
                 self._val_history['norm_mod_vector0'].append(torch.linalg.norm(self.model.modality_vectors.weight[0]).detach().cpu().item())
-                #self._val_history['norm_mod_vector1'].append(torch.linalg.norm(self.model.modality_vectors.weight[1]).detach().cpu().item())
-
+                self._val_history['norm_mod_vector1'].append(torch.linalg.norm(self.model.modality_vectors.weight[1]).detach().cpu().item())
+                #self._val_history['norm_mod_vector2'].append(torch.linalg.norm(self.model.modality_vectors.weight[2]).detach().cpu().item())
 
                 self.model.eval()
                 self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef, verbose=verbose, correct=correct, kernel_type=kernel_type, version=version)
@@ -1003,14 +929,10 @@ class MultiVAE:
                 loss += mse_loss
                 #print(f'MSE loss = {mse_loss}')
             elif loss_type == 'nb':
-                #if self.condition:
-                #    dispertion = torch.narrow(self.theta.T, 0, batch, 1)
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
-                #else:
-                #    dispersion = torch.narrow(self.theta.T, 0, 0, 1)
                 dispersion = torch.exp(dispersion)
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, dec_mean, dispersion)
                 #print(f'NB loss = {-nb_loss}')
