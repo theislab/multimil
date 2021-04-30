@@ -3,6 +3,7 @@ import os
 from .mlp import MLP
 from .mlp_decoder import MLP_decoder
 from .multivae import MultiVAE
+from .multivae_smaller import MultiVAE_smaller
 
 
 def create_model(name, params):
