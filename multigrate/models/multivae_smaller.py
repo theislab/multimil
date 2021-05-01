@@ -105,7 +105,6 @@ class MultiVAE_smaller(MultiVAE):
 
         self.decoders = [MLP_decoder(z_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
                              dropout=dropout, norm=normalization, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.x_dims, hiddens, output_activations, self.losses))]
-
         self.model = MultiVAETorch_smaller(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)

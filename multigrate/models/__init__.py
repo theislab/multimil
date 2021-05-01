@@ -4,6 +4,7 @@ from .mlp import MLP
 from .mlp_decoder import MLP_decoder
 from .multivae import MultiVAE
 from .multivae_smaller import MultiVAE_smaller
+from .multivae_poe import MultiVAE_PoE
 
 
 def create_model(name, params):

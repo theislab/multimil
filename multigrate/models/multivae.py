@@ -735,7 +735,16 @@ class MultiVAE:
             size_factors = [data[-2] for data in datas]
 
             # forward propagation
-            rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
+            # TODO fix
+            out = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
+            #    out = self.model(xs, modalities, pair_groups, batch_labels)
+
+            if len(out) == 5:
+                rs, zs, mus, logvars, new_pair_groups = out
+            elif len(out) == 9:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = out
+            else:
+                print('sth\'s wrong')
             losses = [self.losses[mod] for mod in modalities]
 
             recon_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
@@ -825,7 +834,8 @@ class MultiVAE:
             losses = [self.losses[mod] for mod in modalities]
 
             # forward propagation
-            rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels)
+            # TODO fix
+            rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
 
             # calculate the losses
             r_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
@@ -874,6 +884,12 @@ class MultiVAE:
         nb_loss = 0
         zinb_loss = 0
         bce_loss = 0
+
+        # print(losses)
+        # print(batch_labels)
+        # print(len(size_factors))
+        # print(len(xs))
+        # print(len(rs))
 
         for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
             if loss_type == 'mse':
