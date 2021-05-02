@@ -213,22 +213,16 @@ class MultiVAETorch(nn.Module):
         v = torch.zeros(1, self.n_modality).to(self.device)
         if not source_pair:
             v -= self.modal_vector(source)
-            #print(self.modal_vector(source))
         else:
             for mod in self.modalities_per_group[source]:
                 v -= self.modal_vector(mod)
-                #print(self.modal_vector(mod))
-        #print(v)
 
         if dest is not None:
-            #print('TO...')
             if not dest_pair:
                 v += self.modal_vector(dest)
-                #print(self.modal_vector(dest))
             else:
                 for mod in self.modalities_per_group[dest]:
                     v += self.modal_vector(mod)
-                    #print(self.modal_vector(mod))
 
         return z + v @ self.modality_vectors.weight
 
@@ -457,6 +451,7 @@ class MultiVAE:
         sys.stdout.write(end)
         sys.stdout.flush()
 
+    # TODO: fix for new models
     def impute(
         self,
         adatas,
@@ -470,16 +465,8 @@ class MultiVAE:
         layers=[],
         batch_size=64,
     ):
-
-        #pair_count = self.prep_paired_groups(pair_groups)
-
         if len(layers) == 0:
             layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
-
-        #self.model.paired_dict = self.pair_groups_dict
-        #self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
-        #self.model.modalities_per_group = self.modalities_per_group
-        #self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
 
         adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
@@ -534,7 +521,6 @@ class MultiVAE:
         #correct='all', #'missing'
         layers=[]
     ):
-        print('old :(')
         if not batch_labels:
             batch_labels = self.batch_labels
 
@@ -545,7 +531,6 @@ class MultiVAE:
 
         # TODO: check if need unique_pairs_of_modalities
         self.model.paired_dict = self.pair_groups_dict
-        #self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
         self.model.modalities_per_group = self.modalities_per_group
         self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
 
@@ -574,7 +559,6 @@ class MultiVAE:
 
                 hs = [self.model.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
                 hs_concat, new_pair_groups = self.model.encode_pairs(hs, pair_groups)
-                #zs = [self.model.encode_shared(h) for h in hs_concat]
                 zs = [self.model.bottleneck(h) for h in hs_concat]
                 zs_latent = [z[0] for z in zs]
                 zs_corrected_all = zs_latent.copy()
@@ -586,8 +570,6 @@ class MultiVAE:
 
                 for i, zi in enumerate(zs_latent):
                     zs_corrected_to_missing[i] = self.model.convert(zs_corrected_to_missing[i], new_pair_groups[i], source_pair=True, dest=0)
-
-                #zs_pred, pair_groups = self.model.integrate(xs, modalities, pair_groups, batch_labels)
 
                 for i, (z_corrected_all, z_latent, z_corrected_to_missing, pair) in enumerate(zip(zs_corrected_all, zs_latent, zs_corrected_to_missing, new_pair_groups)):
                     z = sc.AnnData(z_corrected_all.detach().cpu().numpy())
@@ -770,16 +752,17 @@ class MultiVAE:
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
-                #self._train_history['recon_mse'].append(mse_loss.detach().cpu().item())
-                self._train_history['recon_nb'].append(nb_loss.detach().cpu().item())
-                #self._train_history['recon_zinb'].append(zinb_loss.detach().cpu().item())
-                #self._train_history['recon_bce'].append(bce_loss.detach().cpu().item())
+                for mod_loss in [mse_loss, nb_loss, zinb_loss, bce_loss]:
+                    if mod_loss != 0:
+                        name = 'recon_' + str(mod_loss).split('_')[0]
+                        self._train_history[name].append(mod_loss.detach().cpu().item())
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
                 self._train_history['integ'].append(integ_loss.detach().cpu().item() if integ_loss != 0 else 0)
                 self._train_history['cycle'].append(cycle_loss.detach().cpu().item() if cycle_loss != 0 else 0)
-                self._train_history['norm_mod_vector0'].append(torch.linalg.norm(self.model.modality_vectors.weight[0]).detach().cpu().item())
-                self._train_history['norm_mod_vector1'].append(torch.linalg.norm(self.model.modality_vectors.weight[1]).detach().cpu().item())
-                #self._train_history['norm_mod_vector2'].append(torch.linalg.norm(self.model.modality_vectors.weight[2]).detach().cpu().item())
+                # for i in range(len(self.model.modality_vectors)):
+                #         name = 'mod_vec' + str(i) + '_norm'
+                #         self._train_history[name].append(torch.linalg.norm(self.model.modality_vectors.weight[i]).detach().cpu().item())
+
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
 
@@ -792,16 +775,18 @@ class MultiVAE:
                 self._val_history['iteration'].append(iteration)
                 self._val_history['train_loss'].append(np.mean(self._train_history['loss'][-(validate_every//print_every):]))
                 self._val_history['train_recon'].append(np.mean(self._train_history['recon'][-(validate_every//print_every):]))
-                #self._val_history['train_recon_mse'].append(np.mean(self._train_history['recon_mse'][-(validate_every//print_every):]))
-                self._val_history['train_recon_nb'].append(np.mean(self._train_history['recon_nb'][-(validate_every//print_every):]))
-                #self._val_history['train_recon_zinb'].append(np.mean(self._train_history['recon_zinb'][-(validate_every//print_every):]))
-                #self._val_history['train_recon_bce'].append(np.mean(self._train_history['recon_bce'][-(validate_every//print_every):]))
+                for mod_loss in [mse_loss, nb_loss, zinb_loss, bce_loss]:
+                    if mod_loss != 0:
+                        name_train = 'recon_' + str(mod_loss).split('_')[0]
+                        name = 'train_recon_' + str(mod_loss).split('_')[0]
+                        self._val_history[name].append(np.mean(self._train_history[name_train][-(validate_every//print_every):]))
                 self._val_history['train_kl'].append(np.mean(self._train_history['kl'][-(validate_every//print_every):]))
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
                 self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
-                self._val_history['norm_mod_vector0'].append(torch.linalg.norm(self.model.modality_vectors.weight[0]).detach().cpu().item())
-                self._val_history['norm_mod_vector1'].append(torch.linalg.norm(self.model.modality_vectors.weight[1]).detach().cpu().item())
-                #self._val_history['norm_mod_vector2'].append(torch.linalg.norm(self.model.modality_vectors.weight[2]).detach().cpu().item())
+                # TODO add similarity
+                for i in range(len(self.model.modality_vectors)):
+                        name = 'mod_vec' + str(i) + '_norm'
+                        self._val_history[name].append(torch.linalg.norm(self.model.modality_vectors.weight[i]).detach().cpu().item())
 
                 self.model.eval()
                 self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef, verbose=verbose, correct=correct, kernel_type=kernel_type, version=version)
@@ -858,10 +843,12 @@ class MultiVAE:
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
-        #self._val_history['val_recon_mse'].append(mse_l.detach().cpu().item() / val_n_iters)
-        self._val_history['val_recon_nb'].append(nb_l.detach().cpu().item() / val_n_iters)
-        #self._val_history['val_recon_zinb'].append(zinb_l.detach().cpu().item() / val_n_iters)
-        #self._val_history['val_recon_bce'].append(bce_l.detach().cpu().item() / val_n_iters)
+
+        for mod_loss in [mse_l, nb_l, zinb_l, bce_l]:
+            if mod_loss != 0:
+                name = 'val_recon_' + str(mod_loss).split('_')[0]
+                self._val_history[name].append(mod_loss.detach().cpu().item() / val_n_iters)
+
         self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
         if integ_loss != 0:
             self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
@@ -884,12 +871,6 @@ class MultiVAE:
         nb_loss = 0
         zinb_loss = 0
         bce_loss = 0
-
-        # print(losses)
-        # print(batch_labels)
-        # print(len(size_factors))
-        # print(len(xs))
-        # print(len(rs))
 
         for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
             if loss_type == 'mse':
@@ -939,7 +920,6 @@ class MultiVAE:
                 #zj = zj.detach()
 
                 loss += MMD(kernel_type=kernel_type)(zij, zj)
-                #loss += MMD()(zi, zj)
         return loss
 
     def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses):

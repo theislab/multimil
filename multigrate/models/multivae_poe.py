@@ -8,31 +8,14 @@ from itertools import groupby, zip_longest
 class MultiVAETorch_PoE(MultiVAETorch_smaller):
 
     def forward(self, xs, modalities, pair_groups, batch_labels, size_factors):
-        # print('----------------------------')
-        # print('len xs = ' + str(len(xs)))
-        # print('modalities = ' + str(modalities))
-        # print('batch_labels = ' + str(batch_labels))
-        # print('pair_groups = ' + str(pair_groups))
         hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
-    #    print('len hs = ' + str(len(hs)))
         zs = [self.bottleneck(h) for h in hs]
         mus = [z[1] for z in zs]
         logvars = [z[2] for z in zs]
         zs = [z[0] for z in zs]
-    #    print('len zs = ' + str(len(zs)))
-    #    print('len mus = ' + str(len(mus)))
-    #    print('len logvars = ' + str(len(logvars)))
-        mus_joint, logvars_joint = self.product_of_experts(mus, logvars, pair_groups)
-    #    print('len mus joint = ' + str(len(mus_joint)))
-    #    print('len logvars joint = ' + str(len(logvars_joint)))
+        mus_joint, logvars_joint, _ = self.product_of_experts(mus, logvars, pair_groups)
         zs_joint = [self.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
-    #    print('len zs joint = ' + str(len(zs_joint)))
         zs, modalities, pair_groups, batch_labels, xs, size_factors = self.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels, size_factors)
-        # print('## doing stuff ##')
-        # print('len zs = ' + str(len(zs)))
-        # print('modalities = ' + str(modalities))
-        # print('batch_labels = ' + str(batch_labels))
-        # print('pair_groups = ' + str(pair_groups))
         rs = [self.decode_from_shared(z, mod, pair_group, batch_label) for z, mod, pair_group, batch_label in zip(zs, modalities, pair_groups, batch_labels)]
         return rs, zs, mus, logvars, pair_groups, modalities, batch_labels, xs, size_factors
 
@@ -66,9 +49,6 @@ class MultiVAETorch_PoE(MultiVAETorch_smaller):
 
     def product_of_experts(self, mus, logvars, pair_groups):
         # TODO cite
-        # print(len(mus))
-        # print(len(logvars))
-        # print(len(pair_groups))
         joint_pair_groups = []
         mus_joint = []
         logvars_joint = []
@@ -192,41 +172,22 @@ class MultiVAE_PoE(MultiVAE_smaller):
                 celltypes = [data[4] for data in datas]
                 indices = [data[5] for data in datas]
                 batch_labels = [data[-1] for data in datas]
-                # print('---------')
-                # print(len(indices))
-                # print(len(indices[0]))
-                # print(len(indices[1]))
-                # print(len(indices[2]))
-                # print('---')
-                # print(len(xs))
-                # print(len(xs[0]))
-                # print(len(xs[1]))
-                # print(len(xs[2]))
 
                 group_indices = {}
                 for i, pair in enumerate(pair_groups):
                     group_indices[pair] = group_indices.get(pair, []) + [i]
 
                 hs = [self.model.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
-                # print('len hs = ' + str(len(hs)))
                 zs = [self.model.bottleneck(h) for h in hs]
                 mus = [z[1] for z in zs]
                 logvars = [z[2] for z in zs]
                 zs = [z[0] for z in zs]
-                #print('len zs = ' + str(len(zs)))
-                #print('len mus = ' + str(len(mus)))
-                #print('len logvars = ' + str(len(logvars)))
                 mus_joint, logvars_joint, joint_pair_groups = self.model.product_of_experts(mus, logvars, pair_groups)
-                #print('len mus joint = ' + str(len(mus_joint)))
-                #print('len logvars joint = ' + str(len(logvars_joint)))
                 zs_joint = [self.model.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
-                #print('len zs joint = ' + str(len(zs_joint)))
                 zs_corrected, new_modalities, new_pair_groups, new_batch_labels, xs, size_factors = self.model.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels)
 
                 for i, (z_corrected, pair, mod) in enumerate(zip(zs_corrected, new_pair_groups, new_modalities)):
-                    #z_latent = self.model.convert(z_corrected, pair, True, None)
                     z = sc.AnnData(z_corrected.detach().cpu().numpy())
-                    #mods = np.array(names)[group_indices[pair], ]
                     z.obs['modality'] = mod
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs['study'] = pair
@@ -242,27 +203,15 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
                     ad_joint.append(z)
 
-                    # z = sc.AnnData(h.detach().cpu().numpy())
-                    # modalities = np.array(names)[group_indices[pair], ]
-                    # z.obs['modality'] = '-'.join(modalities)
-                    # z.obs['barcode'] = list(indices[group_indices[pair][0]])
-                    # z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                    # ad_hs_concat.append(z)
-
                 for h, z_latent, pg, mod, cell_type, idx in zip(hs, zs, pair_groups, modalities, celltypes, indices):
-                    # print(pg)
                     z = sc.AnnData(z_latent.detach().cpu().numpy())
-                    # print(z)
-                    #mods = np.array(names)[group_indices[pg], ]
                     z.obs['modality'] = mod
                     z.obs['barcode'] = idx
                     z.obs['study'] = pg
                     z.obs[celltype_key] = cell_type
                     ad_latent.append(z)
 
-
                     z = sc.AnnData(h.detach().cpu().numpy())
-                    # print(z)
                     z.obs['modality'] = mod
                     z.obs['barcode'] = idx
                     z.obs['study'] = pg
@@ -270,3 +219,12 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     ad_hs.append(z)
 
         return sc.AnnData.concatenate(*ad_hs), sc.AnnData.concatenate(*ad_latent), sc.AnnData.concatenate(*ad_zs_corrected), sc.AnnData.concatenate(*ad_joint)
+
+    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version):
+        loss = 0
+        for zi, pgi in zip(zs, pair_groups):
+            for zj, pgj in zip(zs, pair_groups):
+                if pgi == pgj:  # do not integrate one dataset with itself
+                    continue
+                loss += MMD(kernel_type=kernel_type)(zi, zj)
+        return loss
