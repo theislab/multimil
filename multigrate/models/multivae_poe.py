@@ -4,6 +4,7 @@ import numpy as np
 from .multivae_smaller import MultiVAE_smaller, MultiVAETorch_smaller
 from .mlp import MLP
 from itertools import groupby, zip_longest
+from .losses import MMD
 
 class MultiVAETorch_PoE(MultiVAETorch_smaller):
 
@@ -17,7 +18,7 @@ class MultiVAETorch_PoE(MultiVAETorch_smaller):
         zs_joint = [self.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
         zs, modalities, pair_groups, batch_labels, xs, size_factors = self.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels, size_factors)
         rs = [self.decode_from_shared(z, mod, pair_group, batch_label) for z, mod, pair_group, batch_label in zip(zs, modalities, pair_groups, batch_labels)]
-        return rs, zs, mus, logvars, pair_groups, modalities, batch_labels, xs, size_factors
+        return rs, zs, [mus, mus_joint], [logvars, logvars_joint], pair_groups, modalities, batch_labels, xs, size_factors
 
     def prep_latent(self, xs, zs, zs_joint, modalities, pair_groups, batch_labels, size_factors=None):
         zs_new, mods_new, pgs_new, bls_new, xs_new, sf_new = [], [], [], [], [], []
@@ -126,7 +127,6 @@ class MultiVAE_PoE(MultiVAE_smaller):
         self.model = MultiVAETorch_PoE(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
-
 
     def test(self,
             adatas,

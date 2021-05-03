@@ -1,4 +1,3 @@
-
 import sys
 import numpy as np
 import pandas as pd
@@ -10,6 +9,7 @@ import scanpy as sc
 import torch
 from torch import nn
 from torch.nn import functional as F
+from scipy import spatial
 from sklearn.model_selection import train_test_split
 from itertools import cycle, zip_longest, groupby
 from ..datasets import SingleCellDataset
@@ -752,9 +752,9 @@ class MultiVAE:
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
-                for mod_loss in [mse_loss, nb_loss, zinb_loss, bce_loss]:
+                for mod_loss, name in zip([mse_loss, nb_loss, zinb_loss, bce_loss], ['mse', 'nb', 'zinb', 'bce']):
                     if mod_loss != 0:
-                        name = 'recon_' + str(mod_loss).split('_')[0]
+                        name = 'recon_' + name
                         self._train_history[name].append(mod_loss.detach().cpu().item())
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
                 self._train_history['integ'].append(integ_loss.detach().cpu().item() if integ_loss != 0 else 0)
@@ -775,18 +775,24 @@ class MultiVAE:
                 self._val_history['iteration'].append(iteration)
                 self._val_history['train_loss'].append(np.mean(self._train_history['loss'][-(validate_every//print_every):]))
                 self._val_history['train_recon'].append(np.mean(self._train_history['recon'][-(validate_every//print_every):]))
-                for mod_loss in [mse_loss, nb_loss, zinb_loss, bce_loss]:
+                for mod_loss, name in zip([mse_loss, nb_loss, zinb_loss, bce_loss], ['mse', 'nb', 'zinb', 'bce']):
                     if mod_loss != 0:
-                        name_train = 'recon_' + str(mod_loss).split('_')[0]
-                        name = 'train_recon_' + str(mod_loss).split('_')[0]
+                        name_train = 'recon_' + name
+                        name = 'train_recon_' + name
                         self._val_history[name].append(np.mean(self._train_history[name_train][-(validate_every//print_every):]))
                 self._val_history['train_kl'].append(np.mean(self._train_history['kl'][-(validate_every//print_every):]))
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
                 self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
-                # TODO add similarity
-                for i in range(len(self.model.modality_vectors)):
+
+                for i in range(self.n_modality):
                         name = 'mod_vec' + str(i) + '_norm'
                         self._val_history[name].append(torch.linalg.norm(self.model.modality_vectors.weight[i]).detach().cpu().item())
+                        # cosine similarity
+                        for j in range(i+1, self.n_modality):
+                            name = f'cos_similarity_mod_vectors_{i}_{j}'
+                            self._val_history[name] = 1-spatial.distance.cosine(self.model.modality_vectors.weight[i].detach().numpy(),
+                                                                                self.model.modality_vectors.weight[j].detach().numpy())
+
 
                 self.model.eval()
                 self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef, verbose=verbose, correct=correct, kernel_type=kernel_type, version=version)
@@ -844,9 +850,9 @@ class MultiVAE:
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
 
-        for mod_loss in [mse_l, nb_l, zinb_l, bce_l]:
+        for mod_loss, name in zip([mse_l, nb_l, zinb_l, bce_l], ['mse', 'nb', 'zinb', 'bce']):
             if mod_loss != 0:
-                name = 'val_recon_' + str(mod_loss).split('_')[0]
+                name = 'val_recon_' + name
                 self._val_history[name].append(mod_loss.detach().cpu().item() / val_n_iters)
 
         self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
@@ -876,7 +882,6 @@ class MultiVAE:
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
                 loss += mse_loss
-                #print(f'MSE loss = {mse_loss}')
             elif loss_type == 'nb':
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
@@ -884,7 +889,6 @@ class MultiVAE:
                 dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
                 dispersion = torch.exp(dispersion)
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, dec_mean, dispersion)
-                #print(f'NB loss = {-nb_loss}')
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
@@ -893,11 +897,9 @@ class MultiVAE:
                 dispersion = torch.exp(dispersion)
                 zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
                 loss -= zinb_loss
-                #print(f'NB loss = {-zinb_loss}')
             elif loss_type == 'bce':
                 bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
                 loss += bce_loss
-                #print(f'BCE loss = {bce_loss}')
 
         return loss, mse_loss, -nb_loss, -zinb_loss, bce_loss
 
