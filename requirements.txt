@@ -12,3 +12,4 @@ notebook
 anndata==0.7.3
 scanpy<=1.4.6
 louvain==0.6.1
+h5py==2.10.0

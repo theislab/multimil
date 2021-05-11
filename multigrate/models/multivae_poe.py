@@ -18,7 +18,7 @@ class MultiVAETorch_PoE(MultiVAETorch_smaller):
         zs_joint = [self.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
         zs, modalities, pair_groups, batch_labels, xs, size_factors = self.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels, size_factors)
         rs = [self.decode_from_shared(z, mod, pair_group, batch_label) for z, mod, pair_group, batch_label in zip(zs, modalities, pair_groups, batch_labels)]
-        return rs, zs, [mus, mus_joint], [logvars, logvars_joint], pair_groups, modalities, batch_labels, xs, size_factors
+        return rs, zs, mus+mus_joint, logvars+logvars_joint, pair_groups, modalities, batch_labels, xs, size_factors
 
     def prep_latent(self, xs, zs, zs_joint, modalities, pair_groups, batch_labels, size_factors=None):
         zs_new, mods_new, pgs_new, bls_new, xs_new, sf_new = [], [], [], [], [], []
@@ -158,7 +158,7 @@ class MultiVAE_PoE(MultiVAE_smaller):
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
-        ad_zs_corrected, ad_joint, ad_latent, ad_hs = [], [], [], []
+        ad_integrated, ad_latent, ad_latent_corrected, ad_hs = [], [], [], []
 
         with torch.no_grad():
             self.model.eval()
@@ -192,7 +192,7 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs['study'] = pair
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                    ad_zs_corrected.append(z)
+                    ad_latent_corrected.append(z)
 
                 for i, (z_joint, pair) in enumerate(zip(zs_joint, joint_pair_groups)):
                     z = sc.AnnData(z_joint.detach().cpu().numpy())
@@ -201,7 +201,7 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs['study'] = pair
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                    ad_joint.append(z)
+                    ad_integrated.append(z)
 
                 for h, z_latent, pg, mod, cell_type, idx in zip(hs, zs, pair_groups, modalities, celltypes, indices):
                     z = sc.AnnData(z_latent.detach().cpu().numpy())
@@ -210,6 +210,8 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     z.obs['study'] = pg
                     z.obs[celltype_key] = cell_type
                     ad_latent.append(z)
+                    if len(self.modalities_per_group[pg]) == 1:
+                        ad_integrated.append(z)
 
                     z = sc.AnnData(h.detach().cpu().numpy())
                     z.obs['modality'] = mod
@@ -218,9 +220,9 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     z.obs[celltype_key] = cell_type
                     ad_hs.append(z)
 
-        return sc.AnnData.concatenate(*ad_hs), sc.AnnData.concatenate(*ad_latent), sc.AnnData.concatenate(*ad_zs_corrected), sc.AnnData.concatenate(*ad_joint)
+        return sc.AnnData.concatenate(*ad_integrated), sc.AnnData.concatenate(*ad_latent), sc.AnnData.concatenate(*ad_latent_corrected), sc.AnnData.concatenate(*ad_hs)
 
-    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version):
+    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version, zs_not_corrected=None):
         loss = 0
         for zi, pgi in zip(zs, pair_groups):
             for zj, pgj in zip(zs, pair_groups):
@@ -228,3 +230,13 @@ class MultiVAE_PoE(MultiVAE_smaller):
                     continue
                 loss += MMD(kernel_type=kernel_type)(zi, zj)
         return loss
+
+    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        h = self.model.to_shared_dim(x, mod, batch)
+        z = self.model.bottleneck(h)
+        mus = z[1]
+        logvars = z[2]
+        z = z[0]
+        # fix batch label, so it takes mean of available batches
+        r = self.model.decode_from_shared(z, target_modality, pair, 0)
+        return r

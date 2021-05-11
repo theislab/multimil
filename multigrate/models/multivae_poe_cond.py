@@ -92,3 +92,14 @@ class MultiVAE_PoE_cond(MultiVAE_PoE):
         self.model = MultiVAETorch_PoE_cond(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
+
+    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        h = self.model.to_shared_dim(x, mod, batch)
+        z = self.model.bottleneck(h)
+        mus = z[1]
+        logvars = z[2]
+        z = z[0]
+        h_dec = self.model.z_to_h(z, target_modality)
+        # fix batch label, so it takes mean of available batches
+        r = self.model.decode_from_shared(h_dec, target_modality, pair, 0)
+        return r

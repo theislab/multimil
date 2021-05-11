@@ -7,7 +7,7 @@ from .losses import MMD
 from itertools import zip_longest
 
 class MultiVAETorch_smaller(MultiVAETorch):
-    def forward(self, xs, modalities, pair_groups, batch_labels):
+    def forward(self, xs, modalities, pair_groups, batch_labels, size_factors):
         hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
         hs_concat, concat_pair_groups = self.encode_pairs(hs, pair_groups)
         zs = [self.bottleneck(h) for h in hs_concat]
@@ -18,7 +18,7 @@ class MultiVAETorch_smaller(MultiVAETorch):
         rs = [self.decode_from_shared(z, mod, pair_group, batch_label) for z, mod, pair_group, batch_label in zip(zs, modalities, pair_groups, batch_labels)]
         return rs, zs, mus, logvars, concat_pair_groups
 
-    # TODO: matrix form?
+    # TODO: matrix form? store in a dict
     def prep_latent(self, zs, pair_groups):
         zs_corrected = []
         for z, pg in zip(zs, pair_groups):
@@ -85,15 +85,12 @@ class MultiVAE_smaller(MultiVAE):
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
 
-    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version):
+    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version, zs_not_corrected=None):
         loss = 0
         for zi, pgi in zip(zs, pair_groups):
             for zj, pgj in zip(zs, pair_groups):
                 if pgi == pgj:  # do not integrate one dataset with itself
                     continue
-                if version == '2':
-                    zi = self.model.convert(zi, pgi, True, None)
-                    zj = self.model.convert(zj, pgj, True, None)
                 loss += MMD(kernel_type=kernel_type)(zi, zj)
         return loss
 
@@ -127,7 +124,7 @@ class MultiVAE_smaller(MultiVAE):
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
-        ad_all, ad_zs_latent_mmd, ad_zs_latent, ad_hs_concat = [], [], [], []
+        ad_integrated, ad_latent, ad_latent_corrected, ad_hs = [], [], [], []
 
         with torch.no_grad():
             self.model.eval()
@@ -157,17 +154,6 @@ class MultiVAE_smaller(MultiVAE):
 
                 zs_corrected = self.model.prep_latent(zs_latent, new_pair_groups)
 
-                if version == '2':
-                    for i, (z_latent, pair) in enumerate(zip(zs_latent, new_pair_groups)):
-                        z_latent = self.model.convert(z_latent, pair, True, None)
-                        z = sc.AnnData(z_latent.detach().cpu().numpy())
-                        mods = np.array(names)[group_indices[pair], ]
-                        z.obs['modality'] = '-'.join(mods)
-                        z.obs['barcode'] = list(indices[group_indices[pair][0]])
-                        z.obs['study'] = pair
-                        z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                        ad_zs_latent_mmd.append(z)
-
                 for i, (z_latent, pair) in enumerate(zip(zs_latent, new_pair_groups)):
                     z = sc.AnnData(z_latent.detach().cpu().numpy())
                     mods = np.array(names)[group_indices[pair], ]
@@ -175,7 +161,7 @@ class MultiVAE_smaller(MultiVAE):
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs['study'] = pair
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                    ad_zs_latent.append(z)
+                    ad_latent.append(z)
 
                 for h, z_corrected, pg, mod, cell_type, idx in zip(hs, zs_corrected, pair_groups, modalities, celltypes, indices):
                     z = sc.AnnData(z_corrected.detach().cpu().numpy())
@@ -183,7 +169,7 @@ class MultiVAE_smaller(MultiVAE):
                     z.obs['barcode'] = idx
                     z.obs['study'] = pg
                     z.obs[celltype_key] = cell_type
-                    ad_all.append(z)
+                    ad_latent_corrected.append(z)
 
 
                     z = sc.AnnData(h.detach().cpu().numpy())
@@ -191,6 +177,18 @@ class MultiVAE_smaller(MultiVAE):
                     z.obs['barcode'] = idx
                     z.obs['study'] = pg
                     z.obs[celltype_key] = cell_type
-                    ad_hs_concat.append(z)
+                    ad_hs.append(z)
+        # integrated = latent
+        return sc.AnnData.concatenate(*ad_latent), sc.AnnData.concatenate(*ad_latent), sc.AnnData.concatenate(*ad_latent_corrected), sc.AnnData.concatenate(*ad_hs)
 
-        return sc.AnnData.concatenate(*ad_all), sc.AnnData.concatenate(*ad_zs_latent), sc.AnnData.concatenate(*ad_hs_concat), sc.AnnData.concatenate(*ad_zs_latent_mmd)
+    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        h = self.model.to_shared_dim(x, mod, batch)
+        hs_concat, new_pair_group = self.model.encode_pairs([h], [pair])
+        # fix [0]
+        z = self.model.bottleneck(hs_concat[0])
+        mus = z[1]
+        logvars = z[2]
+        z = z[0]
+        # fix batch label, so it takes mean of available batches
+        r = self.model.decode_from_shared(z, target_modality, target_pair, 0)
+        return r

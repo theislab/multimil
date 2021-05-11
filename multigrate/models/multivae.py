@@ -144,6 +144,7 @@ class MultiVAETorch(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
+    # TODO pair group??
     def decode_from_shared(self, h, i, pair_group, batch_label):
         if self.condition:
             h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
@@ -280,6 +281,7 @@ class MultiVAE:
             raise ValueError(f'adatas and pair_groups arguments must be the same length. len(adatas) = {len(adatas)} != {len(pair_groups)} = len(pair_groups)')
         if len(adatas) != len(hiddens):
             raise ValueError(f'adatas and hiddens arguments must be the same length. len(adatas) = {len(adatas)} != {len(hiddens)} = len(hiddens)')
+        # TODO: assume linear if not given
         if len(adatas) != len(output_activations):
             raise ValueError(f'adatas and output_activations arguments must be the same length. len(adatas) = {len(adatas)} != {len(output_activations)} = len(output_activations)')
         # TODO: do some assertions for other parameters
@@ -492,14 +494,8 @@ class MultiVAE:
 
                 # TODO: deal with batches
                 for x, pair, mod, batch in zip(xs, pair_groups, modalities, batch_labels):
-                    zi = self.model.to_latent(x, mod, batch)
-                    zij = self.model.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
-
-                    # assume data is paired for the decoder
-                    hs = self.model.z_to_h(zij)
-                    hs, pair_groups = self.model.decode_pairs([hs], [target_pair])
-                    index_of_the_modality = np.where(np.array(self.modalities_per_group[target_pair]) == target_modality)[0][0]
-                    xij = self.model.decode_from_shared(hs[index_of_the_modality], target_modality, target_pair, batch)
+                    # get imputed modality
+                    xij = self.impute_batch(x, pair, mod, batch, target_pair, target_modality)
 
                     z = sc.AnnData(xij.detach().cpu().numpy())
                     modalities = np.array(names)[group_indices[pair], ]
@@ -509,6 +505,18 @@ class MultiVAE:
                     zs.append(z)
 
         return sc.AnnData.concatenate(*zs)
+
+    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        zi = self.model.to_latent(x, mod, batch)
+        zij = self.model.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
+
+        # assume data is paired for the decoder
+        hs = self.model.z_to_h(zij)
+        hs, pair_groups = self.model.decode_pairs([hs], [target_pair])
+        index_of_the_modality = np.where(np.array(self.modalities_per_group[target_pair]) == target_modality)[0][0]
+        xij = self.model.decode_from_shared(hs[index_of_the_modality], target_modality, target_pair, batch)
+
+        return xij
 
     def test(self,
         adatas,
@@ -685,7 +693,7 @@ class MultiVAE:
         validate_every=1000,
         verbose=1,
         correct='all', # 'missing', 'none'
-        version='1', # '1' or '2'
+        version='2', # '1' or '2'
         kernel_type='gaussian',
         print_losses=False
     ):
@@ -719,19 +727,23 @@ class MultiVAE:
             # forward propagation
             # TODO fix
             out = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
-            #    out = self.model(xs, modalities, pair_groups, batch_labels)
 
             if len(out) == 5:
                 rs, zs, mus, logvars, new_pair_groups = out
+                zs_not_corrected = None
             elif len(out) == 9:
                 rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = out
+                zs_not_corrected = None
+            elif len(out) == 10:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors, zs_not_corrected = out
             else:
                 print('sth\'s wrong')
             losses = [self.losses[mod] for mod in modalities]
 
             recon_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
             kl_loss = self.calc_kl_loss(mus, logvars)
-            integ_loss = self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type, version)
+
+            integ_loss = self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type, version, zs_not_corrected)
             if self.cycle_coef > 0:
                 cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
             else:
@@ -749,19 +761,16 @@ class MultiVAE:
 
             # update progress bar
             if iteration % print_every == 0:
+                # as function
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
                 for mod_loss, name in zip([mse_loss, nb_loss, zinb_loss, bce_loss], ['mse', 'nb', 'zinb', 'bce']):
-                    if mod_loss != 0:
-                        name = 'recon_' + name
-                        self._train_history[name].append(mod_loss.detach().cpu().item())
+                    name = 'recon_' + name
+                    self._train_history[name].append(mod_loss.detach().cpu().item() if mod_loss !=0 else 0)
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
                 self._train_history['integ'].append(integ_loss.detach().cpu().item() if integ_loss != 0 else 0)
                 self._train_history['cycle'].append(cycle_loss.detach().cpu().item() if cycle_loss != 0 else 0)
-                # for i in range(len(self.model.modality_vectors)):
-                #         name = 'mod_vec' + str(i) + '_norm'
-                #         self._train_history[name].append(torch.linalg.norm(self.model.modality_vectors.weight[i]).detach().cpu().item())
 
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
@@ -771,15 +780,15 @@ class MultiVAE:
 
             # validate
             if iteration > 0 and iteration % validate_every == 0 or iteration == n_iters - 1:
+                # as function
                 # add average train losses of the elapsed epoch to the validation history
                 self._val_history['iteration'].append(iteration)
                 self._val_history['train_loss'].append(np.mean(self._train_history['loss'][-(validate_every//print_every):]))
                 self._val_history['train_recon'].append(np.mean(self._train_history['recon'][-(validate_every//print_every):]))
                 for mod_loss, name in zip([mse_loss, nb_loss, zinb_loss, bce_loss], ['mse', 'nb', 'zinb', 'bce']):
-                    if mod_loss != 0:
-                        name_train = 'recon_' + name
-                        name = 'train_recon_' + name
-                        self._val_history[name].append(np.mean(self._train_history[name_train][-(validate_every//print_every):]))
+                    name_train = 'recon_' + name
+                    name = 'train_recon_' + name
+                    self._val_history[name].append(np.mean(self._train_history[name_train][-(validate_every//print_every):]))
                 self._val_history['train_kl'].append(np.mean(self._train_history['kl'][-(validate_every//print_every):]))
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
                 self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
@@ -822,11 +831,21 @@ class MultiVAE:
             batch_labels = [data[-1] for data in datas]
             size_factors = [data[-2] for data in datas]
 
-            losses = [self.losses[mod] for mod in modalities]
-
             # forward propagation
-            # TODO fix
-            rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
+            out = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
+
+            if len(out) == 5:
+                rs, zs, mus, logvars, new_pair_groups = out
+                zs_not_corrected = None
+            elif len(out) == 9:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = out
+                zs_not_corrected = None
+            elif len(out) == 10:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors, zs_not_corrected = out
+            else:
+                print('sth\'s wrong')
+
+            losses = [self.losses[mod] for mod in modalities]
 
             # calculate the losses
             r_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
@@ -836,7 +855,7 @@ class MultiVAE:
             zinb_l += zinb_loss
             bce_l += bce_loss
             kl_loss += self.calc_kl_loss(mus, logvars)
-            integ_loss += self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type, version)
+            integ_loss += self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type, version, zs_not_corrected)
             if self.cycle_coef > 0:
                 cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
 
@@ -906,7 +925,7 @@ class MultiVAE:
     def calc_kl_loss(self, mus, logvars):
         return sum([KLD()(mu, logvar) for mu, logvar in zip(mus, logvars)])
 
-    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version):
+    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version, zs_not_corrected=None):
         loss = 0
         for i, (zi, pgi) in enumerate(zip(zs, pair_groups)):
             for j, (zj, pgj) in enumerate(zip(zs, pair_groups)):

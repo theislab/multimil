@@ -42,7 +42,7 @@ def train(experiment_name, output_dir, **config):
 
     # create the model to be trained
     model = create_model(config['model']['name'], model_params)
-    
+
     # train
     model.train(**config['model']['train'])
 

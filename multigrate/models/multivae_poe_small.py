@@ -41,6 +41,9 @@ class MultiVAETorch_PoE_small(MultiVAETorch_PoE):
             current += group_size
         return zs_new, modalities, pair_groups, batch_labels, xs, size_factors
 
+    def convert(self, z, target_modality):
+        return z + self.modal_vector(target_modality) @ self.modality_vectors.weight
+
 class MultiVAE_PoE_small(MultiVAE_PoE):
     def __init__(
         self,
@@ -87,3 +90,14 @@ class MultiVAE_PoE_small(MultiVAE_PoE):
         self.model = MultiVAETorch_PoE_small(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
+
+    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        h = self.model.to_shared_dim(x, mod, batch)
+        z = self.model.bottleneck(h)
+        mus = z[1]
+        logvars = z[2]
+        z = z[0]
+        z = self.model.convert(z, target_modality)
+        # TODO fix batches
+        r = self.model.decode_from_shared(z, target_modality, pair, 0)
+        return r
