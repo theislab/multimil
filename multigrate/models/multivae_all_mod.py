@@ -13,9 +13,9 @@ class MultiVAETorch_all_mod(MultiVAETorch_smaller):
         zs_corrected = []
         for z, pg in zip(zs, pair_groups):
             group_size = len(self.modalities_per_group[pg])
-            mask = -torch.ones(group_size, self.n_modality)
+            mask = -torch.ones(group_size, self.n_modality).to(self.device)
             for i, mod in enumerate(self.modalities_per_group[pg]):
-                mask[:, mod] += torch.eye(group_size)[i]
+                mask[:, mod] += torch.eye(group_size)[i].to(self.device)
             mod_vecs = mask @ self.modality_vectors.weight
             mod_vecs = [mod_vecs[i] for i, _ in enumerate(mod_vecs)]
             z_group = [z + mod_vec for mod_vec in mod_vecs]
@@ -79,8 +79,8 @@ class MultiVAE_all_mod(MultiVAE_smaller):
         logvars = z[2]
         z = z[0]
 
-        mask = -torch.ones(1, self.n_modality)
-        mask[:, target_modality] += torch.ones(1)
+        mask = -torch.ones(1, self.n_modality).to(self.model.device)
+        mask[:, target_modality] += torch.ones(1).to(self.model.device)
         mod_vec = mask @ self.model.modality_vectors.weight
         z = z + mod_vec
 

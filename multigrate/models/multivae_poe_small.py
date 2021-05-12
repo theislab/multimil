@@ -28,10 +28,10 @@ class MultiVAETorch_PoE_small(MultiVAETorch_PoE):
                 current += 1
                 continue
 
-            mask = torch.zeros(group_size, self.n_modality)
+            mask = torch.zeros(group_size, self.n_modality).to(self.device)
             for i, mod in enumerate(self.modalities_per_group[pair]):
-                mask[:, mod] = -torch.ones(group_size)
-                mask[:, mod] += torch.eye(group_size)[i]
+                mask[:, mod] = -torch.ones(group_size).to(self.device)
+                mask[:, mod] += torch.eye(group_size)[i].to(self.device)
             mod_vecs = mask @ self.modality_vectors.weight
             mod_vecs = [mod_vecs[i] for i, _ in enumerate(mod_vecs)]
             z_group = [zs_joint[current_joint] + mod_vec for mod_vec in mod_vecs]

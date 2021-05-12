@@ -24,10 +24,10 @@ class MultiVAETorch_void(MultiVAETorch_smaller):
         for z, pg in zip(zs, pair_groups):
             group_size = len(self.modalities_per_group[pg])
             if group_size > 1:
-                mask = torch.zeros(group_size, self.n_modality)
+                mask = torch.zeros(group_size, self.n_modality).to(self.device)
                 for i, mod in enumerate(self.modalities_per_group[pg]):
-                    mask[:, mod] = -torch.ones(group_size)
-                    mask[:, mod] += torch.eye(group_size)[i]
+                    mask[:, mod] = -torch.ones(group_size).to(self.device)
+                    mask[:, mod] += torch.eye(group_size)[i].to(self.device)
                 mod_vecs = mask @ self.modality_vectors.weight
                 mod_vecs = [mod_vecs[i] for i, _ in enumerate(mod_vecs)]
                 z_group = [z + mod_vec for mod_vec in mod_vecs]

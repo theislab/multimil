@@ -799,8 +799,8 @@ class MultiVAE:
                         # cosine similarity
                         for j in range(i+1, self.n_modality):
                             name = f'cos_similarity_mod_vectors_{i}_{j}'
-                            self._val_history[name] = 1-spatial.distance.cosine(self.model.modality_vectors.weight[i].detach().numpy(),
-                                                                                self.model.modality_vectors.weight[j].detach().numpy())
+                            self._val_history[name] = 1-spatial.distance.cosine(self.model.modality_vectors.weight[i].detach().cpu().numpy(),
+                                                                                self.model.modality_vectors.weight[j].detach().cpu().numpy())
 
 
                 self.model.eval()
