@@ -79,6 +79,10 @@ class MultiVAE_smaller(MultiVAE):
         theta
         )
 
+        # needed for surgery
+        self.mod_dec_dim = z_dim
+        self.mod_enc_dim = h_dim
+
         self.decoders = [MLP_decoder(z_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
                              dropout=dropout, norm=normalization, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.x_dims, hiddens, output_activations, self.losses))]
         self.model = MultiVAETorch_smaller(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,

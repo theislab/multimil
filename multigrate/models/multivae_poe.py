@@ -121,6 +121,8 @@ class MultiVAE_PoE(MultiVAE_smaller):
         theta
         )
 
+        # needed for surgery
+        self.mod_enc_dim = z_dim
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], z_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
 

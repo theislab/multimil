@@ -26,18 +26,16 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
     if len(adatas) != network.model.n_modality:
         raise ValueError(f'new modalities and the old modalities must be the same length. new_modalities = {len(adatas)} != {network.model.n_modality} = old_modalities')
 
-    new_network = MultiVAE(adatas, names, pair_groups, condition=network.condition,
+    new_network = type(network)(adatas, names, pair_groups, condition=network.condition,
                                     z_dim=network.z_dim,
                                     h_dim=network.h_dim,
                                     hiddens=network.hiddens,
                                     output_activations=network.output_activations,
                                     shared_hiddens=network.shared_hiddens,
-                                    adver_hiddens=network.adver_hiddens,
                                     recon_coef=network.recon_coef,
                                     kl_coef=network.kl_coef,
                                     integ_coef=network.integ_coef,
                                     cycle_coef=network.cycle_coef,
-                                    adversarial=network.adversarial,
                                     dropout=network.dropout,
                                     losses=network.losses,
                                     loss_coefs=network.loss_coefs,
@@ -65,16 +63,16 @@ def operate(network, adatas, names, pair_groups, fine_tune='cond_weights', layer
             new_network.theta = new_theta.detach().clone().requires_grad_(True)
 
     if new_network.condition:
-        encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.h_dim, hs, output_activation='leakyrelu',
+        encoders = [MLP(x_dim + new_network.n_batch_labels[i], network.mod_enc_dim, hs, output_activation='leakyrelu',
                                  dropout=network.dropout, norm=network.normalization, regularize_last_layer=True) for i, (x_dim, hs) in enumerate(zip(network.x_dims, network.hiddens))]
-        decoders = [MLP_decoder(network.h_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
+        decoders = [MLP_decoder(network.mod_dec_dim + new_network.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
                              dropout=network.dropout, norm=network.normalization, loss=loss) for i, (x_dim, hs, out_act, loss) in enumerate(zip(network.x_dims, network.hiddens, network.output_activations, network.losses))]
 
-        new_network.model = MultiVAETorch(encoders, decoders, copy.deepcopy(network.shared_encoder), copy.deepcopy(network.shared_decoder), copy.deepcopy(network.paired_encoders), copy.deepcopy(network.paired_decoders),
-                                   copy.deepcopy(network.mu), copy.deepcopy(network.logvar), copy.deepcopy(network.modality_vecs), copy.deepcopy(network.adv_disc), network.device, network.condition, new_network.n_batch_labels,
+        new_network.model = type(network.model)(encoders, decoders, copy.deepcopy(network.shared_encoder), copy.deepcopy(network.shared_decoder),
+                                   copy.deepcopy(network.mu), copy.deepcopy(network.logvar), copy.deepcopy(network.modality_vecs), network.device, network.condition, new_network.n_batch_labels,
                                    new_network.pair_groups_dict, new_network.modalities_per_group, new_network.paired_networks_per_modality_pairs)
     else:
-        raise NotImplementedError('The original network should be conditioned.')
+        raise NotImplementedError('The original network has to be conditioned.')
 
     # set new weights to old weights when possible and freeze some weights
     for (old_p, new_p) in zip(network.model.named_parameters(), new_network.model.named_parameters()):
