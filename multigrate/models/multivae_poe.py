@@ -236,8 +236,6 @@ class MultiVAE_PoE(MultiVAE_smaller):
     def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
         h = self.model.to_shared_dim(x, mod, batch)
         z = self.model.bottleneck(h)
-        mus = z[1]
-        logvars = z[2]
         z = z[0]
         # fix batch label, so it takes mean of available batches
         r = self.model.decode_from_shared(z, target_modality, pair, 0)

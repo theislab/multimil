@@ -6,7 +6,7 @@ requests==2.25.1
 scikit-learn==0.24.2
 #seaborn==0.11.1
 torchvision==0.9.1
-tqdm=4.60.0
+tqdm==4.60.0
 notebook==6.3.0
 #episcanpy==0.1.10
 anndata==0.7.3

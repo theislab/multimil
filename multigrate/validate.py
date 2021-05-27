@@ -19,11 +19,14 @@ def validate(experiment_name, output_dir, config, save_losses=True):
     experiment_config = config['experiment']
     random_seed = experiment_config['seed']
     pair_split = experiment_config.get('pair-split', None)
+    calc_matrics = experiment_config.get('calculate_metrics', True)
+    impute = experiment_config.get('impute', True)
     batches_present = experiment_config['batch']
     batch_key = experiment_config.get('batch_key', 'batch')
 
     train_params = config['model']['train']
-    impute_params = config['model']['impute']
+    if impute:
+        impute_params = config['model']['impute']
     modality_key = train_params.get('modality_key', 'modality')
     celltype_key = train_params.get('celltype_key', 'cell_type')
     # torch.manual_seed(random_seed)
@@ -87,51 +90,54 @@ def validate(experiment_name, output_dir, config, save_losses=True):
 
         plt.close('all')
 
-        integrated.obsm['X_latent'] = integrated.X
-        mtrcs = metrics(
-            None, integrated,
-            batch_key=batch_key,
-            label_key=celltype_key,
-            embed='X_latent',
-            pcr_batch=False,
-            isolated_label_f1=False,
-            asw_batch=batches_present
-        )
-        print(mtrcs.to_dict())
-        json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
+
+        if calc_matrics:
+            integrated.obsm['X_latent'] = integrated.X
+            mtrcs = metrics(
+                None, integrated,
+                batch_key=batch_key,
+                label_key=celltype_key,
+                embed='X_latent',
+                pcr_batch=False,
+                isolated_label_f1=False,
+                asw_batch=batches_present
+            )
+            print(mtrcs.to_dict())
+            json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
 
         # impute
-        adatas = []
-        for adata_set in impute_params['adatas']:
-            adatas.append([])
-            for adata_path in adata_set:
-                adata = sc.read_h5ad(adata_path)
-                adatas[-1].append(adata)
+        if impute:
+            adatas = []
+            for adata_set in impute_params['adatas']:
+                adatas.append([])
+                for adata_path in adata_set:
+                    adata = sc.read_h5ad(adata_path)
+                    adatas[-1].append(adata)
 
-        true_protein = sc.read_h5ad(impute_params['true_protein_adata'])
+            true_protein = sc.read_h5ad(impute_params['true_protein_adata'])
 
-        r = model.impute(
-            adatas = adatas,
-            names = impute_params['names'],
-            pair_groups = impute_params['pair_groups'],
-            target_modality = impute_params['target_modality'],
-            batch_labels = impute_params['batch_labels'],
-            target_pair = impute_params['target_pair'],
-            layers=impute_params['layers'],
-            batch_size=train_params['batch_size'],
-        )
-        r.obsm['predicted_protein'] = r.X
+            r = model.impute(
+                adatas = adatas,
+                names = impute_params['names'],
+                pair_groups = impute_params['pair_groups'],
+                target_modality = impute_params['target_modality'],
+                batch_labels = impute_params['batch_labels'],
+                target_pair = impute_params['target_pair'],
+                layers=impute_params['layers'],
+                batch_size=train_params['batch_size'],
+            )
+            r.obsm['predicted_protein'] = r.X
 
-        true_protein.obsm['true_protein'] = true_protein.X
+            true_protein.obsm['true_protein'] = true_protein.X
 
-        protein_corrs = pd.DataFrame()
-        for i, protein in enumerate(true_protein.var_names):
-            value = np.round(pearsonr(r.obsm['predicted_protein'][:, i], true_protein.obsm['true_protein'][:, i])[0], 3)
-            protein_corrs = protein_corrs.append({'protein': protein, 'correlation': value}, ignore_index=True)
+            protein_corrs = pd.DataFrame()
+            for i, protein in enumerate(true_protein.var_names):
+                value = np.round(pearsonr(r.obsm['predicted_protein'][:, i], true_protein.obsm['true_protein'][:, i])[0], 3)
+                protein_corrs = protein_corrs.append({'protein': protein, 'correlation': value}, ignore_index=True)
 
-        protein_corrs = protein_corrs.append({'protein': 'mean', 'correlation': protein_corrs['correlation'].mean().round(3)}, ignore_index=True)
-        protein_corrs = protein_corrs.set_index('protein')
-        protein_corrs.to_csv(os.path.join(output_dir, 'protein_correlation.csv'))
+            protein_corrs = protein_corrs.append({'protein': 'mean', 'correlation': protein_corrs['correlation'].mean().round(3)}, ignore_index=True)
+            protein_corrs = protein_corrs.set_index('protein')
+            protein_corrs.to_csv(os.path.join(output_dir, 'protein_correlation.csv'))
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Perform model validation.')
@@ -140,9 +146,9 @@ def parse_args():
 
 def save_losses_figure(model, output_dir):
     plt.figure(figsize=(15, 20));
-    loss_names = ['recon', 'kl', 'integ', 'recon_mse', 'recon_nb', 'recon_bce']
+    loss_names = ['recon', 'kl', 'integ']#, 'recon_mse', 'recon_nb']#, 'recon_bce']
     # nrows = int(np.ceil((len(loss_names)+1)/2))
-    nrows = 4
+    nrows = 3
 
     plt.subplot(nrows, 2, 1)
     plt.plot(model.history['iteration'], model.history['train_loss'], '.-', label='Train loss');
@@ -157,12 +163,12 @@ def save_losses_figure(model, output_dir):
         plt.xlabel('#Iterations');
         plt.legend()
 
-    plt.subplot(nrows, 2, nrows*2)
-    plt.plot(model.history['iteration'], model.history['mod_vec0_norm'], '.-', label='mod vec 1 norm');
-    plt.plot(model.history['iteration'], model.history['mod_vec1_norm'], '.-', label='mod vec 2 norm');
-    plt.plot(model.history['iteration'], model.history['mod_vec2_norm'], '.-', label='mod vec 3 norm');
-    plt.xlabel('#Iterations');
-    plt.legend()
+    #plt.subplot(nrows, 2, nrows*2)
+    #plt.plot(model.history['iteration'], model.history['mod_vec0_norm'], '.-', label='mod vec 1 norm');
+    #plt.plot(model.history['iteration'], model.history['mod_vec1_norm'], '.-', label='mod vec 2 norm');
+    #plt.plot(model.history['iteration'], model.history['mod_vec2_norm'], '.-', label='mod vec 3 norm');
+    #plt.xlabel('#Iterations');
+    #plt.legend()
 
     plt.savefig(os.path.join(output_dir, f'losses.png'), dpi=80, bbox_inches='tight')
     plt.close('all')

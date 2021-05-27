@@ -228,6 +228,10 @@ def ari(adata, group1, group2='louvain'):
         sc.tl.louvain(adata)
     group1 = adata.obs[group1].tolist()
     group2 = adata.obs[group2].tolist()
+    print(len(group1))
+    print(len(group2))
+    print(group1)
+    print(group2)
     return adjusted_rand_score(group1, group2)
 
 ### Isolated label score

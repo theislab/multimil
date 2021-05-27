@@ -144,7 +144,7 @@ class MultiVAETorch(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
-    # TODO pair group??
+    # TODO pair group?
     def decode_from_shared(self, h, i, pair_group, batch_label):
         if self.condition:
             h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
@@ -355,6 +355,7 @@ class MultiVAE:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
                     self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach().requires_grad_(True)
+                
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
@@ -469,6 +470,8 @@ class MultiVAE:
     ):
         if len(layers) == 0:
             layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
+
+        #TODO redo prep pair stuff in case pair names are different
 
         adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
@@ -707,7 +710,7 @@ class MultiVAE:
         # create optimizers
         params = self.model.get_params()
         if self.theta is not None:
-            params.extend([self.theta])
+                params.extend([self.theta])
         optimizer_ae = torch.optim.Adam(params, lr)
 
         # the training loop
@@ -896,7 +899,6 @@ class MultiVAE:
         nb_loss = 0
         zinb_loss = 0
         bce_loss = 0
-
         for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)

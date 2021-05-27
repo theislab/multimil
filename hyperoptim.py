@@ -68,7 +68,6 @@ def parse_args():
     parser.add_argument('--base-config-file', type=str, required=True)
     parser.add_argument('--output-dir', type=str, required=True)
     parser.add_argument('--kl-coefs-range', type=float, nargs='+', required=True)
-    #parser.add_argument('--kl-coefs-range', nargs=2, type=float, required=True)
     #parser.add_argument('--cycle-coefs-range', nargs=2, type=float, required=True)
     parser.add_argument('--integ-coefs-range', type=float, nargs='+', required=True)
     parser.add_argument('--pair-split', type=float, default=1)
