@@ -12,3 +12,4 @@ experiments*/*
 hyperoptim*/*
 .Rhistory
 build/
+notebooks/*

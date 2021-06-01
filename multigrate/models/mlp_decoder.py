@@ -42,7 +42,7 @@ class MLP_decoder(nn.Module):
             self.mean_decoder = nn.Sequential(nn.Linear(n_inputs_last_layer, n_outputs), nn.Softmax(dim=-1))
             self.dropout_decoder = nn.Linear(n_inputs_last_layer, n_outputs)
 
-        # TODO: check babel
+        # TODO: check label
         elif loss == 'bce':
             self.recon_decoder = self._fc(n_inputs_last_layer, n_outputs, activation='sigmoid',
                                                    dropout=dropout if regularize_last_layer else None,
@@ -77,12 +77,13 @@ class MLP_decoder(nn.Module):
             raise NotImplementedError(f'activation function {name} is not implemented.')
 
     def forward(self, x):
+        x = self.network(x)
         if self.loss == 'mse' or self.loss == 'bce':
-            return self.recon_decoder(self.network(x))
+            return self.recon_decoder(x)
         elif self.loss == 'nb':
-            return self.mean_decoder(self.network(x))
+            return self.mean_decoder(x)
         elif self.loss == 'zinb':
-            return self.mean_decoder(self.network(x)), self.dropout_decoder(self.network(x))
+            return self.mean_decoder(x), self.dropout_decoder(x)
 
     # TODO make work with new losses
     def through(self, x):

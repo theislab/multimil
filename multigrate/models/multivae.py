@@ -1,4 +1,3 @@
-
 import sys
 import numpy as np
 import pandas as pd
@@ -10,13 +9,13 @@ import scanpy as sc
 import torch
 from torch import nn
 from torch.nn import functional as F
+from scipy import spatial
 from sklearn.model_selection import train_test_split
 from itertools import cycle, zip_longest, groupby
 from ..datasets import SingleCellDataset
 from .mlp import MLP
 from .mlp_decoder import MLP_decoder
 from .losses import MMD, KLD, NB, ZINB
-
 
 class MultiVAETorch(nn.Module):
     def __init__(
@@ -25,12 +24,9 @@ class MultiVAETorch(nn.Module):
         decoders,
         shared_encoder,
         shared_decoder,
-        paired_encoders,
-        paired_decoders,
         mu,
         logvar,
         modality_vectors,
-        adversarial_discriminator,
         device='cpu',
         condition=None,
         n_batch_labels=None,
@@ -44,12 +40,9 @@ class MultiVAETorch(nn.Module):
         self.decoders = decoders
         self.shared_encoder = shared_encoder
         self.shared_decoder = shared_decoder
-        self.paired_encoders = paired_encoders
-        self.paired_decoders = paired_decoders
         self.mu = mu
         self.logvar = logvar
         self.modality_vectors = modality_vectors
-        self.adv_disc = adversarial_discriminator
         self.device = device
         self.condition = condition
         self.n_modality = len(self.encoders)
@@ -57,30 +50,19 @@ class MultiVAETorch(nn.Module):
         self.paired_dict = paired_dict
         self.modalities_per_group = modalities_per_group
         self.paired_networks_per_modality_pairs = paired_networks_per_modality_pairs
-        #self.theta = theta
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
             self.add_module(f'encoder_{i}', enc)
             self.add_module(f'decoder_{i}', dec)
 
-        for i, (enc, dec) in enumerate(zip(self.paired_encoders, self.paired_decoders)):
-            self.add_module(f'paired_encoder_{i}', enc)
-            self.add_module(f'paired_decoder_{i}', dec)
-
-        #self.add_module('theta', nn.ParameterList(self.theta))
-
         self = self.to(device)
 
-    def get_nonadversarial_params(self):
+    def get_params(self):
         params = []
         for enc in self.encoders:
             params.extend(list(enc.parameters()))
         for dec in self.decoders:
-            params.extend(list(dec.parameters()))
-        for enc in self.paired_encoders:
-            params.extend(list(enc.parameters()))
-        for dec in self.paired_decoders:
             params.extend(list(dec.parameters()))
 
         params.extend(list(self.shared_encoder.parameters()))
@@ -90,60 +72,47 @@ class MultiVAETorch(nn.Module):
         params.extend(list(self.modality_vectors.parameters()))
         return params
 
-    def get_adversarial_params(self):
-        params = list(self.adv_disc.parameters())
-        return params
-
-    def to_shared_dim(self, x, i, batch_label):
+    def to_shared_dim(self, x, i, batch_label):      
         if self.condition:
             x = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in x])
         return self.x_to_h(x, i)
 
-    def encode_pairs(self, hs, pair_groups, version):
+    def encode_pairs(self, hs, pair_groups):
         hs_concat = []
         new_pair_groups = []
         current = 0
-
         for pair, group in groupby(pair_groups):
             group_size = len(list(group))
-            if group_size == 1:
-                if version == 'old':
-                    hs_concat.append(hs[current])
+            hs_group = hs[current:current+group_size]
+            j = 0
+            hs_group_concat = []
+            for n in range(self.n_modality):
+                if n in self.modalities_per_group[pair]:
+                    hs_group_concat.append(hs_group[j])
+                    j += 1
                 else:
-                # todo move to device
-                    hs_tmp = torch.zeros_like(hs[current])
-                    hs_pair = torch.cat([hs[current], hs_tmp], dim=-1)
-                    hs_concat.append(self.paired_encoders[0](hs_pair))
-            else:
-                hs_pair = hs[current:current+group_size]
-                hs_pair = torch.cat(hs_pair, dim=-1)
-                hs_concat.append(self.paired_encoders[self.paired_networks_per_modality_pairs[pair]](hs_pair))
-
+                    hs_group_concat.append(torch.zeros_like(hs[current])) # doesn't matter which one
+            hs_group_concat = torch.cat(hs_group_concat, dim=-1)
+            hs_concat.append(self.shared_encoder(hs_group_concat))
             new_pair_groups.append(pair)
             current += group_size
 
         return hs_concat, new_pair_groups
 
-    def decode_pairs(self, hs_concat, concat_pair_groups, version):
+    def decode_pairs(self, hs_concat, concat_pair_groups):
         hs = []
         pair_groups = []
-        for i, pair in enumerate(concat_pair_groups):
-            if pair not in self.paired_dict:
-                if version == 'old':
-                    hs.append(hs_concat[i])
-                    pair_groups.append(pair)
-                else:
-                    n_dim = hs_concat[0].shape[1]
-                    h_split = torch.split(self.paired_decoders[0](hs_concat[i]), n_dim, dim=1)
-                    hs.append(h_split[0])
-                    pair_groups.extend([pair])
-                #hs.append(hs_concat[i])
-                #pair_groups.append(pair)
-            else: # unique anyway
-                n_dim = hs_concat[0].shape[1]
-                h_split = torch.split(self.paired_decoders[self.paired_networks_per_modality_pairs[pair]](hs_concat[i]), n_dim, dim=1)
-                hs.extend(h_split)
-                pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
+        for h, pair in zip(hs_concat, concat_pair_groups):
+            hs_pair = self.shared_decoder(h)
+
+            n_dim = len(hs_pair[0]) // self.n_modality
+            hs_pair = torch.split(hs_pair, n_dim, dim=1)
+            hs_pair_filtered = [] # leave only necessary modalities
+            for mod in self.modalities_per_group[pair]:
+                hs_pair_filtered.append(hs_pair[mod])
+
+            hs.extend(hs_pair_filtered)
+            pair_groups.extend([pair]*len(self.modalities_per_group[pair]))
 
         return hs, pair_groups
 
@@ -175,6 +144,7 @@ class MultiVAETorch(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
+    # TODO pair group?
     def decode_from_shared(self, h, i, pair_group, batch_label):
         if self.condition:
             h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
@@ -210,32 +180,22 @@ class MultiVAETorch(nn.Module):
         x = self.decoders[i](h)
         return x
 
-    def adversarial_loss(self, z, y):
-        y = torch.ones(z.size(0)).long().to(self.device) * y
-        y_pred = self.adversarial_discriminator(z)
-        return nn.CrossEntropyLoss()(y_pred, y)
-
-    def forward(self, xs, modalities, pair_groups, batch_labels, version):
+    def forward(self, xs, modalities, pair_groups, batch_labels):
         # encode
         hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
-        hs_concat, concat_pair_groups = self.encode_pairs(hs, pair_groups, version)
-        zs = [self.encode_shared(h) for h in hs_concat]
+        hs_concat, concat_pair_groups = self.encode_pairs(hs, pair_groups)
+        #zs = [self.encode_shared(h) for h in hs_concat]
+        zs = [self.bottleneck(h) for h in hs_concat]
         # bottleneck
         mus = [z[1] for z in zs]
         logvars = [z[2] for z in zs]
         zs = [z[0] for z in zs]
         # decode
-        hs_concat = [self.z_to_h(z) for z in zs]
-        hs, pair_groups = self.decode_pairs(hs_concat, concat_pair_groups, version)
+        #hs_concat = [self.z_to_h(z) for z in zs]
+        hs, pair_groups = self.decode_pairs(zs, concat_pair_groups)
         # change the order of data back to the original as encode_pairs changes it
         rs = [self.decode_from_shared(h, mod, pair_group, batch_label) for h, mod, pair_group, batch_label in zip(hs, modalities, pair_groups, batch_labels)]
         return rs, zs, mus, logvars, concat_pair_groups
-
-    # depricated
-    def calc_adv_loss(self, zs):
-        zs = [self.convert(z, i) for i, z in enumerate(zs)]  # remove the modality informations from the Zs
-        loss = sum([self.adversarial_loss(z, i) for i, z in enumerate(zs)])
-        return self.adversarial * loss, {'adver': loss}
 
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modality).float().to(self.device)
@@ -248,7 +208,9 @@ class MultiVAETorch(nn.Module):
         outputs, loss, losses = self.forward(*xs)
         return loss, losses
 
+    # check if need to distinguish between pairs not pairs, i don't think we need any more
     def convert(self, z, source, source_pair, dest=None, dest_pair=None):
+
         v = torch.zeros(1, self.n_modality).to(self.device)
         if not source_pair:
             v -= self.modal_vector(source)
@@ -265,14 +227,22 @@ class MultiVAETorch(nn.Module):
 
         return z + v @ self.modality_vectors.weight
 
-    def integrate(self, xs, mods, pair_groups, batch_labels, version, j=None):
+    def integrate(self, xs, mods, pair_groups, batch_labels, j=None):
+
+        # encode
         hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, mods, batch_labels)]
-        hs_concat, pair_groups = self.encode_pairs(hs, pair_groups, version)
-        zs = [self.encode_shared(h) for h in hs_concat]
+        hs_concat, concat_pair_groups = self.encode_pairs(hs, pair_groups)
+        #zs = [self.encode_shared(h) for h in hs_concat]
+        zs = [self.bottleneck(h) for h in hs_concat]
         zs = [z[0] for z in zs]
+
+        # hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, mods, batch_labels)]
+        # hs_concat, pair_groups = self.encode_pairs(hs, pair_groups)
+        # zs = [self.encode_shared(h) for h in hs_concat]
+        # zs = [z[0] for z in zs]
         for i, zi in enumerate(zs):
-            zs[i] = self.convert(zs[i], pair_groups[i], source_pair=True, dest=j)
-        return zs, pair_groups
+            zs[i] = self.convert(zs[i], concat_pair_groups[i], source_pair=True, dest=j)
+        return zs, concat_pair_groups
 
 class MultiVAE:
     def __init__(
@@ -287,19 +257,16 @@ class MultiVAE:
         hiddens=[],
         losses=[],
         output_activations=[],
-        paired_hiddens=[],
         shared_hiddens=[],
-        adver_hiddens=[],
         recon_coef=1,
-        kl_coef=1e-4,
+        kl_coef=1e-5,
         integ_coef=1e-1,
-        cycle_coef=1e-2,
-        adversarial=False,
+        cycle_coef=0,
         dropout=0.2,
         device=None,
         loss_coefs=[],
         layers=[],
-        theta=None
+        theta=None,
     ):
         # configure to CUDA if is available
         if device is None:
@@ -314,6 +281,7 @@ class MultiVAE:
             raise ValueError(f'adatas and pair_groups arguments must be the same length. len(adatas) = {len(adatas)} != {len(pair_groups)} = len(pair_groups)')
         if len(adatas) != len(hiddens):
             raise ValueError(f'adatas and hiddens arguments must be the same length. len(adatas) = {len(adatas)} != {len(hiddens)} = len(hiddens)')
+        # TODO: assume linear if not given
         if len(adatas) != len(output_activations):
             raise ValueError(f'adatas and output_activations arguments must be the same length. len(adatas) = {len(adatas)} != {len(output_activations)} = len(output_activations)')
         # TODO: do some assertions for other parameters
@@ -324,14 +292,11 @@ class MultiVAE:
         self.kl_coef = kl_coef
         self.integ_coef = integ_coef
         self.cycle_coef = cycle_coef
-        self.adversarial = adversarial
         self.condition = condition
         self.hiddens = hiddens
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.shared_hiddens = shared_hiddens
-        self.adver_hiddens = adver_hiddens
-        self.paired_hiddens = paired_hiddens
         self.dropout = dropout
         self.output_activations = output_activations
         self.pair_groups = pair_groups
@@ -343,7 +308,8 @@ class MultiVAE:
         if normalization not in ['layer', 'batch', None]:
             raise ValueError(f'normalization has to be one of ["layer", "batch"]')
 
-        #self.normalization = normalization
+        # need for surgery
+        self.normalization = normalization
 
         if len(losses) == 0:
             self.losses = ['mse']*self.n_modality
@@ -367,7 +333,7 @@ class MultiVAE:
         self.batch_labels = [list(range(len(modality_adatas))) for modality_adatas in adatas]
 
         self.n_batch_labels = [0]*self.n_modality
-        n_mod_labels = 0
+
         if condition:
             self.n_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
         # depricated
@@ -388,28 +354,24 @@ class MultiVAE:
         if self.theta == None:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
-                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach()#.requires_grad_(True)
+                    self.theta = torch.nn.Parameter(torch.randn(self.x_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach().requires_grad_(True)
+                
         # create modules
         self.encoders = [MLP(x_dim + self.n_batch_labels[i], h_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.x_dims, hiddens))]
         self.decoders = [MLP_decoder(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
                              dropout=dropout, norm=normalization, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.x_dims, hiddens, output_activations, self.losses))]
-        self.shared_encoder = MLP(h_dim + n_mod_labels, z_dim, shared_hiddens, output_activation='leakyrelu',
+        self.shared_encoder = MLP(h_dim*self.n_modality, z_dim, shared_hiddens, output_activation='leakyrelu',
                                   dropout=dropout, norm=normalization, regularize_last_layer=True)
-        self.shared_decoder = MLP(z_dim + n_mod_labels, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
+        self.shared_decoder = MLP(z_dim, h_dim*self.n_modality, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, norm=normalization, regularize_last_layer=True)
-
-        self.paired_encoders = [MLP(len(self.unique_pairs_of_modalities[pair])*self.h_dim, self.h_dim, paired_hiddens, output_activation='leakyrelu',
-                            dropout=dropout, norm=normalization, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
-        self.paired_decoders = [MLP(self.h_dim, len(self.unique_pairs_of_modalities[pair])*self.h_dim, paired_hiddens, output_activation='leakyrelu',
-                            dropout=dropout, norm=normalization, regularize_last_layer=True) for pair in self.unique_pairs_of_modalities]
 
         self.mu = MLP(z_dim, z_dim)
         self.logvar = MLP(z_dim, z_dim)
         self.modality_vecs = nn.Embedding(self.n_modality, z_dim)
-        self.adv_disc = MLP(z_dim, self.n_modality, adver_hiddens, dropout=dropout, norm='layer')
-        self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder, self.paired_encoders, self.paired_decoders,
-                                   self.mu, self.logvar, self.modality_vecs, self.adv_disc, self.device, self.condition, self.n_batch_labels,
+
+        self.model = MultiVAETorch(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
+                                   self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
 
     @property
@@ -492,6 +454,7 @@ class MultiVAE:
         sys.stdout.write(end)
         sys.stdout.flush()
 
+    # TODO: fix for new models
     def impute(
         self,
         adatas,
@@ -503,19 +466,12 @@ class MultiVAE:
         modality_key='modality',
         celltype_key='cell_type',
         layers=[],
-        version='new',
         batch_size=64,
     ):
-
-        #pair_count = self.prep_paired_groups(pair_groups)
-
         if len(layers) == 0:
             layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
 
-        #self.model.paired_dict = self.pair_groups_dict
-        #self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
-        #self.model.modalities_per_group = self.modalities_per_group
-        #self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
+        #TODO redo prep pair stuff in case pair names are different
 
         adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
@@ -541,14 +497,8 @@ class MultiVAE:
 
                 # TODO: deal with batches
                 for x, pair, mod, batch in zip(xs, pair_groups, modalities, batch_labels):
-                    zi = self.model.to_latent(x, mod, batch)
-                    zij = self.model.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
-
-                    # assume data is paired for the decoder
-                    hs = self.model.z_to_h(zij)
-                    hs, pair_groups = self.model.decode_pairs([hs], [target_pair], version)
-                    index_of_the_modality = np.where(np.array(self.modalities_per_group[target_pair]) == target_modality)[0][0]
-                    xij = self.model.decode_from_shared(hs[index_of_the_modality], target_modality, target_pair, batch)
+                    # get imputed modality
+                    xij = self.impute_batch(x, pair, mod, batch, target_pair, target_modality)
 
                     z = sc.AnnData(xij.detach().cpu().numpy())
                     modalities = np.array(names)[group_indices[pair], ]
@@ -559,6 +509,18 @@ class MultiVAE:
 
         return sc.AnnData.concatenate(*zs)
 
+    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        zi = self.model.to_latent(x, mod, batch)
+        zij = self.model.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
+
+        # assume data is paired for the decoder
+        hs = self.model.z_to_h(zij)
+        hs, pair_groups = self.model.decode_pairs([hs], [target_pair])
+        index_of_the_modality = np.where(np.array(self.modalities_per_group[target_pair]) == target_modality)[0][0]
+        xij = self.model.decode_from_shared(hs[index_of_the_modality], target_modality, target_pair, batch)
+
+        return xij
+
     def test(self,
         adatas,
         names,
@@ -567,7 +529,6 @@ class MultiVAE:
         celltype_key='cell_type',
         batch_size=64,
         batch_labels=None,
-        version='new',
         #correct='all', #'missing'
         layers=[]
     ):
@@ -581,7 +542,6 @@ class MultiVAE:
 
         # TODO: check if need unique_pairs_of_modalities
         self.model.paired_dict = self.pair_groups_dict
-        #self.model.unique_pairs_of_modalities = self.unique_pairs_of_modalities
         self.model.modalities_per_group = self.modalities_per_group
         self.model.paired_networks_per_modality_pairs = self.paired_networks_per_modality_pairs
 
@@ -609,48 +569,57 @@ class MultiVAE:
                     group_indices[pair] = group_indices.get(pair, []) + [i]
 
                 hs = [self.model.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
-                hs_concat, pair_groups = self.model.encode_pairs(hs, pair_groups, version)
-                zs = [self.model.encode_shared(h) for h in hs_concat]
+                hs_concat, new_pair_groups = self.model.encode_pairs(hs, pair_groups)
+                zs = [self.model.bottleneck(h) for h in hs_concat]
                 zs_latent = [z[0] for z in zs]
                 zs_corrected_all = zs_latent.copy()
                 zs_corrected_to_missing = zs_latent.copy()
 
                 # todo matrix form
                 for i, zi in enumerate(zs_latent):
-                    zs_corrected_all[i] = self.model.convert(zs_corrected_all[i], pair_groups[i], source_pair=True, dest=None)
+                    zs_corrected_all[i] = self.model.convert(zs_corrected_all[i], new_pair_groups[i], source_pair=True, dest=None)
 
                 for i, zi in enumerate(zs_latent):
-                    zs_corrected_to_missing[i] = self.model.convert(zs_corrected_to_missing[i], pair_groups[i], source_pair=True, dest=0)
+                    zs_corrected_to_missing[i] = self.model.convert(zs_corrected_to_missing[i], new_pair_groups[i], source_pair=True, dest=0)
 
-                #zs_pred, pair_groups = self.model.integrate(xs, modalities, pair_groups, batch_labels)
-
-                for i, (z_corrected_all, z_latent, hs, z_corrected_to_missing, pair) in enumerate(zip(zs_corrected_all, zs_latent, hs_concat, zs_corrected_to_missing, pair_groups)):
+                for i, (z_corrected_all, z_latent, z_corrected_to_missing, pair) in enumerate(zip(zs_corrected_all, zs_latent, zs_corrected_to_missing, new_pair_groups)):
                     z = sc.AnnData(z_corrected_all.detach().cpu().numpy())
-                    modalities = np.array(names)[group_indices[pair], ]
-                    z.obs['modality'] = '-'.join(modalities)
+                    mods = np.array(names)[group_indices[pair], ]
+                    z.obs['modality'] = '-'.join(mods)
+                    z.obs['study'] = pair
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
                     ad_all.append(z)
 
                     z = sc.AnnData(z_corrected_to_missing.detach().cpu().numpy())
-                    modalities = np.array(names)[group_indices[pair], ]
-                    z.obs['modality'] = '-'.join(modalities)
+                    mods = np.array(names)[group_indices[pair], ]
+                    z.obs['modality'] = '-'.join(mods)
+                    z.obs['study'] = pair
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
                     ad_missing.append(z)
 
                     z = sc.AnnData(z_latent.detach().cpu().numpy())
-                    modalities = np.array(names)[group_indices[pair], ]
-                    z.obs['modality'] = '-'.join(modalities)
+                    mods = np.array(names)[group_indices[pair], ]
+                    z.obs['modality'] = '-'.join(mods)
+                    z.obs['study'] = pair
                     z.obs['barcode'] = list(indices[group_indices[pair][0]])
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
                     ad_zs_latent.append(z)
 
-                    z = sc.AnnData(hs.detach().cpu().numpy())
-                    modalities = np.array(names)[group_indices[pair], ]
-                    z.obs['modality'] = '-'.join(modalities)
-                    z.obs['barcode'] = list(indices[group_indices[pair][0]])
-                    z.obs[celltype_key] = celltypes[group_indices[pair][0]]
+                    # z = sc.AnnData(h.detach().cpu().numpy())
+                    # modalities = np.array(names)[group_indices[pair], ]
+                    # z.obs['modality'] = '-'.join(modalities)
+                    # z.obs['barcode'] = list(indices[group_indices[pair][0]])
+                    # z.obs[celltype_key] = celltypes[group_indices[pair][0]]
+                    # ad_hs_concat.append(z)
+
+                for h, pg, mod, cell_type, idx in zip(hs, pair_groups, modalities, celltypes, indices):
+                    z = sc.AnnData(h.detach().cpu().numpy())
+                    z.obs['modality'] = mod
+                    z.obs['study'] = pg
+                    z.obs['barcode'] = idx
+                    z.obs[celltype_key] = cell_type
                     ad_hs_concat.append(z)
 
         return sc.AnnData.concatenate(*ad_all), sc.AnnData.concatenate(*ad_missing), sc.AnnData.concatenate(*ad_zs_latent), sc.AnnData.concatenate(*ad_hs_concat)
@@ -665,7 +634,6 @@ class MultiVAE:
         batch_size=64,
         batch_labels=None,
         layers=[],
-        version='new'
     ):
         if not batch_labels:
             batch_labels = self.batch_labels
@@ -704,7 +672,7 @@ class MultiVAE:
                     group_indices[pair] = group_indices.get(pair, []) + [i]
 
                 # forward propagation
-                zs_pred, pair_groups = self.model.integrate(xs, modalities, pair_groups, batch_labels, version)
+                zs_pred, pair_groups = self.model.integrate(xs, modalities, pair_groups, batch_labels)
 
                 for i, (z, pair) in enumerate(zip(zs_pred, pair_groups)):
                     z = sc.AnnData(z.detach().cpu().numpy())
@@ -723,30 +691,27 @@ class MultiVAE:
         lr=3e-4,
         kl_anneal_iters=3000,
         val_split=0.1,
-        adv_iters=0,
         modality_key='modality',
         celltype_key='cell_type',
         validate_every=1000,
         verbose=1,
-        version='new',
         correct='all', # 'missing', 'none'
+        version='2', # '1' or '2'
         kernel_type='gaussian',
         print_losses=False
     ):
         # configure training parameters
         print_every = n_iters // 50
-
         # create data loaders
         train_datasets, val_datasets = self.make_datasets(self.adatas, val_split, modality_key, celltype_key, batch_size)
         train_dataloaders = [d.loader for d in train_datasets]
         val_dataloaders = [d.loader for d in val_datasets]
 
         # create optimizers
-        params = self.model.get_nonadversarial_params()
+        params = self.model.get_params()
         if self.theta is not None:
-            params.extend([self.theta])
+                params.extend([self.theta])
         optimizer_ae = torch.optim.Adam(params, lr)
-        optimizer_adv = torch.optim.Adam(self.model.get_adversarial_params(), lr)
 
         # the training loop
         epoch_time = 0  # epoch is the time between two consequtive validations
@@ -763,13 +728,25 @@ class MultiVAE:
             size_factors = [data[-2] for data in datas]
 
             # forward propagation
-            rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels, version)
+            # TODO fix
+            out = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
 
+            if len(out) == 5:
+                rs, zs, mus, logvars, new_pair_groups = out
+                zs_not_corrected = None
+            elif len(out) == 9:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = out
+                zs_not_corrected = None
+            elif len(out) == 10:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors, zs_not_corrected = out
+            else:
+                print('sth\'s wrong')
             losses = [self.losses[mod] for mod in modalities]
 
-            recon_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
+            recon_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
             kl_loss = self.calc_kl_loss(mus, logvars)
-            integ_loss = self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type)
+
+            integ_loss = self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type, version, zs_not_corrected)
             if self.cycle_coef > 0:
                 cycle_loss = self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
             else:
@@ -779,29 +756,25 @@ class MultiVAE:
                       kl_coef * kl_loss + \
                       self.integ_coef * integ_loss + \
                       self.cycle_coef * cycle_loss
-            loss_adv = -integ_loss
 
             # AE backpropagation
             optimizer_ae.zero_grad()
-            # optimizer_adv.zero_grad()
             loss_ae.backward()
             optimizer_ae.step()
 
-            # adversarial discriminator backpropagation
-            for _ in range(adv_iters):
-                optimizer_ae.zero_grad()
-                # optimizer_adv.zero_grad()
-                loss_adv.backward()
-                # optimizer_adv.step()
-
             # update progress bar
             if iteration % print_every == 0:
+                # as function
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
+                for mod_loss, name in zip([mse_loss, nb_loss, zinb_loss, bce_loss], ['mse', 'nb', 'zinb', 'bce']):
+                    name = 'recon_' + name
+                    self._train_history[name].append(mod_loss.detach().cpu().item() if mod_loss !=0 else 0)
                 self._train_history['kl'].append(kl_loss.detach().cpu().item())
                 self._train_history['integ'].append(integ_loss.detach().cpu().item() if integ_loss != 0 else 0)
                 self._train_history['cycle'].append(cycle_loss.detach().cpu().item() if cycle_loss != 0 else 0)
+
                 if verbose >= 2:
                     self.print_progress_train(n_iters)
 
@@ -810,20 +783,35 @@ class MultiVAE:
 
             # validate
             if iteration > 0 and iteration % validate_every == 0 or iteration == n_iters - 1:
+                # as function
                 # add average train losses of the elapsed epoch to the validation history
                 self._val_history['iteration'].append(iteration)
                 self._val_history['train_loss'].append(np.mean(self._train_history['loss'][-(validate_every//print_every):]))
                 self._val_history['train_recon'].append(np.mean(self._train_history['recon'][-(validate_every//print_every):]))
+                for mod_loss, name in zip([mse_loss, nb_loss, zinb_loss, bce_loss], ['mse', 'nb', 'zinb', 'bce']):
+                    name_train = 'recon_' + name
+                    name = 'train_recon_' + name
+                    self._val_history[name].append(np.mean(self._train_history[name_train][-(validate_every//print_every):]))
                 self._val_history['train_kl'].append(np.mean(self._train_history['kl'][-(validate_every//print_every):]))
                 self._val_history['train_integ'].append(np.mean(self._train_history['integ'][-(validate_every//print_every):]))
                 self._val_history['train_cycle'].append(np.mean(self._train_history['cycle'][-(validate_every//print_every):]))
+
+                for i in range(self.n_modality):
+                        name = 'mod_vec' + str(i) + '_norm'
+                        self._val_history[name].append(torch.linalg.norm(self.model.modality_vectors.weight[i]).detach().cpu().item())
+                        # cosine similarity
+                        for j in range(i+1, self.n_modality):
+                            name = f'cos_similarity_mod_vectors_{i}_{j}'
+                            self._val_history[name] = 1-spatial.distance.cosine(self.model.modality_vectors.weight[i].detach().cpu().numpy(),
+                                                                                self.model.modality_vectors.weight[j].detach().cpu().numpy())
+
 
                 self.model.eval()
                 self.validate(val_dataloaders, n_iters, epoch_time, kl_coef=kl_coef, verbose=verbose, correct=correct, kernel_type=kernel_type, version=version)
                 self.model.train()
                 epoch_time = 0  # reset epoch time
 
-    def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None, verbose=1, correct='all', kernel_type='gaussian', version='new'):
+    def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None, verbose=1, correct='all', kernel_type='gaussian', version='1'):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
         if kl_coef is None:
@@ -831,6 +819,7 @@ class MultiVAE:
 
         # we want mean losses of all validation batches
         recon_loss = 0
+        mse_l, nb_l, zinb_l, bce_l = 0, 0, 0, 0
         kl_loss = 0
         integ_loss = 0
         cycle_loss = 0
@@ -845,15 +834,31 @@ class MultiVAE:
             batch_labels = [data[-1] for data in datas]
             size_factors = [data[-2] for data in datas]
 
+            # forward propagation
+            out = self.model(xs, modalities, pair_groups, batch_labels, size_factors)
+
+            if len(out) == 5:
+                rs, zs, mus, logvars, new_pair_groups = out
+                zs_not_corrected = None
+            elif len(out) == 9:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors = out
+                zs_not_corrected = None
+            elif len(out) == 10:
+                rs, zs, mus, logvars, new_pair_groups, modalities, batch_labels, xs, size_factors, zs_not_corrected = out
+            else:
+                print('sth\'s wrong')
+
             losses = [self.losses[mod] for mod in modalities]
 
-            # forward propagation
-            rs, zs, mus, logvars, new_pair_groups = self.model(xs, modalities, pair_groups, batch_labels, version)
-
             # calculate the losses
-            recon_loss += self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
+            r_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
+            recon_loss += r_loss
+            mse_l += mse_loss
+            nb_l += nb_loss
+            zinb_l += zinb_loss
+            bce_l += bce_loss
             kl_loss += self.calc_kl_loss(mus, logvars)
-            integ_loss += self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type)
+            integ_loss += self.calc_integ_loss(zs, new_pair_groups, correct, kernel_type, version, zs_not_corrected)
             if self.cycle_coef > 0:
                 cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
 
@@ -862,11 +867,16 @@ class MultiVAE:
                   kl_coef * kl_loss + \
                   self.integ_coef * integ_loss + \
                   self.cycle_coef * cycle_loss
-        loss_adv = -integ_loss
 
         # logging
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
+
+        for mod_loss, name in zip([mse_l, nb_l, zinb_l, bce_l], ['mse', 'nb', 'zinb', 'bce']):
+            if mod_loss != 0:
+                name = 'val_recon_' + name
+                self._val_history[name].append(mod_loss.detach().cpu().item() / val_n_iters)
+
         self._val_history['val_kl'].append(kl_loss.detach().cpu().item() / val_n_iters)
         if integ_loss != 0:
             self._val_history['val_integ'].append(integ_loss.detach().cpu().item() / val_n_iters)
@@ -885,23 +895,21 @@ class MultiVAE:
 
     def calc_recon_loss(self, xs, rs, losses, batch_labels, size_factors):
         loss = 0
+        mse_loss = 0
+        nb_loss = 0
+        zinb_loss = 0
+        bce_loss = 0
         for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
                 loss += mse_loss
-                #print(f'MSE loss = {mse_loss}')
             elif loss_type == 'nb':
-                #if self.condition:
-                #    dispertion = torch.narrow(self.theta.T, 0, batch, 1)
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
-                #else:
-                #    dispersion = torch.narrow(self.theta.T, 0, 0, 1)
                 dispersion = torch.exp(dispersion)
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, dec_mean, dispersion)
-                #print(f'NB loss = {-nb_loss}')
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
@@ -910,18 +918,16 @@ class MultiVAE:
                 dispersion = torch.exp(dispersion)
                 zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
                 loss -= zinb_loss
-                #print(f'NB loss = {-zinb_loss}')
             elif loss_type == 'bce':
                 bce_loss = self.loss_coef_dict['bce']*nn.BCELoss()(r, x)
                 loss += bce_loss
-                #print(f'BCE loss = {bce_loss}')
 
-        return loss
+        return loss, mse_loss, -nb_loss, -zinb_loss, bce_loss
 
     def calc_kl_loss(self, mus, logvars):
         return sum([KLD()(mu, logvar) for mu, logvar in zip(mus, logvars)])
 
-    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type):
+    def calc_integ_loss(self, zs, pair_groups, correct, kernel_type, version, zs_not_corrected=None):
         loss = 0
         for i, (zi, pgi) in enumerate(zip(zs, pair_groups)):
             for j, (zj, pgj) in enumerate(zip(zs, pair_groups)):
@@ -931,14 +937,12 @@ class MultiVAE:
                 if correct == 'all':
                     zij = self.model.convert(zi, pgi, source_pair=True, dest=None)
                 elif correct == 'missing':
-
                     zij = self.model.convert(zi, pgi, source_pair=True, dest=pgj, dest_pair=True)
                 elif correct == 'none':
                     zij = zi
                 #zj = zj.detach()
 
                 loss += MMD(kernel_type=kernel_type)(zij, zj)
-                #loss += MMD()(zi, zj)
         return loss
 
     def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses):
