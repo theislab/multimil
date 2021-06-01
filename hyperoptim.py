@@ -39,12 +39,22 @@ def objective(params, base_experiment_name, output_dir, pair_split, config, tria
     config = parse_config_file(os.path.join(output_dir, 'config.json'))
     validate(base_experiment_name, output_dir, config)
 
-    metrics = parse_config_file(os.path.join(output_dir, 'metrics.json'))
-    mean_integ_metrics = np.mean([metrics[i] for i in ['graph_conn']]) # 'ASW_label/batch', 'PCR_batch',
-    mean_bio_metrics = np.mean([metrics[i] for i in ['ASW_label', 'NMI_cluster/label', 'ARI_cluster/label']]) # , 'isolated_label_F1' 'isolated_label_silhouette'
+    if config['experiment']['calculate_metrics']:
+        metrics = parse_config_file(os.path.join(output_dir, 'metrics.json'))
+        if config['experiment']['batch']:
+            mean_integ_metrics = np.mean([metrics[i] for i in ['graph_conn', 'ASW_label/batch']]) # 'PCR_batch',
+            mean_bio_metrics = np.mean([metrics[i] for i in ['ASW_label', 'NMI_cluster/label', 'ARI_cluster/label', 'isolated_label_silhouette']])
+        else:
+            mean_integ_metrics = np.mean([metrics[i] for i in ['graph_conn']])
+            mean_bio_metrics = np.mean([metrics[i] for i in ['ASW_label', 'NMI_cluster/label', 'ARI_cluster/label']])
+
+        loss = -(0.4*mean_integ_metrics + 0.6*mean_bio_metrics)
+    else:
+        # quick fix
+        loss = -0.4
 
     return {
-        'loss': -(0.4*mean_integ_metrics + 0.6*mean_bio_metrics),
+        'loss': loss,
         'status': STATUS_OK,
         'eval_time': time.time()
     }

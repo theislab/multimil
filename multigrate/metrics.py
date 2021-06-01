@@ -4,7 +4,7 @@ import scanpy as sc
 import sklearn
 from scipy.stats import itemfreq, entropy
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score, silhouette_samples
+from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score, silhouette_samples, pair_confusion_matrix
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
 from scipy import sparse
@@ -228,11 +228,20 @@ def ari(adata, group1, group2='louvain'):
         sc.tl.louvain(adata)
     group1 = adata.obs[group1].tolist()
     group2 = adata.obs[group2].tolist()
-    print(len(group1))
-    print(len(group2))
-    print(group1)
-    print(group2)
-    return adjusted_rand_score(group1, group2)
+
+    (tn, fp), (fn, tp) = pair_confusion_matrix(group1, group2)
+
+    # fix overflow
+    tn = float(tn)
+    fp = float(fp)
+    fn = float(fn)
+    tp = float(tp)
+
+    if fn == 0 and fp == 0:
+        return 1.0
+
+    return 2. * (tp * tn - fn * fp) / ((tp + fn) * (fn + tn) +
+                                       (tp + fp) * (fp + tn))
 
 ### Isolated label score
 def isolated_labels(adata, label_key, batch_key, cluster_key="iso_cluster",

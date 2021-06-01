@@ -95,7 +95,7 @@ class MultiVAE_PoE(MultiVAE_smaller):
         recon_coef=1,
         kl_coef=1e-4,
         integ_coef=1e-1,
-        cycle_coef=1e-2,
+        cycle_coef=0,
         dropout=0.2,
         device=None,
         loss_coefs=[],

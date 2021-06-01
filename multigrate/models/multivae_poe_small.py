@@ -14,7 +14,7 @@ class MultiVAETorch_PoE_small(MultiVAETorch_PoE):
         zs_joint = [self.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
         out = self.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels)
         zs = out[0]
-        rs = [self.decode_from_shared(z, mod, pair_group, batch_label) for z, mod, pair_group, batch_label in zip(zs, modalities, pair_groups, batch_labels)]
+        rs = [self.decode_from_shared(self.convert(z, mod), mod, pair_group, batch_label) for z, mod, pair_group, batch_label in zip(zs, modalities, pair_groups, batch_labels)]
         return rs, zs, mus+mus_joint, logvars+logvars_joint, pair_groups, modalities, batch_labels, xs, size_factors
 
     def prep_latent(self, xs, zs, zs_joint, modalities, pair_groups, batch_labels, size_factors=None):
@@ -25,19 +25,10 @@ class MultiVAETorch_PoE_small(MultiVAETorch_PoE):
             group_size = len(list(group))
             if group_size == 1:
                 zs_new.append(zs[current])
-                current += 1
-                continue
+            else:
+                zs_new.extend([zs_joint[current_joint]]*group_size)
+                current_joint += 1
 
-            mask = torch.zeros(group_size, self.n_modality).to(self.device)
-            for i, mod in enumerate(self.modalities_per_group[pair]):
-                mask[:, mod] = -torch.ones(group_size).to(self.device)
-                mask[:, mod] += torch.eye(group_size)[i].to(self.device)
-            mod_vecs = mask @ self.modality_vectors.weight
-            mod_vecs = [mod_vecs[i] for i, _ in enumerate(mod_vecs)]
-            z_group = [zs_joint[current_joint] + mod_vec for mod_vec in mod_vecs]
-            zs_new.extend(z_group)
-
-            current_joint += 1
             current += group_size
         return zs_new, modalities, pair_groups, batch_labels, xs, size_factors
 
@@ -92,12 +83,11 @@ class MultiVAE_PoE_small(MultiVAE_PoE):
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs)
 
     def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
+        # TODO what if input paired and want to impute other? joint etc
         h = self.model.to_shared_dim(x, mod, batch)
         z = self.model.bottleneck(h)
-        mus = z[1]
-        logvars = z[2]
         z = z[0]
         z = self.model.convert(z, target_modality)
-        # TODO fix batches
-        r = self.model.decode_from_shared(z, target_modality, pair, 0)
+        # TODO pick batch randomly out of available
+        r = self.model.decode_from_shared(self.model.convert(z, target_modality), target_modality, pair, 0)
         return r

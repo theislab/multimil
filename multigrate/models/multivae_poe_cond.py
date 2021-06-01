@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 from itertools import groupby
 from .multivae_poe import MultiVAE_PoE, MultiVAETorch_PoE
 from .mlp_decoder import MLP_decoder
@@ -57,7 +58,7 @@ class MultiVAE_PoE_cond(MultiVAE_PoE):
         recon_coef=1,
         kl_coef=1e-4,
         integ_coef=1e-1,
-        cycle_coef=1e-2,
+        cycle_coef=0,
         dropout=0.2,
         device=None,
         loss_coefs=[],
@@ -105,3 +106,19 @@ class MultiVAE_PoE_cond(MultiVAE_PoE):
         # fix batch label, so it takes mean of available batches
         r = self.model.decode_from_shared(h_dec, target_modality, pair, 0)
         return r
+
+    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses):
+        loss = 0
+        for i, (xi, pgi, modi, batchi) in enumerate(zip(xs, pair_groups, modalities, batch_labels)):
+            for j, (pgj, modj, batchj, lossj) in enumerate(zip(pair_groups, modalities, batch_labels, losses)):
+                if i == j:  # do not make a dataset cycle consistent with itself
+                    continue
+                idx = np.argwhere(np.array(new_pair_groups) == pgi)[0][0]
+                zij = self.model.convert(zs[idx], pgi, source_pair=True, dest=modj, dest_pair=False)
+                rij = self.model.decode(zij, modj, batchj)
+                if lossj in ['zinb']:
+                    rij = rij[0]
+                ziji = self.model.convert(self.model.to_latent(rij, modj, batchj), modj, source_pair=False, dest=modi, dest_pair=False)
+                xiji = self.model.decode(ziji, modi, batchi)
+                loss += nn.MSELoss()(xiji, xi)
+        return loss

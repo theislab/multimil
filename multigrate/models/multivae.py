@@ -72,7 +72,7 @@ class MultiVAETorch(nn.Module):
         params.extend(list(self.modality_vectors.parameters()))
         return params
 
-    def to_shared_dim(self, x, i, batch_label):
+    def to_shared_dim(self, x, i, batch_label):      
         if self.condition:
             x = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in x])
         return self.x_to_h(x, i)
@@ -259,9 +259,9 @@ class MultiVAE:
         output_activations=[],
         shared_hiddens=[],
         recon_coef=1,
-        kl_coef=1e-4,
+        kl_coef=1e-5,
         integ_coef=1e-1,
-        cycle_coef=1e-2,
+        cycle_coef=0,
         dropout=0.2,
         device=None,
         loss_coefs=[],

@@ -79,8 +79,8 @@ def validate(experiment_name, output_dir, config, save_losses=True):
         sc.pl.umap(hs, color=['batch', 'study', 'modality', 'cell_type'], ncols=2, wspace=0.4, show=False)
         plt.savefig(os.path.join(output_dir, 'hs.png'), dpi=200, bbox_inches='tight')
 
-        sc.pl.umap(corrected, color=['batch', 'study', 'modality', 'cell_type'], ncols=2, wspace=0.4, show=False)
-        plt.savefig(os.path.join(output_dir, 'corrected.png'), dpi=200, bbox_inches='tight')
+        #sc.pl.umap(corrected, color=['batch', 'study', 'modality', 'cell_type'], ncols=2, wspace=0.4, show=False)
+        #plt.savefig(os.path.join(output_dir, 'corrected.png'), dpi=200, bbox_inches='tight')
 
         sc.pl.umap(latent, color=['batch', 'study', 'modality', 'cell_type'], ncols=2, wspace=0.4, show=False)
         plt.savefig(os.path.join(output_dir, 'latent.png'), dpi=200, bbox_inches='tight')
@@ -100,7 +100,8 @@ def validate(experiment_name, output_dir, config, save_losses=True):
                 embed='X_latent',
                 pcr_batch=False,
                 isolated_label_f1=False,
-                asw_batch=batches_present
+                asw_batch=batches_present,
+                isolated_label_asw=batches_present
             )
             print(mtrcs.to_dict())
             json.dump(mtrcs.to_dict()['score'], open(os.path.join(output_dir, 'metrics.json'), 'w'), indent=2)
@@ -145,30 +146,37 @@ def parse_args():
     return parser.parse_args()
 
 def save_losses_figure(model, output_dir):
-    plt.figure(figsize=(15, 20));
-    loss_names = ['recon', 'kl', 'integ']#, 'recon_mse', 'recon_nb']#, 'recon_bce']
-    # nrows = int(np.ceil((len(loss_names)+1)/2))
-    nrows = 3
+    loss_names = ['recon', 'kl']
+    # if batches also plot integration loss
+    for n in model.n_batch_labels:
+        if n > 1:
+            loss_names.append('integ')
+    for loss in model.losses:
+        loss_names.append('recon_' + str(loss))
+    nrows = int(np.ceil((len(loss_names)+2)/2))
+    
+    plt.figure(figsize=(15, nrows*5))
 
     plt.subplot(nrows, 2, 1)
     plt.plot(model.history['iteration'], model.history['train_loss'], '.-', label='Train loss');
     plt.plot(model.history['iteration'], model.history['val_loss'], '.-', label='Val loss');
-    plt.xlabel('#Iterations');
+    plt.xlabel('#Iterations')
     plt.legend()
 
     for i, name in enumerate(loss_names):
         plt.subplot(nrows, 2, i+2)
         plt.plot(model.history['iteration'], model.history[f'train_{name}'], '.-', label=f'Train {name} loss');
         plt.plot(model.history['iteration'], model.history[f'val_{name}'], '.-', label=f'Val {name} loss');
-        plt.xlabel('#Iterations');
+        plt.xlabel('#Iterations')
         plt.legend()
 
-    #plt.subplot(nrows, 2, nrows*2)
-    #plt.plot(model.history['iteration'], model.history['mod_vec0_norm'], '.-', label='mod vec 1 norm');
-    #plt.plot(model.history['iteration'], model.history['mod_vec1_norm'], '.-', label='mod vec 2 norm');
-    #plt.plot(model.history['iteration'], model.history['mod_vec2_norm'], '.-', label='mod vec 3 norm');
-    #plt.xlabel('#Iterations');
-    #plt.legend()
+    plt.subplot(nrows, 2, nrows*2)
+    for i in range(model.model.modality_vectors.weight.shape[0]):
+        name = 'mod_vec' + str(i) + '_norm'
+        label = 'mod vec ' + str(i+1) + ' norm'
+        plt.plot(model.history['iteration'], model.history[name], '.-', label=label);
+    plt.xlabel('#Iterations')
+    plt.legend()
 
     plt.savefig(os.path.join(output_dir, f'losses.png'), dpi=80, bbox_inches='tight')
     plt.close('all')
