@@ -7,7 +7,7 @@ import anndata
 from sklearn.model_selection import train_test_split
 from .scmultidataset import SingleCellMultiDatasetBuilder
 from .scdataset import SingleCellDataset
-
+from .scdatasetMIL import SingleCellDatasetMIL
 
 def load_dataset(config, device='cpu'):
     # load configs
@@ -27,5 +27,5 @@ def load_dataset(config, device='cpu'):
     # create data loaders
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
-    
-    return train_dataloader, test_dataloader 
+
+    return train_dataloader, test_dataloader

@@ -6,7 +6,6 @@ from .mlp_decoder import MLP_decoder
 from .mlp import MLP
 
 class MultiVAETorch_PoE_cond(MultiVAETorch_PoE):
-
     def forward(self, xs, modalities, pair_groups, batch_labels, size_factors):
         hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
         zs = [self.bottleneck(h) for h in hs]

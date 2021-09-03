@@ -10,6 +10,7 @@ from .multivae_poe import MultiVAE_PoE
 from .multivae_poe_small import MultiVAE_PoE_small
 from .multivae_poe_cond import MultiVAE_PoE_cond
 from .multivae_poe_small_mse import MultiVAE_PoE_small_mse
+from .multivae_mil import MultiVAE_MIL
 
 def create_model(name, params):
     model = model_factory(name, params)
@@ -34,6 +35,8 @@ def model_factory(name, params):
         model = MultiVAE_PoE_small(**params)
     elif name == 'MultiVAE_PoE_small_mse':
         model = MultiVAE_PoE_small_mse(**params)
+    elif name == 'MultiVAE_MIL':
+        model = MultiVAE_MIL(**params)
     else:
         raise NotImplementedError(f'No model {name} is implemented.')
     return model
