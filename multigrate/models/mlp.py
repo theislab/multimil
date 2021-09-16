@@ -9,7 +9,8 @@ class MLP(nn.Module):
                  dropout=None,
                  norm='layer',
                  regularize_last_layer=False,
-                 device='cpu'):
+                 device='cpu',
+                 last_layer=True):
 
         super(MLP, self).__init__()
 
@@ -18,7 +19,8 @@ class MLP(nn.Module):
         norm_last_layer = norm if regularize_last_layer else 'no_reg'
 
         if hiddens == []:  # no hidden layers
-            layers.append(self._fc(n_inputs, n_outputs, activation=output_activation,
+            if last_layer:
+                layers.append(self._fc(n_inputs, n_outputs, activation=output_activation,
                                    dropout=dropout if regularize_last_layer else None,
                                    norm=norm_last_layer))
         else:
@@ -26,7 +28,8 @@ class MLP(nn.Module):
             for l in range(1, len(hiddens)):  # inner layers
                 layers.append(self._fc(hiddens[l-1], hiddens[l], activation='leakyrelu', dropout=dropout, norm=norm))
 
-            layers.append(self._fc(hiddens[-1], n_outputs, activation=output_activation,
+            if last_layer:
+                layers.append(self._fc(hiddens[-1], n_outputs, activation=output_activation,
                                    dropout=dropout if regularize_last_layer else None,
                                    norm=norm_last_layer))
 

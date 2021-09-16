@@ -7,6 +7,7 @@ import scanpy as sc
 from operator import attrgetter
 from itertools import cycle, zip_longest, groupby
 from scipy import spatial
+from .mlp import MLP
 
 from .multivae_poe_cond import MultiVAE_PoE_cond, MultiVAETorch_PoE_cond
 from ..datasets import SingleCellDatasetMIL
@@ -14,14 +15,31 @@ from ..datasets import SingleCellDatasetMIL
 class Aggregator(nn.Module):
     def __init__(self,
                 z_dim=None,
-                scoring='sum'
+                scoring='sum',
+                attn_dim=32
                 ):
         super(Aggregator, self).__init__()
+
         self.scoring = scoring
+
+        if self.scoring == 'attn':
+            self.attn_dim = attn_dim # attn dim from https://arxiv.org/pdf/1802.04712.pdf
+            self.attention = nn.Sequential(
+                nn.Linear(z_dim, self.attn_dim, bias=False),
+                nn.Tanh(),
+                nn.Linear(self.attn_dim, 1, bias=False),
+            )
 
     def forward(self, x):
         if self.scoring == 'sum':
-            return torch.sum(x, dim=0)
+            return torch.sum(x, dim=0) # z_dim
+        elif self.scoring == 'attn':
+            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py
+            self.A = self.attention(x)  # Nx1
+            self.A = torch.transpose(self.A, 1, 0)  # 1xN
+            self.A = F.softmax(self.A, dim=1)  # softmax over N
+            return torch.mm(self.A, x).squeeze() # z_dim, N
+
 
 class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
     def __init__(self,
@@ -38,7 +56,11 @@ class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
         paired_dict={},
         modalities_per_group={},
         paired_networks_per_modality_pairs={},
-        num_classes=None
+        num_classes=None,
+        scoring='attn',
+        classifier_hiddens=[],
+        normalization='layer',
+        dropout=None
     ):
         super().__init__(
             encoders,
@@ -55,8 +77,21 @@ class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
             modalities_per_group,
             paired_networks_per_modality_pairs
         )
+
         z_dim = self.modality_vectors.weight.shape[1]
-        self.classifier = nn.Sequential(Aggregator(), nn.Linear(z_dim, num_classes))
+
+        if len(classifier_hiddens) > 0:
+            classifier_hiddens.extend([classifier_hiddens[-1]]) # hack to make work with existing MLP module
+            mil_dim = classifier_hiddens[-1]
+        else:
+            mil_dim = z_dim
+
+        self.classifier = nn.Sequential(
+                            MLP(z_dim, mil_dim, classifier_hiddens[:-1], output_activation='leakyrelu',
+                                  dropout=dropout, norm=normalization, last_layer=False, regularize_last_layer=True),
+                            Aggregator(mil_dim, scoring),
+                            nn.Linear(mil_dim, num_classes)
+                            )
 
         self = self.to(device)
 
@@ -79,6 +114,8 @@ class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
         rs = [self.decode_from_shared(h, mod, pair_group, batch_label) for h, mod, pair_group, batch_label in zip(hs_dec, modalities, pair_groups, batch_labels)]
         # classify
         predicted_scores = [self.classifier(z_joint) for z_joint in zs_joint]
+        #if len(predicted_scores[0]) == 2:
+    #        predicted_scores = [predicted_scores[i][0] for i in range(len(predicted_scores))]
         return rs, zs, mus+mus_joint, logvars+logvars_joint, pair_groups, modalities, batch_labels, xs, size_factors, predicted_scores
 
 class MultiVAE_MIL(MultiVAE_PoE_cond):
@@ -106,6 +143,8 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
         theta=None,
         class_columns=None,
         bag_key=None,
+        scoring='attn',
+        classifier_hiddens=[]
     ):
         super().__init__(
         adatas,
@@ -138,7 +177,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
         self.model = MultiVAETorch_PoE_MIL(self.encoders, self.decoders, self.shared_encoder, self.shared_decoder,
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs,
-                                   self.num_classes)
+                                   self.num_classes, scoring, classifier_hiddens, normalization, dropout)
 
     def reshape_adatas_mil(self, adatas, names, layers, pair_groups, batch_labels, class_columns, bag_key):
         reshaped_adatas = {}
@@ -178,7 +217,6 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
             batch_label = adatas[name]['batch_label']
             layer = adatas[name]['layer']
             class_ = adatas[name]['class']
-
 
             if pair_group in pair_group_train_masks:
                 train_mask = pair_group_train_masks[pair_group]
@@ -311,7 +349,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
             epoch_time += time.time() - tik
 
             # validate
-            if iteration > 0 and iteration % validate_every == 0 or iteration == n_iters - 1:
+            if iteration % validate_every == 0 or iteration == n_iters - 1: # iteration > 0
                 # as function
                 # add average train losses of the elapsed epoch to the validation history
                 self._val_history['iteration'].append(iteration)
@@ -344,6 +382,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
     def validate(self, val_dataloaders, n_iters, train_time=None, kl_coef=None, verbose=1, correct='all', kernel_type='gaussian', version='1', ae_coef=1, classification_coef=1):
         tik = time.time()
         val_n_iters = max([len(loader) for loader in val_dataloaders])
+
         if kl_coef is None:
             kl_coef = self.kl_coef
 
@@ -396,7 +435,6 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
             true_labels = torch.tensor(true_labels, dtype=torch.long).to(self.model.device)
             predicted_scores = torch.stack(predicted_scores)
 
-
             total += true_labels.size(0)
             _, predicted = torch.max(predicted_scores.data, 1)
 
@@ -415,6 +453,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
             if self.cycle_coef > 0:
                 cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
 
+        #print(f'\n Nastja <3 iter: {iteration}, corr: {correct}, tot: {total}')
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
                   kl_coef * kl_loss + \
@@ -427,7 +466,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
         self._val_history['val_loss'].append(loss_ae.detach().cpu().item() / val_n_iters)
         self._val_history['val_recon'].append(recon_loss.detach().cpu().item() / val_n_iters)
         self._val_history['val_class'].append(class_loss.detach().cpu().item() / val_n_iters)
-        self._val_history['accuracy'].append(correct/total)
+        self._val_history['accuracy'].append(correct / total)
 
         for mod_loss, name in zip([mse_l, nb_l, zinb_l, bce_l], ['mse', 'nb', 'zinb', 'bce']):
             if mod_loss != 0:
@@ -454,7 +493,6 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
         true_labels = [labels[i] for i in range(0, len(labels), 2)]
         true_labels = torch.tensor(true_labels, dtype=torch.long).to(self.model.device)
         predicted_scores = torch.stack(predicted_scores)
-
         return F.cross_entropy(predicted_scores, true_labels)
 
     def test(self,
@@ -496,6 +534,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
         dataloaders = [d.loader for d in datasets]
 
         ad_integrated, ad_latent, ad_latent_corrected, ad_hs = [], [], [], []
+        classifier_adatas = []
 
         with torch.no_grad():
             self.model.eval()
@@ -523,6 +562,15 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
                 mus_joint, logvars_joint, joint_pair_groups = self.model.product_of_experts(mus, logvars, pair_groups)
                 zs_joint = [self.model.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
                 predicted_scores = [self.model.classifier(z_joint) for z_joint in zs_joint]
+
+                if len(classifier_adatas) == 0:
+                    classifier_adatas = [[] for i in joint_pair_groups]
+
+                # TODO: FIX
+                A = []
+                for z_joint in zs_joint:
+                    self.model.classifier(z_joint)
+                    A.append(self.model.classifier[-2].A.squeeze().detach().cpu().numpy())
                 zs_corrected, new_modalities, new_pair_groups, new_batch_labels, xs, size_factors = self.model.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels)
 
                 true_labels = [labels[i] for i in range(0, len(labels), 2)]
@@ -530,15 +578,21 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
                 predicted_scores_stacked = torch.stack(predicted_scores)
                 _, predicted_labels = torch.max(predicted_scores_stacked.data, 1)
 
-                for i, (z_corrected, pair, mod) in enumerate(zip(zs_corrected, new_pair_groups, new_modalities)):
-                    z = sc.AnnData(z_corrected.detach().cpu().numpy())
-                    z.obs['modality'] = mod
-                    z.obs['barcode'] = list(indices[group_indices[pair][0]])
-                    z.obs['study'] = pair
-                    z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                    ad_latent_corrected.append(z)
+                zs = zs_joint.copy()
 
-                for i, (z_joint, pair, predicted_label) in enumerate(zip(zs_joint, joint_pair_groups, predicted_labels)):
+                for layer in self.model.classifier[:-2]:
+                    zs = [layer(z) for z in zs]
+                    for i, (z, pair) in enumerate(zip(zs, joint_pair_groups)):
+                        z = sc.AnnData(z.detach().cpu().numpy())
+                        mods = np.array(names)[group_indices[pair], ]
+                        z.obs['modality'] = '-'.join(mods)
+                        z.obs['barcode'] = list(indices[group_indices[pair][0]])
+                        z.obs['study'] = pair
+                        z.obs[celltype_key] = celltypes[group_indices[pair][0]]
+
+                        classifier_adatas[i].append(z)
+
+                for i, (z_joint, pair, predicted_label, a) in enumerate(zip(zs_joint, joint_pair_groups, predicted_labels, A)):
                     z = sc.AnnData(z_joint.detach().cpu().numpy())
                     mods = np.array(names)[group_indices[pair], ]
                     z.obs['modality'] = '-'.join(mods)
@@ -546,25 +600,11 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
                     z.obs['study'] = pair
                     z.obs[celltype_key] = celltypes[group_indices[pair][0]]
                     z.obs['predicted_label'] = predicted_label.detach().cpu().numpy()
+                    z.obs['attn_score'] = a
 
                     ad_integrated.append(z)
 
-                # does not work
-                for h, z_latent, pg, mod, cell_type, idx in zip(hs, zs, pair_groups, modalities, celltypes, indices):
-                    z = sc.AnnData(z_latent.detach().cpu().numpy())
-                    z.obs['modality'] = mod
-                    z.obs['barcode'] = idx
-                    z.obs['study'] = pg
-                    z.obs[celltype_key] = cell_type
-                    ad_latent.append(z)
-                    #if len(self.modalities_per_group[pg]) == 1:
-                    #    ad_integrated.append(z)
+        for i, adatas in enumerate(classifier_adatas):
+            classifier_adatas[i] = sc.AnnData.concatenate(*classifier_adatas[i])
 
-                    z = sc.AnnData(h.detach().cpu().numpy())
-                    z.obs['modality'] = mod
-                    z.obs['barcode'] = idx
-                    z.obs['study'] = pg
-                    z.obs[celltype_key] = cell_type
-                    ad_hs.append(z)
-
-        return sc.AnnData.concatenate(*ad_integrated), sc.AnnData.concatenate(*ad_latent), sc.AnnData.concatenate(*ad_latent_corrected), sc.AnnData.concatenate(*ad_hs)
+        return sc.AnnData.concatenate(*ad_integrated), classifier_adatas

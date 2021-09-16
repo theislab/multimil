@@ -4,7 +4,7 @@ import scanpy as sc
 import sklearn
 from scipy.stats import itemfreq, entropy
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score, silhouette_samples, pair_confusion_matrix
+#from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score, silhouette_samples, pair_confusion_matrix
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
 from scipy import sparse
