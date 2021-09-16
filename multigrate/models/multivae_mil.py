@@ -18,7 +18,7 @@ class Aggregator(nn.Module):
                 scoring='sum',
                 attn_dim=32 # D
                 ):
-        super(Aggregator, self).__init__()
+        super().__init__()
 
         self.scoring = scoring
 
@@ -103,13 +103,13 @@ class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
         z_dim = self.modality_vectors.weight.shape[1]
 
         if len(classifier_hiddens) > 0:
-            classifier_hiddens.extend([classifier_hiddens[-1]]) # hack to make work with existing MLP module
+            #classifier_hiddens.extend([classifier_hiddens[-1]]) # hack to make work with existing MLP module
             mil_dim = classifier_hiddens[-1]
         else:
             mil_dim = z_dim
 
         self.classifier = nn.Sequential(
-                            MLP(z_dim, mil_dim, classifier_hiddens[:-1], output_activation='leakyrelu',
+                            MLP(z_dim, mil_dim, classifier_hiddens, output_activation='leakyrelu', # [:-1]
                                   dropout=dropout, norm=normalization, last_layer=False, regularize_last_layer=True),
                             Aggregator(mil_dim, scoring, attn_dim=attn_dim),
                             nn.Linear(mil_dim, num_classes)
@@ -193,6 +193,10 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
 
         self.bag_key = bag_key
         self.class_columns = class_columns
+        self.scoring = scoring
+        self.normalization = normalization
+        self.dropout = dropout
+        self.classifier_hiddens = classifier_hiddens
 
         self.adatas, self.num_classes = self.reshape_adatas_mil(adatas, names, self.layers, pair_groups, self.batch_labels, class_columns, bag_key)
 
@@ -200,6 +204,17 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
                                    self.mu, self.logvar, self.modality_vecs, self.device, self.condition, self.n_batch_labels,
                                    self.pair_groups_dict, self.modalities_per_group, self.paired_networks_per_modality_pairs,
                                    self.num_classes, scoring, classifier_hiddens, normalization, dropout)
+
+
+    def use_model(self, model, freeze=True):
+        self.model = MultiVAETorch_PoE_MIL(model.encoders, model.decoders, model.shared_encoder, model.shared_decoder,
+                                   model.mu, model.logvar, model.modality_vecs, model.device, model.condition, model.n_batch_labels,
+                                   model.pair_groups_dict, model.modalities_per_group, model.paired_networks_per_modality_pairs,
+                                   self.num_classes, self.scoring, self.classifier_hiddens, self.normalization, self.dropout)
+        if freeze:
+            for param in self.model.named_parameters():
+                if not param[0].startswith('classifier'):
+                    param[1].requires_grad = False
 
     def reshape_adatas_mil(self, adatas, names, layers, pair_groups, batch_labels, class_columns, bag_key):
         reshaped_adatas = {}
@@ -475,7 +490,6 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
             if self.cycle_coef > 0:
                 cycle_loss += self.calc_cycle_loss(xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses)
 
-        #print(f'\n Nastja <3 iter: {iteration}, corr: {correct}, tot: {total}')
         # calculate overal losses
         loss_ae = self.recon_coef * recon_loss + \
                   kl_coef * kl_loss + \
