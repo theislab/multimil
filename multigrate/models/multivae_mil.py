@@ -16,7 +16,7 @@ class Aggregator(nn.Module):
     def __init__(self,
                 z_dim=None,
                 scoring='sum',
-                attn_dim=32
+                attn_dim=32 # D
                 ):
         super(Aggregator, self).__init__()
 
@@ -25,21 +25,42 @@ class Aggregator(nn.Module):
         if self.scoring == 'attn':
             self.attn_dim = attn_dim # attn dim from https://arxiv.org/pdf/1802.04712.pdf
             self.attention = nn.Sequential(
-                nn.Linear(z_dim, self.attn_dim, bias=False),
+                nn.Linear(z_dim, self.attn_dim),
                 nn.Tanh(),
                 nn.Linear(self.attn_dim, 1, bias=False),
             )
+        elif self.scoring == 'gated_attn':
+            self.attn_dim = attn_dim
+            self.attention_V = nn.Sequential(
+                nn.Linear(z_dim, self.attn_dim),
+                nn.Tanh()
+            )
+
+            self.attention_U = nn.Sequential(
+                nn.Linear(z_dim, self.attn_dim),
+                nn.Sigmoid()
+            )
+
+            self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
 
     def forward(self, x):
         if self.scoring == 'sum':
             return torch.sum(x, dim=0) # z_dim
         elif self.scoring == 'attn':
-            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py
+            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
             self.A = self.attention(x)  # Nx1
             self.A = torch.transpose(self.A, 1, 0)  # 1xN
             self.A = F.softmax(self.A, dim=1)  # softmax over N
-            return torch.mm(self.A, x).squeeze() # z_dim, N
+            return torch.mm(self.A, x).squeeze() # z_dim
 
+        elif self.scoring == 'gated_attn':
+            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+            A_V = self.attention_V(x)  # NxD
+            A_U = self.attention_U(x)  # NxD
+            self.A = self.attention_weights(A_V * A_U) # element wise multiplication # Nx1
+            self.A = torch.transpose(self.A, 1, 0)  # 1xN
+            self.A = F.softmax(self.A, dim=1)  # softmax over N
+            return torch.mm(self.A, x).squeeze()  # z_dim
 
 class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
     def __init__(self,
@@ -60,7 +81,8 @@ class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
         scoring='attn',
         classifier_hiddens=[],
         normalization='layer',
-        dropout=None
+        dropout=None,
+        attn_dim=32
     ):
         super().__init__(
             encoders,
@@ -89,7 +111,7 @@ class MultiVAETorch_PoE_MIL(MultiVAETorch_PoE_cond):
         self.classifier = nn.Sequential(
                             MLP(z_dim, mil_dim, classifier_hiddens[:-1], output_activation='leakyrelu',
                                   dropout=dropout, norm=normalization, last_layer=False, regularize_last_layer=True),
-                            Aggregator(mil_dim, scoring),
+                            Aggregator(mil_dim, scoring, attn_dim=attn_dim),
                             nn.Linear(mil_dim, num_classes)
                             )
 
@@ -503,7 +525,6 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
             celltype_key='cell_type',
             batch_size=64,
             batch_labels=None,
-            #correct='all', #'missing'
             layers=[],
             bag_key=None,
             class_columns=None
@@ -533,8 +554,8 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
 
-        ad_integrated, ad_latent, ad_latent_corrected, ad_hs = [], [], [], []
-        classifier_adatas = []
+        ad_integrated = []
+        classifier_adatas = [[] for _ in range(len(self.model.classifier[0].network))]
 
         with torch.no_grad():
             self.model.eval()
@@ -563,9 +584,6 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
                 zs_joint = [self.model.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
                 predicted_scores = [self.model.classifier(z_joint) for z_joint in zs_joint]
 
-                if len(classifier_adatas) == 0:
-                    classifier_adatas = [[] for i in joint_pair_groups]
-
                 # TODO: FIX
                 A = []
                 for z_joint in zs_joint:
@@ -580,9 +598,9 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
 
                 zs = zs_joint.copy()
 
-                for layer in self.model.classifier[:-2]:
+                for i, layer in enumerate(self.model.classifier[0].network):
                     zs = [layer(z) for z in zs]
-                    for i, (z, pair) in enumerate(zip(zs, joint_pair_groups)):
+                    for z, pair in zip(zs, joint_pair_groups):
                         z = sc.AnnData(z.detach().cpu().numpy())
                         mods = np.array(names)[group_indices[pair], ]
                         z.obs['modality'] = '-'.join(mods)
@@ -604,6 +622,7 @@ class MultiVAE_MIL(MultiVAE_PoE_cond):
 
                     ad_integrated.append(z)
 
+        # concat for each classifier layer
         for i, adatas in enumerate(classifier_adatas):
             classifier_adatas[i] = sc.AnnData.concatenate(*classifier_adatas[i])
 
