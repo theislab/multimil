@@ -17,7 +17,7 @@ from ..nn import *
 from ..module import MultiVAETorch
 from ..distributions import *
 from scvi.data._anndata import _setup_anndata
-from scvi.dataloaders import DataSplitter
+from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 
 class MultiVAE:
@@ -36,6 +36,7 @@ class MultiVAE:
         device=None,
         loss_coefs=[],
         theta=None,
+        cond_dim=10
     ):
         # configure to CUDA if is available
         if device is None:
@@ -93,26 +94,32 @@ class MultiVAE:
         for i, loss in enumerate(self.losses):
             self.loss_coef_dict[loss] = self.loss_coefs[i]
 
-        #self.batch_labels = [list(range(len(modality_adatas))) for modality_adatas in adatas]
-
-        self.n_batch_labels = [0]*self.n_modality
+        groups = []
+        for modality_adatas in self.adatas:
+            groups.append([adata.obs.group[0] for adata in modality_adatas])
 
         if condition:
-            self.n_batch_labels = [len(modality_adatas) for modality_adatas in adatas]
+            num_groups = len(set([group for modality_groups in groups for group in modality_groups]))
+            self.cond_embedding = torch.nn.Embedding(num_groups, cond_dim)
+        else:
+            self.cond_embedding = None
+            cond_dim = 0 # not to add extra input dimentions later to the encoders
 
         # assume for now that can only use nb/zinb once, i.e. for RNA-seq modality
+        # TODO: add check for mulriple nb/zinb losses given
         self.theta = theta
-        if self.theta == None:
+        if not self.theta:
             for i, loss in enumerate(losses):
                 if loss in ["nb", "zinb"]:
-                    self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], max(self.n_batch_labels[i], 1))).to(self.device).detach().requires_grad_(True)
+                    self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], max(len(groups[i]), 1))).to(self.device).detach().requires_grad_(True)
+                    break
 
         # need for surgery TODO check
         # self.mod_dec_dim = h_dim
         # create modules
-        self.encoders = [MLP(x_dim + self.n_batch_labels[i], z_dim, hs, output_activation='leakyrelu',
+        self.encoders = [MLP(x_dim + cond_dim, z_dim, hs, output_activation='leakyrelu',
                              dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.input_dims, hiddens))]
-        self.decoders = [MLP_decoder(h_dim + self.n_batch_labels[i], x_dim, hs[::-1], output_activation=out_act,
+        self.decoders = [MLP_decoder(h_dim + cond_dim, x_dim, hs[::-1], output_activation=out_act,
                              dropout=dropout, norm=normalization, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.input_dims, hiddens, output_activations, self.losses))]
         self.shared_decoder = MLP(z_dim + self.n_modality, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
                                   dropout=dropout, norm=normalization, regularize_last_layer=True)
@@ -121,11 +128,10 @@ class MultiVAE:
         self.logvar = MLP(z_dim, z_dim)
 
         self.module = MultiVAETorch(self.encoders, self.decoders, self.shared_decoder,
-                                   self.mu, self.logvar, self.device, self.condition, self.n_batch_labels)
+                                   self.mu, self.logvar, self.device, self.condition, self.cond_embedding)
 
     @property
     def history(self):
-        # TODO: check if all the same length, if not take the smallest or sth like that
         return pd.DataFrame(self._val_history)
 
     def reset_history(self):
@@ -202,7 +208,6 @@ class MultiVAE:
             layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
 
         #TODO redo prep pair stuff in case pair names are different
-
         adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
         datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
         dataloaders = [d.loader for d in datasets]
@@ -239,6 +244,7 @@ class MultiVAE:
 
         return sc.AnnData.concatenate(*zs)
 
+    # TODO
     def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
         zi = self.module.to_latent(x, mod, batch)
         zij = self.module.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
@@ -255,36 +261,33 @@ class MultiVAE:
         self,
         batch_size=64
     ):
-        dataloaders, _ = self.create_dataloaders(batch_size, validation_size=0)
 
-        groups = []
-        zs = []
+        groups = [adata.obs['group'][0] for modality_adatas in self.adatas for adata in modality_adatas]
+        sorting = np.argsort(groups, kind='stable')
+
+        # is ugly now bc datasplitter doesn't work with shuffle=False, will fix later
+        adatas = [adata for modality_adatas in self.adatas for adata in modality_adatas]
+        adatas = [adatas[i] for i in sorting]
+        dataloaders = [AnnDataLoader(adata, shuffle=False, batch_size=batch_size) for adata in adatas]
+
+        zs = [[] for _ in set(groups)]
 
         with torch.no_grad():
             self.module.eval()
 
-            i = 0
             for datas in zip_longest(*dataloaders):
-                #if i > 2:
-                #    break
                 datas = [data for data in datas if data] # to get rid of None's when a dataloader runs out
                 xs = [data['X'].to(self.device) for data in datas]
                 groups = [int(data['cat_covs'][:, 0][0]) for data in datas]
                 modalities = [int(data['cat_covs'][:, 1][0]) for data in datas]
-                batch_labels = [int(data['batch_indices'][0][0]) for data in datas]
+                # batch_labels = [int(data['batch_indices'][0][0]) for data in datas]
                 size_factors = [data['cont_covs'].squeeze() for data in datas]
-
                 # forward propagation
-                out = self.module.inference(xs, modalities, groups, batch_labels)
+                out = self.module.inference(xs, modalities, groups)
                 zs_joint = out[1]
 
-                if len(zs) == 0:
-                    zs = [[] for _ in set(groups)]
-
-                for i, z in enumerate(zs_joint):
+                for i, z in enumerate(zs_joint): # group = i as groups are sorted
                     zs[i] += [z.cpu()]
-
-                i += 1
 
         for i, z in enumerate(zs):
             zs[i] = torch.cat(z).numpy()
@@ -307,8 +310,7 @@ class MultiVAE:
         validation_size=0.1,
         validate_every=None,
         verbose=1,
-        kernel_type='gaussian',
-        print_losses=False
+        kernel_type='gaussian'
     ):
         # configure training parameters
         print_every = n_iters // 50 if n_iters >= 50 else n_iters
@@ -339,16 +341,16 @@ class MultiVAE:
             xs = [data['X'].to(self.device) for data in datas]
             groups = [int(data['cat_covs'][:, 0][0]) for data in datas]
             modalities = [int(data['cat_covs'][:, 1][0]) for data in datas]
-            batch_labels = [int(data['batch_indices'][0][0]) for data in datas]
+            # batch_labels = [int(data['batch_indices'][0][0]) for data in datas]
             size_factors = [data['cont_covs'].squeeze() for data in datas]
 
             number_of_batches = len(datas) # need for later logging
 
-            rs, zs, mus, logvars = self.module(xs, modalities, groups, batch_labels)
+            rs, zs, mus, logvars = self.module(xs, modalities, groups)
 
             losses = [self.losses[mod] for mod in modalities]
 
-            recon_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
+            recon_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, groups, size_factors)
             kl_loss = self.calc_kl_loss(mus, logvars)
             integ_loss = self.calc_integ_loss(zs, kernel_type)
             if cycle_coef == 0:
@@ -356,10 +358,10 @@ class MultiVAE:
             else:
                 cycle_loss = self.calc_cycle_loss(xs, zs, groups, modalities, batch_labels, new_pair_groups, losses)
 
-            kl_coef = self.kl_anneal(iteration, kl_anneal_iters, kl_coef)  # KL annealing
+            kl_coef_iter = self.kl_anneal(iteration, kl_anneal_iters, kl_coef)  # KL annealing
 
             loss_ae = recon_coef * recon_loss + \
-                      kl_coef * kl_loss + \
+                      kl_coef_iter * kl_loss + \
                       integ_coef * integ_loss + \
                       cycle_coef * cycle_loss
 
@@ -370,7 +372,6 @@ class MultiVAE:
 
             # update progress bar
             if iteration % print_every == 0:
-                # as function
                 self._train_history['iteration'].append(iteration)
                 self._train_history['loss'].append(loss_ae.detach().cpu().item())
                 self._train_history['recon'].append(recon_loss.detach().cpu().item())
@@ -436,16 +437,16 @@ class MultiVAE:
             xs = [data['X'].to(self.device) for data in datas]
             groups = [int(data['cat_covs'][:, 0][0]) for data in datas]
             modalities = [int(data['cat_covs'][:, 1][0]) for data in datas]
-            batch_labels = [int(data['batch_indices'][0][0]) for data in datas]
+            # batch_labels = [int(data['batch_indices'][0][0]) for data in datas]
             size_factors = [data['cont_covs'].squeeze() for data in datas]
 
             # forward propagation
-            rs, zs, mus, logvars = self.module(xs, modalities, groups, batch_labels)
+            rs, zs, mus, logvars = self.module(xs, modalities, groups)
 
             losses = [self.losses[mod] for mod in modalities]
 
             # calculate the losses
-            r_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, batch_labels, size_factors)
+            r_loss, mse_loss, nb_loss, zinb_loss, bce_loss = self.calc_recon_loss(xs, rs, losses, groups, size_factors)
             recon_loss += r_loss
             mse_l += mse_loss
             nb_l += nb_loss
@@ -454,7 +455,7 @@ class MultiVAE:
             kl_loss += self.calc_kl_loss(mus, logvars)
             integ_loss += self.calc_integ_loss(zs, kernel_type)
             if cycle_coef > 0:
-                cycle_loss += self.calc_cycle_loss(xs, zs, groups, modalities, batch_labels, losses)
+                cycle_loss += self.calc_cycle_loss(xs, zs, groups, modalities, groups, losses)
 
         # calculate overal losses
         loss_ae = recon_coef * recon_loss + \
@@ -488,13 +489,13 @@ class MultiVAE:
         elif verbose >= 2:
             self.print_progress_val(n_iters, train_time + val_time, end='\n')
 
-    def calc_recon_loss(self, xs, rs, losses, batch_labels, size_factors):
+    def calc_recon_loss(self, xs, rs, losses, groups, size_factors):
         loss = 0
         mse_loss = 0
         nb_loss = 0
         zinb_loss = 0
         bce_loss = 0
-        for x, r, loss_type, batch, size_factor in zip(xs, rs, losses, batch_labels, size_factors):
+        for x, r, loss_type, group, size_factor in zip(xs, rs, losses, groups, size_factors):
             if loss_type == 'mse':
                 mse_loss = self.loss_coef_dict['mse']*nn.MSELoss()(r, x)
                 loss += mse_loss
@@ -502,14 +503,14 @@ class MultiVAE:
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
-                dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
+                dispersion = self.theta.T[group] if self.condition else self.theta.T[0]
                 dispersion = torch.exp(dispersion)
                 nb_loss = self.loss_coef_dict['nb']*NB()(x, dec_mean, dispersion)
                 loss -= nb_loss
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
-                dispersion = self.theta.T[batch] if self.condition else self.theta.T[0]
+                dispersion = self.theta.T[group] if self.condition else self.theta.T[0]
                 dispersion = torch.exp(dispersion)
                 zinb_loss = self.loss_coef_dict['zinb']*ZINB()(x, dec_mean, dispersion, dec_dropout)
                 loss -= zinb_loss
@@ -531,10 +532,11 @@ class MultiVAE:
                 loss += MMD(kernel_type=kernel_type)(zi, zj)
         return loss
 
-    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, batch_labels, new_pair_groups, losses):
+    # TODO
+    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, groups, new_pair_groups, losses):
         loss = 0
-        for i, (xi, pgi, modi, batchi) in enumerate(zip(xs, pair_groups, modalities, batch_labels)):
-            for j, (pgj, modj, batchj, lossj) in enumerate(zip(pair_groups, modalities, batch_labels, losses)):
+        for i, (xi, pgi, modi, batchi) in enumerate(zip(xs, pair_groups, modalities, groups)):
+            for j, (pgj, modj, batchj, lossj) in enumerate(zip(pair_groups, modalities, groups, losses)):
                 if i == j:  # do not make a dataset cycle consistent with itself
                     continue
                 idx = np.argwhere(np.array(new_pair_groups) == pgi)[0][0]
@@ -613,12 +615,11 @@ class MultiVAE:
         self.sorting = np.argsort(groups, kind='stable')
 
         adatas = [adata for modality_adatas in self.adatas for adata in modality_adatas]
-
         adatas = [adatas[i] for i in self.sorting]
 
         for adata in adatas:
             splitter = DataSplitter(
-                adata,
+                adata = adata,
                 train_size = 1 - validation_size,
                 validation_size = validation_size,
                 batch_size = batch_size

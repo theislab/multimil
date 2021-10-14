@@ -25,7 +25,7 @@ class MultiVAETorch(nn.Module):
         logvar,
         device='cpu',
         condition=None,
-        n_batch_labels=None
+        cond_embedding=None
     ):
         super().__init__()
 
@@ -36,8 +36,8 @@ class MultiVAETorch(nn.Module):
         self.logvar = logvar
         self.device = device
         self.condition = condition
+        self.cond_embedding = cond_embedding
         self.n_modality = len(self.encoders)
-        self.n_batch_labels = n_batch_labels
 
         # register sub-modules
         for i, (enc, dec) in enumerate(zip(self.encoders, self.decoders)):
@@ -56,12 +56,15 @@ class MultiVAETorch(nn.Module):
         params.extend(list(self.shared_decoder.parameters()))
         params.extend(list(self.mu.parameters()))
         params.extend(list(self.logvar.parameters()))
+        if self.condition:
+            params.extend(list(self.cond_embedding.parameters()))
         return params
 
-    def to_shared_dim(self, x, i, batch_label):
+    def to_shared_dim(self, x, mod, group):
         if self.condition:
-            x = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in x])
-        return self.x_to_h(x, i)
+            cond_emb_vec = self.cond_embedding(torch.tensor([group]))
+            x = torch.cat([x, cond_emb_vec.repeat(x.shape[0], 1)], dim=-1)
+        return self.x_to_h(x, mod)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -74,10 +77,11 @@ class MultiVAETorch(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
 
-    def decode_from_shared(self, h, i, batch_label):
+    def decode_from_shared(self, h, mod, group):
         if self.condition:
-            h = torch.stack([torch.cat((cell, self.batch_vector(batch_label, i)[0])) for cell in h])
-        x = self.h_to_x(h, i)
+            cond_emb_vec = self.cond_embedding(torch.tensor([group]))
+            h = torch.cat([h, cond_emb_vec.repeat(h.shape[0], 1)], dim=-1)
+        x = self.h_to_x(h, mod)
         return x
 
     def x_to_h(self, x, i):
@@ -87,18 +91,15 @@ class MultiVAETorch(nn.Module):
         x = self.decoders[i](h)
         return x
 
-    def z_to_h(self, z, modality):
-        z = torch.stack([torch.cat((cell, self.modal_vector(modality)[0])) for cell in z])
+    def z_to_h(self, z, mod):
+        z = torch.stack([torch.cat((cell, self.modal_vector(mod)[0])) for cell in z])
         h = self.shared_decoder(z)
         return h
 
     def modal_vector(self, i):
         return F.one_hot(torch.tensor([i]).long(), self.n_modality).float().to(self.device)
 
-    def batch_vector(self, i, modality):
-        return F.one_hot(torch.tensor([i]).long(), self.n_batch_labels[modality]).float().to(self.device)
-
-    def product_of_experts(self, mus, logvars, pair_groups):
+    def product_of_experts(self, mus, logvars, groups):
         """
            This PoE function was adjusted from:
            Title: mvTCR
@@ -109,7 +110,7 @@ class MultiVAETorch(nn.Module):
         logvars_joint = []
         current = 0
 
-        for pair, group in groupby(pair_groups):
+        for pair, group in groupby(groups):
             group_size = len(list(group))
 
             if group_size == 1:
@@ -133,11 +134,11 @@ class MultiVAETorch(nn.Module):
 
         return mus_joint, logvars_joint
 
-    def prep_latent(self, zs, zs_joint, pair_groups):
+    def prep_latent(self, zs, zs_joint, groups):
         zs_new = []
         current_joint = 0 # index for joint zs
         current = 0
-        for pair, group in groupby(pair_groups):
+        for pair, group in groupby(groups):
             group_size = len(list(group))
             if group_size == 1:
                 zs_new.append(zs[current])
@@ -148,14 +149,14 @@ class MultiVAETorch(nn.Module):
             current += group_size
         return zs_new
 
-    def forward(self, xs, modalities, groups, batch_labels):
+    def forward(self, xs, modalities, groups):
         # get latent
-        zs, zs_joint, mus, logvars = self.inference(xs, modalities, groups, batch_labels)
+        zs, zs_joint, mus, logvars = self.inference(xs, modalities, groups)
         # prepare to decode
         zs = self.prep_latent(zs, zs_joint, groups)
         # decode
         hs_dec = [self.z_to_h(z, mod) for z, mod in zip(zs, modalities)]
-        rs = [self.decode_from_shared(h, mod, batch_label) for h, mod, batch_label in zip(hs_dec, modalities, batch_labels)]
+        rs = [self.decode_from_shared(h, mod, group) for h, mod, group in zip(hs_dec, modalities, groups)]
         return rs, zs, mus, logvars
 
     def _get_inference_input():
@@ -165,8 +166,8 @@ class MultiVAETorch(nn.Module):
         pass
 
     # TODO: adjust to scvi framework
-    def inference(self, xs, modalities, groups, batch_labels):
-        hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
+    def inference(self, xs, modalities, groups):
+        hs = [self.to_shared_dim(x, mod, group) for x, mod, group in zip(xs, modalities, groups)]
         zs = [self.bottleneck(h) for h in hs]
         mus = [z[1] for z in zs]
         logvars = [z[2] for z in zs]
