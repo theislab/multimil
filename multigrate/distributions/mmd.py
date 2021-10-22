@@ -4,6 +4,7 @@ class MMD(torch.nn.Module):
     def __init__(self, kernel_type="gaussian"):
         super().__init__()
         self.kernel_type = kernel_type
+        # TODO: add check for gaussian kernel that shapes are same
 
     def gaussian_kernel(self, x, y, gamma=[
         1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 5, 10, 15, 20, 25, 30, 35, 100,

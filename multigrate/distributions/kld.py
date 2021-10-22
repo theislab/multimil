@@ -3,6 +3,8 @@ import torch
 class KLD(torch.nn.Module):
     def __init__(self, reduction='mean'):
         super().__init__()
+        if reduction not in ['mean', 'sum', 'none']:
+            raise NotImplementedError(f'Reduction method {self.reduction} is not implemented.')
         self.reduction = reduction
 
     def forward(self, mu, logvar):
@@ -11,7 +13,5 @@ class KLD(torch.nn.Module):
             kl = torch.mean(kl)
         elif self.reduction == 'sum':
             kl = torch.sum(kl)
-        else:
-            raise NotImplementedError(f'Reduction method {self.reduction} is not implemented.')
 
         return kl

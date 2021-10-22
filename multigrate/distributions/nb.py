@@ -3,6 +3,8 @@ import torch
 class NB(torch.nn.Module):
     def __init__(self, eps=1e-8, reduction='mean'):
         super().__init__()
+        if reduction not in ['mean', 'sum', 'none']:
+            raise NotImplementedError(f'Reduction method {self.reduction} is not implemented.')
         self.eps = eps
         self.reduction = reduction
 
@@ -46,10 +48,8 @@ class NB(torch.nn.Module):
         )
 
         if self.reduction == 'mean':
-            res = torch.mean(res)
+            res = torch.mean(res, dim=-1)
         elif self.reduction == 'sum':
-            res = torch.sum(res)
-        else:
-            raise NotImplementedError(f'Reduction method {self.reduction} is not implemented.')
+            res = torch.sum(res, dim=-1)
 
         return res

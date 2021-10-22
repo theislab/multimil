@@ -8,7 +8,7 @@ from operator import attrgetter
 from itertools import cycle, zip_longest, groupby
 from scipy import spatial
 from ..nn import MLP
-from .multivae import MultiVAE
+from ._multivae import MultiVAE
 
 class MultiVAE_MIL(MultiVAE):
     def __init__(

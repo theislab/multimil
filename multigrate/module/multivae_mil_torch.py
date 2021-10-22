@@ -9,7 +9,7 @@ from itertools import cycle, zip_longest, groupby
 from scipy import spatial
 from ..nn import MLP
 
-from .multivae_torch import MultiVAETorch
+from ._multivae_torch import MultiVAETorch
 
 class Aggregator(nn.Module):
     def __init__(self,
