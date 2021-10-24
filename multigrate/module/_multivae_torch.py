@@ -113,11 +113,15 @@ class MultiVAETorch(BaseModuleClass):
         group = tensors[_CONSTANTS.BATCH_KEY]
         return dict(z_joint=z_joint, group=group)
 
-    def inference(self, x, group):
+    def inference(self, x, group, masks=None):
         # split x into modality xs
-        xs = torch.split(x, self.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
-        masks = [x.sum(dim=1) > 0 for x in xs] # list of masks per modality
-        masks = torch.stack(masks, dim=1)
+        if torch.is_tensor(x):
+            xs = torch.split(x, self.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
+        else:
+            xs = x
+        if masks is None:
+            masks = [x.sum(dim=1) > 0 for x in xs] # list of masks per modality
+            masks = torch.stack(masks, dim=1)
 
         if self.condition:
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
@@ -171,13 +175,8 @@ class MultiVAETorch(BaseModuleClass):
 
         recon_loss = self.calc_recon_loss(xs, rs, self.losses, group, size_factor, self.loss_coefs, masks)
         kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        integ_loss = 0 if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint)
-
-        #TODO
-        if self.loss_coefs['cycle'] == 0:
-            cycle_loss = 0
-        else:
-            cycle_loss = self.calc_cycle_loss(xs, zs, groups, modalities, batch_labels, new_pair_groups, losses)
+        integ_loss = 0 if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, group)
+        cycle_loss = 0 if self.loss_coefs['cycle'] == 0 else self.calc_cycle_loss(xs, z_joint, group, masks, self.losses, size_factor, self.loss_coefs)
 
         loss = torch.mean(self.loss_coefs['recon'] * recon_loss  + self.loss_coefs['kl'] * kl_loss + self.loss_coefs['integ'] * integ_loss + self.loss_coefs['cycle'] * cycle_loss)
         reconst_losses = dict(
@@ -231,8 +230,14 @@ class MultiVAETorch(BaseModuleClass):
 
         return torch.sum(torch.stack(loss, dim=-1)*torch.stack(masks, dim=-1), dim=1)
 
-    def calc_integ_loss(self, zs):
+    def calc_integ_loss(self, z, group):
         loss = 0
+        zs = []
+
+        for g in set(list(group.squeeze().numpy())):
+            idx = (group == g).nonzero(as_tuple=True)[0]
+            zs.append(z[idx])
+
         for i, zi in enumerate(zs):
             for j, zj in enumerate(zs):
                 if i == j:  # do not integrate one dataset with itself
@@ -240,19 +245,22 @@ class MultiVAETorch(BaseModuleClass):
                 loss += MMD(kernel_type=self.kernel_type)(zi, zj)
         return loss
 
-    # TODO
-    def calc_cycle_loss(self, xs, zs, pair_groups, modalities, groups, new_pair_groups, losses):
-        loss = 0
-        for i, (xi, pgi, modi, batchi) in enumerate(zip(xs, pair_groups, modalities, groups)):
-            for j, (pgj, modj, batchj, lossj) in enumerate(zip(pair_groups, modalities, groups, losses)):
-                if i == j:  # do not make a dataset cycle consistent with itself
-                    continue
-                idx = np.argwhere(np.array(new_pair_groups) == pgi)[0][0]
-                zij = self.module.convert(zs[idx], pgi, source_pair=True, dest=modj, dest_pair=False)
-                rij = self.module.decode(zij, modj, batchj)
-                if lossj in ['zinb']:
-                    rij = rij[0]
-                ziji = self.module.convert(self.module.to_latent(rij, modj, batchj), modj, source_pair=False, dest=modi, dest_pair=False)
-                xiji = self.module.decode(ziji, modi, batchi)
-                loss += nn.MSELoss()(xiji, xi)
-        return loss
+    def calc_cycle_loss(self, xs, z, group, masks, losses, size_factor, loss_coefs):
+
+        generative_outputs = self.generative(z, group)
+        rs = generative_outputs['rs']
+        for i, r in enumerate(rs):
+            if len(r) == 2: # hack for zinb
+                rs[i] = r[0]
+            rs[i] = rs[i].squeeze()
+
+        masks_stacked = torch.stack(masks, dim=1)
+        complement_masks = torch.logical_not(masks_stacked)
+
+        inference_outputs = self.inference(rs, group, complement_masks)
+        z_joint = inference_outputs['z_joint']
+        # generate again
+        generative_outputs = self.generative(z_joint, group)
+        rs = generative_outputs['rs']
+
+        return self.calc_recon_loss(xs, rs, losses, group, size_factor, loss_coefs, masks)

@@ -135,12 +135,15 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     def impute(
         self,
         target_modality,
+        adata=None,
         batch_size=64
     ):
         with torch.no_grad():
             self.module.eval()
             if not self.is_trained_:
                 raise RuntimeError("Please train the model first.")
+
+            adata = self._validate_anndata(adata)
 
             scdl = self._make_data_loader(
                 adata=self.adata, batch_size=batch_size
@@ -162,6 +165,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     # TODO fix to work with  @torch.no_grad()
     def get_latent_representation(
         self,
+        adata=None,
         batch_size=64
     ):
         with torch.no_grad():
@@ -169,10 +173,11 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             if not self.is_trained_:
                 raise RuntimeError("Please train the model first.")
 
-            scdl = self._make_data_loader(
-                adata=self.adata, batch_size=batch_size
-            )
+            adata = self._validate_anndata(adata)
 
+            scdl = self._make_data_loader(
+                adata=adata, batch_size=batch_size
+            )
 
             latent = []
             for tensors in scdl:
