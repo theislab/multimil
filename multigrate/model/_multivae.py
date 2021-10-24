@@ -132,72 +132,32 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                                    device, self.condition, self.cond_embedding,
                                    self.input_dims, self.losses, self.loss_coefs, kernel_type)
 
-    # TODO
     def impute(
         self,
-        adatas,
-        names,
-        pair_groups,
         target_modality,
-        batch_labels,
-        target_pair,
-        modality_key='modality',
-        celltype_key='cell_type',
-        layers=[],
-        batch_size=64,
+        batch_size=64
     ):
-        if len(layers) == 0:
-            layers = [[None]*len(modality_adata) for i, modality_adata in enumerate(adatas)]
-
-        #TODO redo prep pair stuff in case pair names are different
-        adatas = self.reshape_adatas(adatas, names, layers, pair_groups=pair_groups, batch_labels=batch_labels)
-        datasets, _ = self.make_datasets(adatas, val_split=0, modality_key=modality_key, celltype_key=celltype_key, batch_size=batch_size)
-        dataloaders = [d.loader for d in datasets]
-
-        zs = []
         with torch.no_grad():
             self.module.eval()
+            if not self.is_trained_:
+                raise RuntimeError("Please train the model first.")
 
-            for datas in zip_longest(*dataloaders):
-                datas = [data for data in datas if data is not None]
-                xs = [data[0].to(self.device) for data in datas]
-                names = [data[1] for data in datas]
-                modalities = [data[2] for data in datas]
-                pair_groups = [data[3] for data in datas]
-                celltypes = [data[4] for data in datas]
-                indices = [data[5] for data in datas]
-                batch_labels = [data[-1] for data in datas]
+            scdl = self._make_data_loader(
+                adata=self.adata, batch_size=batch_size
+            )
 
-                group_indices = {}
-                for i, pair in enumerate(pair_groups):
-                    group_indices[pair] = group_indices.get(pair, []) + [i]
+            imputed = []
+            for tensors in scdl:
+                _, generative_outputs = self.module.forward(
+                    tensors,
+                    compute_loss=False
+                )
 
-                # TODO: deal with batches
-                for x, pair, mod, batch in zip(xs, pair_groups, modalities, batch_labels):
-                    # get imputed modality
-                    xij = self.impute_batch(x, pair, mod, batch, target_pair, target_modality)
+                rs = generative_outputs['rs']
+                r = rs[target_modality]
+                imputed += [r.cpu()]
 
-                    z = sc.AnnData(xij.detach().cpu().numpy())
-                    modalities = np.array(names)[group_indices[pair], ]
-                    z.obs['modality'] = '-'.join(modalities)
-                    z.obs['barcode'] = list(indices[group_indices[pair][0]])
-                    z.obs[celltype_key] = celltypes[group_indices[pair][0]]
-                    zs.append(z)
-
-        return sc.AnnData.concatenate(*zs)
-
-    # TODO
-    def impute_batch(self, x, pair, mod, batch, target_pair, target_modality):
-        zi = self.module.to_latent(x, mod, batch)
-        zij = self.module.convert(zi, pair, source_pair=True, dest=target_modality, dest_pair=False)
-
-        # assume data is paired for the decoder
-        hs = self.module.z_to_h(zij)
-        hs, pair_groups = self.module.decode_pairs([hs], [target_pair])
-        index_of_the_modality = np.where(np.array(self.modalities_per_group[target_pair]) == target_modality)[0][0]
-        xij = self.module.decode_from_shared(hs[index_of_the_modality], target_modality, target_pair, batch)
-
-        return xij
+            return torch.cat(imputed).squeeze().numpy()
 
     # TODO fix to work with  @torch.no_grad()
     def get_latent_representation(

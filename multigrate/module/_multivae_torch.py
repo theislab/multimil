@@ -11,11 +11,15 @@ import scanpy as sc
 from torch import nn
 from torch.nn import functional as F
 from itertools import groupby
-from ..distributions import *
 from collections import defaultdict, Counter
+from ..distributions import *
 from operator import itemgetter, attrgetter
 from scvi.module.base import BaseModuleClass, LossRecorder
 from scvi import _CONSTANTS
+from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
+
+from torch.distributions import Normal
+from torch.distributions import kl_divergence as kl
 
 class MultiVAETorch(BaseModuleClass):
     def __init__(
@@ -120,7 +124,6 @@ class MultiVAETorch(BaseModuleClass):
             xs = [torch.cat([x, cond_emb_vec], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
         hs = [self.x_to_h(x, mod) for mod, x in enumerate(xs)]
-        #h = torch.stack(hs, dim=1)
         out = [self.bottleneck(h, mod) for mod, h in enumerate(hs)]
         mus = [mod_out[1] for mod_out in out]
         mu = torch.stack(mus, dim=1)
@@ -167,7 +170,7 @@ class MultiVAETorch(BaseModuleClass):
         masks = [x.sum(dim=1) > 0 for x in xs]
 
         recon_loss = self.calc_recon_loss(xs, rs, self.losses, group, size_factor, self.loss_coefs, masks)
-        kl_loss = self.calc_kl_loss(mu, logvar)
+        kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
         integ_loss = 0 if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint)
 
         #TODO
@@ -183,7 +186,7 @@ class MultiVAETorch(BaseModuleClass):
 
         return LossRecorder(loss, reconst_losses, self.loss_coefs['kl'] * kl_loss, kl_global=torch.tensor(0.0), integ_loss=integ_loss, cycle_loss=cycle_loss)
 
-    #TODO
+    #TODO ??
     @torch.no_grad()
     def sample(self, tensors):
         with torch.no_grad():
@@ -195,39 +198,38 @@ class MultiVAETorch(BaseModuleClass):
         return generative_outputs['rs']
 
     def calc_recon_loss(self, xs, rs, losses, group, size_factor, loss_coefs, masks):
-        # TODO cite nb, zinb
         loss = []
-
         for i, (x, r, loss_type) in enumerate(zip(xs, rs, losses)):
-            if len(r.shape) == 3:
+            if len(r) != 2 and len(r.shape) == 3:
                 r = r.squeeze()
             if loss_type == 'mse':
-                loss.append(loss_coefs['mse']*torch.sum(nn.MSELoss(reduction='none')(r, x), dim=-1))
-                #loss += mse_loss
+                mse_loss = loss_coefs['mse']*torch.sum(nn.MSELoss(reduction='none')(r, x), dim=-1)
+                loss.append(mse_loss)
             elif loss_type == 'nb':
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[group.squeeze().long()] if self.condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
                 dispersion = torch.exp(dispersion)
-                nb_loss = loss_coefs['nb']*NB(reduction='sum')(x, dec_mean, dispersion)
+                nb_loss = torch.sum(NegativeBinomial(mu=dec_mean, theta=dispersion).log_prob(x), dim=-1)
+                nb_loss = loss_coefs['nb']*nb_loss
                 loss.append(-nb_loss)
             elif loss_type == 'zinb':
                 dec_mean, dec_dropout = r
+                dec_mean = dec_mean.squeeze()
+                dec_dropout = dec_dropout.squeeze()
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[group.squeeze().long()] if self.condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
                 dispersion = torch.exp(dispersion)
-                zinb_loss = loss_coefs['zinb']*ZINB(reduction='sum')(x, dec_mean, dispersion, dec_dropout)
+                zinb_loss = torch.sum(ZeroInflatedNegativeBinomial(mu=dec_mean, theta=dispersion, zi_logits=dec_dropout).log_prob(x), dim=-1)
+                zinb_loss = loss_coefs['zinb']*zinb_loss
                 loss.append(-zinb_loss)
             elif loss_type == 'bce':
                 bce_loss = loss_coefs['bce']*torch.sum(torch.nn.BCELoss(reduction='none')(r, x), dim=-1)
                 loss.append(bce_loss)
 
         return torch.sum(torch.stack(loss, dim=-1)*torch.stack(masks, dim=-1), dim=1)
-
-    def calc_kl_loss(self, mu, logvar):
-        return KLD(reduction='none')(mu, logvar)
 
     def calc_integ_loss(self, zs):
         loss = 0
