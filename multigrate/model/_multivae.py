@@ -29,7 +29,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         self,
         adata,
         modality_lengths=[],
-        condition=None,
+        condition_encoders=False,
+        condition_decoders=True,
         normalization='layer',
         z_dim=15,
         h_dim=32,
@@ -55,7 +56,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         # TODO: do some assertions for other parameters
 
         self.adata = adata
-        self.condition = condition
+        self.condition_encoders = condition_encoders
+        self.condition_decoders = condition_decoders
         self.hiddens = hiddens
         self.h_dim = h_dim
         self.z_dim = z_dim
@@ -96,7 +98,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                           'bce': 1}
         self.loss_coefs.update(loss_coefs)
 
-        if condition:
+        if self.condition_encoders or self.condition_decoders:
             num_groups = len(set(self.adata.obs.group))
             self.cond_embedding = torch.nn.Embedding(num_groups, cond_dim)
         else:
@@ -116,20 +118,19 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         # need for surgery TODO check
         # self.mod_dec_dim = h_dim
         # create modules
-        self.encoders = [MLP(x_dim + cond_dim, z_dim, hs, output_activation='leakyrelu',
-                             dropout=dropout, norm=normalization, regularize_last_layer=True) if x_dim > 0 else None for i, (x_dim, hs) in enumerate(zip(self.input_dims, hiddens))]
-        self.decoders = [MLP_decoder(h_dim + cond_dim, x_dim, hs[::-1], output_activation=out_act,
-                             dropout=dropout, norm=normalization, loss=loss) if x_dim > 0 else None for i, (x_dim, hs, out_act, loss) in enumerate(zip(self.input_dims, hiddens, output_activations, self.losses))]
-        self.shared_decoder = MLP(z_dim + self.n_modality, h_dim, shared_hiddens[::-1], output_activation='leakyrelu',
-                                  dropout=dropout, norm=normalization, regularize_last_layer=True)
+        self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
+        cond_dim_enc = cond_dim if self.condition_encoders else 0
+        self.encoders = [CondMLP(x_dim, z_dim, embed_dim=cond_dim_enc, dropout_rate=dropout, normalization=normalization) for x_dim in self.input_dims]
+        cond_dim_dec = cond_dim if self.condition_decoders else 0
+        self.decoders = [Decoder(h_dim, x_dim, embed_dim=cond_dim_dec, dropout_rate=dropout, normalization=normalization, loss=loss) for x_dim, loss in zip(self.input_dims, self.losses)]
 
-        # TODO fix: one mu per modality, same with logvar
-        self.mus = [MLP(z_dim, z_dim) for _ in self.input_dims]
-        self.logvars = [MLP(z_dim, z_dim) for _ in self.input_dims]
+
+        self.mus = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
+        self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
 
         self.module = MultiVAETorch(self.encoders, self.decoders, self.shared_decoder,
                                    self.mus, self.logvars, self.theta,
-                                   device, self.condition, self.cond_embedding,
+                                   device, self.condition_encoders, self.condition_decoders, self.cond_embedding,
                                    self.input_dims, self.losses, self.loss_coefs, kernel_type)
 
     def impute(

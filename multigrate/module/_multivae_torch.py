@@ -31,7 +31,8 @@ class MultiVAETorch(BaseModuleClass):
         logvars,
         theta=None,
         device='cpu',
-        condition=None,
+        condition_encoders=None,
+        condition_decoders=None,
         cond_embedding=None,
         input_dims=None,
         losses=[],
@@ -45,7 +46,8 @@ class MultiVAETorch(BaseModuleClass):
         self.shared_decoder = shared_decoder
         self.mus = mus
         self.logvars = logvars
-        self.condition = condition
+        self.condition_encoders = condition_encoders
+        self.condition_decoders = condition_decoders
         self.cond_embedding = cond_embedding
         self.n_modality = len(self.encoders)
         self.theta = theta
@@ -123,7 +125,7 @@ class MultiVAETorch(BaseModuleClass):
             masks = [x.sum(dim=1) > 0 for x in xs] # list of masks per modality
             masks = torch.stack(masks, dim=1)
 
-        if self.condition:
+        if self.condition_encoders:
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
             xs = [torch.cat([x, cond_emb_vec], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
@@ -148,7 +150,7 @@ class MultiVAETorch(BaseModuleClass):
         z_joint = torch.cat([z_joint, mod_vecs], dim=-1) # shape batch_size x n_mod x latent_dim+n_mod
         z = self.shared_decoder(z_joint)
         zs = torch.split(z, 1, dim=1)
-        if self.condition:
+        if self.condition_decoders:
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
             zs = [torch.cat([z.squeeze(1), cond_emb_vec], dim=-1) for z in zs] # concat embedding to each modality x along the feature axis
 
@@ -198,6 +200,7 @@ class MultiVAETorch(BaseModuleClass):
 
     def calc_recon_loss(self, xs, rs, losses, group, size_factor, loss_coefs, masks):
         loss = []
+        condition = self.condition_encoders or self.condition_decoders
         for i, (x, r, loss_type) in enumerate(zip(xs, rs, losses)):
             if len(r) != 2 and len(r.shape) == 3:
                 r = r.squeeze()
@@ -208,7 +211,7 @@ class MultiVAETorch(BaseModuleClass):
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
-                dispersion = self.theta.T[group.squeeze().long()] if self.condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
+                dispersion = self.theta.T[group.squeeze().long()] if condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
                 dispersion = torch.exp(dispersion)
                 nb_loss = torch.sum(NegativeBinomial(mu=dec_mean, theta=dispersion).log_prob(x), dim=-1)
                 nb_loss = loss_coefs['nb']*nb_loss
@@ -219,7 +222,7 @@ class MultiVAETorch(BaseModuleClass):
                 dec_dropout = dec_dropout.squeeze()
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
                 dec_mean = dec_mean * size_factor_view
-                dispersion = self.theta.T[group.squeeze().long()] if self.condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
+                dispersion = self.theta.T[group.squeeze().long()] if condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
                 dispersion = torch.exp(dispersion)
                 zinb_loss = torch.sum(ZeroInflatedNegativeBinomial(mu=dec_mean, theta=dispersion, zi_logits=dec_dropout).log_prob(x), dim=-1)
                 zinb_loss = loss_coefs['zinb']*zinb_loss

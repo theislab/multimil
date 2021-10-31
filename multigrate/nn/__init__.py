@@ -1,4 +1,3 @@
-from .mlp import MLP
-from .mlp_decoder import MLP_decoder
+from ._base_components import CondMLP, Decoder
 
-__all__ = ["MLP", "MLP_decoder"]
+__all__ = ["CondMLP", "Decoder"]

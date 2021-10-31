@@ -7,7 +7,7 @@ import scanpy as sc
 from operator import attrgetter
 from itertools import cycle, zip_longest, groupby
 from scipy import spatial
-from ..nn import MLP
+from ..nn import *
 
 from ._multivae_torch import MultiVAETorch
 
