@@ -1,21 +1,38 @@
 import scanpy as sc
 import anndata as ad
 import pandas as pd
+import numpy as np
 
 def organize_multiome_anndatas(
     adatas,
     groups,
-    layers=None
+    layers=None,
+    modality_lengths=None
 ):
     # set .X to the desired layer
     # TOOD: add checks for layers
+
+    # needed for operation setup
+    datasets_lengths = {}
+    datasets_groups = {}
+    datasets_obs = {}
     for mod, (modality_adatas, modality_groups) in enumerate(zip(adatas, groups)):
         for i, (adata, group) in enumerate(zip(modality_adatas, modality_groups)):
+            if adata:
+                datasets_lengths[i] = len(adata)
+                datasets_groups[i] = group
+                datasets_obs[i] = adata.obs_names
+
+    for mod, (modality_adatas, modality_groups) in enumerate(zip(adatas, groups)):
+        for i, (adata, group) in enumerate(zip(modality_adatas, modality_groups)):
+            if not isinstance(adata, ad.AnnData) and adata == None:
+                adatas[mod][i] = ad.AnnData(np.zeros((datasets_lengths[i], modality_lengths[mod])))
+                adatas[mod][i].obs_names = datasets_obs[i]
+                groups[mod][i] = datasets_groups[i]
             if layers:
                 if layer := layers[mod][i]:
-                    adata.X = adata.layers[layer].A
-            adata.obs['group'] = group
-
+                    adatas[mod][i].X = adatas[mod][i].layers[layer].A
+            adatas[mod][i].obs['group'] = datasets_groups[i]
 
     # concat adatas per modality
     mod_adatas = []

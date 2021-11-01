@@ -121,11 +121,13 @@ class MultiVAETorch(BaseModuleClass):
             xs = torch.split(x, self.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
         else:
             xs = x
+
         if masks is None:
             masks = [x.sum(dim=1) > 0 for x in xs] # list of masks per modality
             masks = torch.stack(masks, dim=1)
 
         if self.condition_encoders:
+            print(group)
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
             xs = [torch.cat([x, cond_emb_vec], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
@@ -151,6 +153,7 @@ class MultiVAETorch(BaseModuleClass):
         z = self.shared_decoder(z_joint)
         zs = torch.split(z, 1, dim=1)
         if self.condition_decoders:
+            print(group)
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
             zs = [torch.cat([z.squeeze(1), cond_emb_vec], dim=-1) for z in zs] # concat embedding to each modality x along the feature axis
 

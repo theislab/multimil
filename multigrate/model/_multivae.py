@@ -10,6 +10,8 @@ import anndata as ad
 
 import logging
 from torch import nn
+from anndata import AnnData
+from copy import deepcopy
 from collections import defaultdict, Counter
 from operator import itemgetter, attrgetter
 from torch.nn import functional as F
@@ -23,6 +25,8 @@ from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass, ArchesMixin
 from scvi.train._callbacks import SaveBestState
 from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.model.base._utils import _initialize_model
+from scvi.model._utils import parse_use_gpu_arg
 
 class MultiVAE(BaseModelClass, ArchesMixin):
     def __init__(
@@ -47,6 +51,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     ):
 
         super().__init__(adata)
+
         # configure to CUDA if is available
         # TODO work with scvi move data
         device =  device if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -132,6 +137,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                                    self.mus, self.logvars, self.theta,
                                    device, self.condition_encoders, self.condition_decoders, self.cond_embedding,
                                    self.input_dims, self.losses, self.loss_coefs, kernel_type)
+
+        self.init_params_ = self._get_init_params(locals())
 
     def impute(
         self,
@@ -332,3 +339,43 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         cycle=False
     ):
         pass
+
+    def load_query_data(
+        adata: AnnData,
+        reference_model: BaseModelClass,
+        use_gpu: Optional[Union[str, int, bool]] = None,
+        freeze: bool = True
+    ):
+        use_gpu, device = parse_use_gpu_arg(use_gpu)
+
+        model = deepcopy(reference_model)
+        model.adata = adata
+
+        # check if the reference model was conditioned and update cond_embedding
+        n_new_batches = len(set(reference_model.adata.obs.group))
+        if reference_model.cond_embedding:
+            n_batches, cond_dim = reference_model.module.cond_embedding.weight.shape
+            old_embed = reference_model.module.cond_embedding.weight.data
+            model.module.cond_embedding = nn.Embedding(n_batches+n_new_batches, cond_dim)
+            model.module.cond_embedding.weight.data[:n_batches, :] = old_embed
+        else:
+            raise NotImplementedError('The reference model has to be conditioned.')
+
+        # add another dim to theta if ref model has it
+        if reference_model.module.theta is not None:
+            rna_length, n_batches = reference_model.module.theta.shape
+            old_theta = reference_model.module.theta.data
+            model.module.theta = torch.nn.Parameter(torch.randn(rna_length, n_batches+n_new_batches))
+            model.module.theta.data[:, :n_batches] = old_theta
+
+        model.to_device(device)
+
+        # freeze everything but the condition_layer in condMLPs
+        if freeze:
+            for key, par in model.module.named_parameters():
+                if not any(module in key for module in ['theta', 'cond_embedding', 'condition_layer']):
+                    par.requires_grad = False
+
+        model.module.eval()
+
+        return model
