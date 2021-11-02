@@ -37,7 +37,7 @@ class CondMLP(nn.Module):
         )
 
         if embed_dim > 0:
-            self.condition_layer = nn.Linear(embed_dim, embed_dim, bias=False)
+            self.condition_layer = nn.Linear(embed_dim, embed_dim)
 
     def forward(
         self,

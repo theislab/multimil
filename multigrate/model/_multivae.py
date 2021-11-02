@@ -16,34 +16,29 @@ from collections import defaultdict, Counter
 from operator import itemgetter, attrgetter
 from torch.nn import functional as F
 from itertools import cycle, zip_longest, groupby
-from ..nn import *
+# from ..nn import *
 from ..module import MultiVAETorch
 from ..distributions import *
 from scvi.data._anndata import _setup_anndata
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
-from scvi.model.base import BaseModelClass, ArchesMixin
+from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
 from scvi.train import AdversarialTrainingPlan, TrainRunner
-from scvi.model.base._utils import _initialize_model
 from scvi.model._utils import parse_use_gpu_arg
 
-class MultiVAE(BaseModelClass, ArchesMixin):
+class MultiVAE(BaseModelClass):
     def __init__(
         self,
         adata,
-        modality_lengths=[],
+        modality_lengths,
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
         z_dim=15,
         h_dim=32,
-        hiddens=[],
         losses=[],
-        output_activations=[],
-        shared_hiddens=[],
         dropout=0.2,
-        device=None,
         theta=None,
         cond_dim=10,
         kernel_type='not gaussian',
@@ -52,93 +47,32 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
         super().__init__(adata)
 
-        # configure to CUDA if is available
-        # TODO work with scvi move data
-        device =  device if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # TODO: add options for number of hidden layers, hidden layers dim and output activation functions
 
         if normalization not in ['layer', 'batch', None]:
             raise ValueError(f'Normalization has to be one of ["layer", "batch", None]')
         # TODO: do some assertions for other parameters
 
         self.adata = adata
-        self.condition_encoders = condition_encoders
-        self.condition_decoders = condition_decoders
-        self.hiddens = hiddens
-        self.h_dim = h_dim
-        self.z_dim = z_dim
-        self.shared_hiddens = shared_hiddens
-        self.dropout = dropout
-        self.output_activations = output_activations
-        self.input_dims = modality_lengths if len(modality_lengths) > 0 else [len(self.adata.var_names)]
-        self.normalization = normalization # need for architecture surgery
-        self.n_modality = len(self.input_dims)
+        num_groups = len(set(self.adata.obs.group))
 
-        if self.n_modality != len(hiddens):
-            if len(hiddens) == 0:
-                hiddens = [[] for _ in range(self.n_modality)]
-            else:
-                raise ValueError(f'hiddens must be the same length as the number of modalities. n_modalities = {self.n_modality} != {len(hiddens)} = len(hiddens)')
+        self.module = MultiVAETorch(
+            modality_lengths=modality_lengths,
+            condition_encoders=condition_encoders,
+            condition_decoders=condition_decoders,
+            normalization=normalization,
+            z_dim=z_dim,
+            h_dim=h_dim,
+            losses=losses,
+            dropout=dropout,
+            theta=theta,
+            cond_dim=cond_dim,
+            kernel_type=kernel_type,
+            loss_coefs=loss_coefs,
+            num_groups=num_groups,
+        )
 
-        if self.n_modality != len(output_activations):
-            if len(output_activations) == 0:
-                output_activations = ['linear' for _ in range(self.n_modality)] # or leaky relu?
-            else:
-                raise ValueError(f'output_activations must be the same length as the number of modalities. n_modalities = {self.n_modality} != {len(output_activations)} = len(output_activations)')
-
-        # TODO fix
-        if len(losses) == 0:
-            self.losses = ['mse']*self.n_modality
-        elif len(losses) == self.n_modality:
-            self.losses = losses
-        else:
-            raise ValueError(f'adatas and losses arguments must be the same length or losses has to be []. len(adatas) = {len(adatas)} != {len(losses)} = len(losses)')
-
-        self.loss_coefs = {'recon': 1,
-                          'kl': 1e-6,
-                          'integ': 0,
-                          'cycle': 0,
-                          'nb': 1,
-                          'zinb': 1,
-                          'mse': 1,
-                          'bce': 1}
-        self.loss_coefs.update(loss_coefs)
-
-        if self.condition_encoders or self.condition_decoders:
-            num_groups = len(set(self.adata.obs.group))
-            self.cond_embedding = torch.nn.Embedding(num_groups, cond_dim)
-        else:
-            self.cond_embedding = None
-            cond_dim = 0 # not to add extra input dimentions later to the encoders
-
-        # assume for now that can only use nb/zinb once, i.e. for RNA-seq modality
-        # TODO: add check for multiple nb/zinb losses given
-        self.theta = theta
-        if not self.theta:
-            for i, loss in enumerate(losses):
-                if loss in ["nb", "zinb"]:
-                    groups = list(self.adata.obs.group)
-                    self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], max(len(set(self.adata.obs.group)), 1)))#.to(device).detach().requires_grad_(True)
-                    break
-
-        # need for surgery TODO check
-        # self.mod_dec_dim = h_dim
-        # create modules
-        self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
-        cond_dim_enc = cond_dim if self.condition_encoders else 0
-        self.encoders = [CondMLP(x_dim, z_dim, embed_dim=cond_dim_enc, dropout_rate=dropout, normalization=normalization) for x_dim in self.input_dims]
-        cond_dim_dec = cond_dim if self.condition_decoders else 0
-        self.decoders = [Decoder(h_dim, x_dim, embed_dim=cond_dim_dec, dropout_rate=dropout, normalization=normalization, loss=loss) for x_dim, loss in zip(self.input_dims, self.losses)]
-
-
-        self.mus = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
-        self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
-
-        self.module = MultiVAETorch(self.encoders, self.decoders, self.shared_decoder,
-                                   self.mus, self.logvars, self.theta,
-                                   device, self.condition_encoders, self.condition_decoders, self.cond_embedding,
-                                   self.input_dims, self.losses, self.loss_coefs, kernel_type)
-
-        self.init_params_ = self._get_init_params(locals())
+        # self.init_params_ = self._get_init_params(locals())
 
     def impute(
         self,
@@ -353,7 +287,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
         # check if the reference model was conditioned and update cond_embedding
         n_new_batches = len(set(reference_model.adata.obs.group))
-        if reference_model.cond_embedding:
+        if reference_model.module.cond_embedding:
             n_batches, cond_dim = reference_model.module.cond_embedding.weight.shape
             old_embed = reference_model.module.cond_embedding.weight.data
             model.module.cond_embedding = nn.Embedding(n_batches+n_new_batches, cond_dim)
@@ -377,5 +311,5 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                     par.requires_grad = False
 
         model.module.eval()
-
+        model.is_trained_ = False
         return model

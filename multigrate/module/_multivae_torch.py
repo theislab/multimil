@@ -13,6 +13,7 @@ from torch.nn import functional as F
 from itertools import groupby
 from collections import defaultdict, Counter
 from ..distributions import *
+from ..nn import *
 from operator import itemgetter, attrgetter
 from scvi.module.base import BaseModuleClass, LossRecorder
 from scvi import _CONSTANTS
@@ -24,37 +25,71 @@ from torch.distributions import kl_divergence as kl
 class MultiVAETorch(BaseModuleClass):
     def __init__(
         self,
-        encoders,
-        decoders,
-        shared_decoder,
-        mus,
-        logvars,
-        theta=None,
-        device='cpu',
-        condition_encoders=None,
-        condition_decoders=None,
-        cond_embedding=None,
-        input_dims=None,
+        modality_lengths,
+        condition_encoders=False,
+        condition_decoders=True,
+        normalization='layer',
+        z_dim=15,
+        h_dim=32,
         losses=[],
+        dropout=0.2,
+        theta=None,
+        cond_dim=10,
+        kernel_type='not gaussian',
         loss_coefs=[],
-        kernel_type='gaussian'
+        num_groups=1,
     ):
         super().__init__()
 
-        self.encoders = encoders
-        self.decoders = decoders
-        self.shared_decoder = shared_decoder
-        self.mus = mus
-        self.logvars = logvars
+        self.input_dims = modality_lengths
         self.condition_encoders = condition_encoders
         self.condition_decoders = condition_decoders
-        self.cond_embedding = cond_embedding
-        self.n_modality = len(self.encoders)
-        self.theta = theta
-        self.input_dims = input_dims
-        self.losses = losses
-        self.loss_coefs = loss_coefs
+        self.input_dims = modality_lengths
+        self.n_modality = len(self.input_dims)
         self.kernel_type = kernel_type
+
+        # TODO fix
+        if len(losses) == 0:
+            self.losses = ['mse']*self.n_modality
+        elif len(losses) == self.n_modality:
+            self.losses = losses
+        else:
+            raise ValueError(f'losses has to be the same length as the number of modalities. number of modalities = {self.n_modality} != {len(losses)} = len(losses)')
+
+        self.loss_coefs = {'recon': 1,
+                          'kl': 1e-6,
+                          'integ': 0,
+                          'cycle': 0,
+                          'nb': 1,
+                          'zinb': 1,
+                          'mse': 1,
+                          'bce': 1}
+        self.loss_coefs.update(loss_coefs)
+
+        if self.condition_encoders or self.condition_decoders:
+            self.cond_embedding = torch.nn.Embedding(num_groups, cond_dim)
+        else:
+            self.cond_embedding = None
+            cond_dim = 0 # not to add extra input dimentions later to the encoders
+
+        # assume for now that can only use nb/zinb once, i.e. for RNA-seq modality
+        # TODO: add check for multiple nb/zinb losses given
+        self.theta = theta
+        if not self.theta:
+            for i, loss in enumerate(losses):
+                if loss in ["nb", "zinb"]:
+                    # groups = list(self.adata.obs.group)
+                    self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))#.to(device).detach().requires_grad_(True)
+                    break
+
+        self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
+        cond_dim_enc = cond_dim if self.condition_encoders else 0
+        self.encoders = [CondMLP(x_dim, z_dim, embed_dim=cond_dim_enc, dropout_rate=dropout, normalization=normalization) for x_dim in self.input_dims]
+        cond_dim_dec = cond_dim if self.condition_decoders else 0
+        self.decoders = [Decoder(h_dim, x_dim, embed_dim=cond_dim_dec, dropout_rate=dropout, normalization=normalization, loss=loss) for x_dim, loss in zip(self.input_dims, self.losses)]
+
+        self.mus = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
+        self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
 
         # register sub-modules
         for i, (enc, dec, mu, logvar) in enumerate(zip(self.encoders, self.decoders, self.mus, self.logvars)):
@@ -62,9 +97,6 @@ class MultiVAETorch(BaseModuleClass):
             self.add_module(f'decoder_{i}', dec)
             self.add_module(f'mu_{i}', mu)
             self.add_module(f'logvar_{i}', logvar)
-
-        # check
-        self = self.to(device)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -106,11 +138,9 @@ class MultiVAETorch(BaseModuleClass):
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]
         group = tensors[_CONSTANTS.BATCH_KEY]
-        #cont_covs = tensors.get(_CONSTANTS.CONT_COVS_KEY)
         return dict(x=x, group=group)
 
     def _get_generative_input(self, tensors, inference_outputs):
-        #z = inference_outputs['z']
         z_joint = inference_outputs['z_joint']
         group = tensors[_CONSTANTS.BATCH_KEY]
         return dict(z_joint=z_joint, group=group)
@@ -127,7 +157,6 @@ class MultiVAETorch(BaseModuleClass):
             masks = torch.stack(masks, dim=1)
 
         if self.condition_encoders:
-            print(group)
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
             xs = [torch.cat([x, cond_emb_vec], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
@@ -153,7 +182,6 @@ class MultiVAETorch(BaseModuleClass):
         z = self.shared_decoder(z_joint)
         zs = torch.split(z, 1, dim=1)
         if self.condition_decoders:
-            print(group)
             cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
             zs = [torch.cat([z.squeeze(1), cond_emb_vec], dim=-1) for z in zs] # concat embedding to each modality x along the feature axis
 
