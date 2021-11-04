@@ -10,6 +10,7 @@ from scipy import spatial
 from ..nn import *
 from ._multivae import MultiVAE
 from ..module import MultiVAETorch_MIL
+from ..dataloaders import BagDataSplitter
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
@@ -33,7 +34,7 @@ class MultiVAE_MIL(BaseModelClass):
         kernel_type='not gaussian',
         loss_coefs=[],
         # mil specific
-        class_columns=None,
+        class_column=None,
         bag_key=None,
         scoring='attn',
         attn_dim=32,
@@ -46,7 +47,7 @@ class MultiVAE_MIL(BaseModelClass):
         super().__init__(adata)
 
         self.bag_key = bag_key
-        self.class_columns = class_columns
+        self.class_column = class_column
         self.scoring = scoring
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
@@ -178,8 +179,9 @@ class MultiVAE_MIL(BaseModelClass):
                 SaveBestState(monitor="reconstruction_loss_validation")
             )
 
-        data_splitter = DataSplitter(
+        data_splitter = BagDataSplitter(
             self.adata,
+            class_column=self.class_column,
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
