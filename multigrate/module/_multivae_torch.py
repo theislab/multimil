@@ -33,7 +33,6 @@ class MultiVAETorch(BaseModuleClass):
         h_dim=32,
         losses=[],
         dropout=0.2,
-        theta=None,
         cond_dim=10,
         kernel_type='not gaussian',
         loss_coefs=[],
@@ -74,13 +73,11 @@ class MultiVAETorch(BaseModuleClass):
 
         # assume for now that can only use nb/zinb once, i.e. for RNA-seq modality
         # TODO: add check for multiple nb/zinb losses given
-        self.theta = theta
-        if not self.theta:
-            for i, loss in enumerate(losses):
-                if loss in ["nb", "zinb"]:
-                    # groups = list(self.adata.obs.group)
-                    self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))#.to(device).detach().requires_grad_(True)
-                    break
+        self.theta = None
+        for i, loss in enumerate(losses):
+            if loss in ["nb", "zinb"]:
+                self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))#.to(device).detach().requires_grad_(True)
+                break
 
         self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
         cond_dim_enc = cond_dim if self.condition_encoders else 0

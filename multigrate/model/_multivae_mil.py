@@ -1,32 +1,23 @@
-import sys
 import torch
 import time
-import os
-
-import numpy as np
-import pandas as pd
-import scanpy as sc
-import anndata as ad
-
-import logging
 from torch import nn
-from anndata import AnnData
-from copy import deepcopy
-from collections import defaultdict, Counter
-from operator import itemgetter, attrgetter
 from torch.nn import functional as F
+import numpy as np
+import scanpy as sc
+from operator import attrgetter
 from itertools import cycle, zip_longest, groupby
-from ..module import MultiVAETorch
-from ..distributions import *
-from scvi.data._anndata import _setup_anndata
+from scipy import spatial
+from ..nn import *
+from ._multivae import MultiVAE
+from ..module import MultiVAETorch_MIL
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
 from scvi.train import AdversarialTrainingPlan, TrainRunner
-from scvi.model._utils import parse_use_gpu_arg
+from scvi.data._anndata import _setup_anndata
 
-class MultiVAE(BaseModelClass):
+class MultiVAE_MIL(BaseModelClass):
     def __init__(
         self,
         adata,
@@ -40,92 +31,65 @@ class MultiVAE(BaseModelClass):
         dropout=0.2,
         cond_dim=10,
         kernel_type='not gaussian',
-        loss_coefs=[]
+        loss_coefs=[],
+        # mil specific
+        class_columns=None,
+        bag_key=None,
+        scoring='attn',
+        attn_dim=32,
+        covariate_embed_dim=10,
+        class_layers=1,
+        class_layer_size=128,
+        class_category='condition',
+        class_loss_coef=1.0
     ):
-
         super().__init__(adata)
 
-        # TODO: add options for number of hidden layers, hidden layers dim and output activation functions
-
-        if normalization not in ['layer', 'batch', None]:
-            raise ValueError(f'Normalization has to be one of ["layer", "batch", None]')
-        # TODO: do some assertions for other parameters
-
+        self.bag_key = bag_key
+        self.class_columns = class_columns
+        self.scoring = scoring
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
 
-        self.module = MultiVAETorch(
-            modality_lengths=modality_lengths,
-            condition_encoders=condition_encoders,
-            condition_decoders=condition_decoders,
-            normalization=normalization,
-            z_dim=z_dim,
-            h_dim=h_dim,
-            losses=losses,
-            dropout=dropout,
-            #theta=theta,
-            cond_dim=cond_dim,
-            kernel_type=kernel_type,
-            loss_coefs=loss_coefs,
-            num_groups=num_groups,
-        )
+        cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_category]
+        cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+        num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_category])
 
-        # self.init_params_ = self._get_init_params(locals())
+        self.module = MultiVAETorch_MIL(
+                        modality_lengths=modality_lengths,
+                        condition_encoders=condition_encoders,
+                        condition_decoders=condition_decoders,
+                        normalization=normalization,
+                        z_dim=z_dim,
+                        h_dim=h_dim,
+                        losses=losses,
+                        dropout=dropout,
+                        cond_dim=cond_dim,
+                        kernel_type=kernel_type,
+                        loss_coefs=loss_coefs,
+                        num_groups=num_groups,
+                        # mil specific
+                        num_classes=num_classes,
+                        scoring=scoring,
+                        attn_dim=attn_dim,
+                        cat_covariate_dims=cat_covariate_dims,
+                        cont_covariate_dims=cont_covariate_dims,
+                        covariate_embed_dim=covariate_embed_dim,
+                        class_layers=class_layers,
+                        class_layer_size=class_layer_size,
+                        class_loss_coef=class_loss_coef
+                    )
 
-    def impute(
-        self,
-        target_modality,
-        adata=None,
-        batch_size=64
-    ):
-        with torch.no_grad():
-            self.module.eval()
-            if not self.is_trained_:
-                raise RuntimeError("Please train the model first.")
 
-            adata = self._validate_anndata(adata)
-
-            scdl = self._make_data_loader(
-                adata=self.adata, batch_size=batch_size
-            )
-
-            imputed = []
-            for tensors in scdl:
-                _, generative_outputs = self.module.forward(
-                    tensors,
-                    compute_loss=False
-                )
-
-                rs = generative_outputs['rs']
-                r = rs[target_modality]
-                imputed += [r.cpu()]
-
-            return torch.cat(imputed).squeeze().numpy()
-
-    # TODO fix to work with  @torch.no_grad()
-    def get_latent_representation(
-        self,
-        adata=None,
-        batch_size=64
-    ):
-        with torch.no_grad():
-            self.module.eval()
-            if not self.is_trained_:
-                raise RuntimeError("Please train the model first.")
-
-            adata = self._validate_anndata(adata)
-
-            scdl = self._make_data_loader(
-                adata=adata, batch_size=batch_size
-            )
-
-            latent = []
-            for tensors in scdl:
-                inference_inputs = self.module._get_inference_input(tensors)
-                outputs = self.module.inference(**inference_inputs)
-                z = outputs['z_joint']
-                latent += [z.cpu()]
-            return torch.cat(latent).numpy()
+    def use_model(self, model, freeze=True):
+        self.model = MultiVAETorch_MIL(model.encoders, model.decoders, model.shared_encoder, model.shared_decoder,
+                                   model.mu, model.logvar, model.modality_vecs, model.device, model.condition, model.n_batch_labels,
+                                   model.pair_groups_dict, model.modalities_per_group, model.paired_networks_per_modality_pairs,
+                                   self.num_classes, self.scoring, self.classifier_hiddens, self.normalization, self.dropout)
+        if freeze:
+            for param in self.model.named_parameters():
+                if not param[0].startswith('classifier'):
+                    param[1].requires_grad = False
 
     def train(
         self,
@@ -266,53 +230,3 @@ class MultiVAE(BaseModelClass):
             continuous_covariate_keys=continuous_covariate_keys,
             categorical_covariate_keys=categorical_covariate_keys,
         )
-
-    # TODO
-    def plot_losses(
-        self,
-        recon=True,
-        kl=True,
-        integ=True,
-        cycle=False
-    ):
-        pass
-
-    def load_query_data(
-        adata: AnnData,
-        reference_model: BaseModelClass,
-        use_gpu: Optional[Union[str, int, bool]] = None,
-        freeze: bool = True
-    ):
-        use_gpu, device = parse_use_gpu_arg(use_gpu)
-
-        model = deepcopy(reference_model)
-        model.adata = adata
-
-        # check if the reference model was conditioned and update cond_embedding
-        n_new_batches = len(set(reference_model.adata.obs.group))
-        if reference_model.module.cond_embedding:
-            n_batches, cond_dim = reference_model.module.cond_embedding.weight.shape
-            old_embed = reference_model.module.cond_embedding.weight.data
-            model.module.cond_embedding = nn.Embedding(n_batches+n_new_batches, cond_dim)
-            model.module.cond_embedding.weight.data[:n_batches, :] = old_embed
-        else:
-            raise NotImplementedError('The reference model has to be conditioned.')
-
-        # add another dim to theta if ref model has it
-        if reference_model.module.theta is not None:
-            rna_length, n_batches = reference_model.module.theta.shape
-            old_theta = reference_model.module.theta.data
-            model.module.theta = torch.nn.Parameter(torch.randn(rna_length, n_batches+n_new_batches))
-            model.module.theta.data[:, :n_batches] = old_theta
-
-        model.to_device(device)
-
-        # freeze everything but the condition_layer in condMLPs
-        if freeze:
-            for key, par in model.module.named_parameters():
-                if not any(module in key for module in ['theta', 'cond_embedding', 'condition_layer']):
-                    par.requires_grad = False
-
-        model.module.eval()
-        model.is_trained_ = False
-        return model
