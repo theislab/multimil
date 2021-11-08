@@ -37,6 +37,8 @@ class MultiVAETorch(BaseModuleClass):
         kernel_type='not gaussian',
         loss_coefs=[],
         num_groups=1,
+        cat_covariate_dims=[],
+        cont_covariate_dims=[],
     ):
         super().__init__()
 
@@ -57,19 +59,13 @@ class MultiVAETorch(BaseModuleClass):
 
         self.loss_coefs = {'recon': 1,
                           'kl': 1e-6,
-                          'integ': 0,
+                          'integ': 1e-2,
                           'cycle': 0,
                           'nb': 1,
                           'zinb': 1,
                           'mse': 1,
                           'bce': 1}
         self.loss_coefs.update(loss_coefs)
-
-        if self.condition_encoders or self.condition_decoders:
-            self.cond_embedding = torch.nn.Embedding(num_groups, cond_dim)
-        else:
-            self.cond_embedding = None
-            cond_dim = 0 # not to add extra input dimentions later to the encoders
 
         # assume for now that can only use nb/zinb once, i.e. for RNA-seq modality
         # TODO: add check for multiple nb/zinb losses given
@@ -80,13 +76,16 @@ class MultiVAETorch(BaseModuleClass):
                 break
 
         self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
-        cond_dim_enc = cond_dim if self.condition_encoders else 0
-        self.encoders = [CondMLP(x_dim, z_dim, embed_dim=cond_dim_enc, dropout_rate=dropout, normalization=normalization) for x_dim in self.input_dims]
-        cond_dim_dec = cond_dim if self.condition_decoders else 0
-        self.decoders = [Decoder(h_dim, x_dim, embed_dim=cond_dim_dec, dropout_rate=dropout, normalization=normalization, loss=loss) for x_dim, loss in zip(self.input_dims, self.losses)]
+        cond_dim_enc = cond_dim*(len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_encoders else 0
+        self.encoders = [CondMLP(x_dim + cond_dim_enc, z_dim, embed_dim=0, dropout_rate=dropout, normalization=normalization) for x_dim in self.input_dims]
+        cond_dim_dec = cond_dim*(len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_decoders else 0
+        self.decoders = [Decoder(h_dim + cond_dim_dec, x_dim, embed_dim=0, dropout_rate=dropout, normalization=normalization, loss=loss) for x_dim, loss in zip(self.input_dims, self.losses)]
 
         self.mus = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
         self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
+
+        self.cat_covariate_embeddings = [nn.Embedding(dim, cond_dim) for dim in cat_covariate_dims]
+        self.cont_covariate_embeddings = [nn.Linear(dim, cond_dim) for dim in cont_covariate_dims] # dim is always 1 here
 
         # register sub-modules
         for i, (enc, dec, mu, logvar) in enumerate(zip(self.encoders, self.decoders, self.mus, self.logvars)):
@@ -94,6 +93,12 @@ class MultiVAETorch(BaseModuleClass):
             self.add_module(f'decoder_{i}', dec)
             self.add_module(f'mu_{i}', mu)
             self.add_module(f'logvar_{i}', logvar)
+
+        for i, emb in enumerate(self.cat_covariate_embeddings):
+            self.add_module(f'cat_covariate_embedding_{i}', emb)
+
+        for i, emb in enumerate(self.cont_covariate_embeddings):
+            self.add_module(f'cont_covariate_embedding_{i}', emb)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -134,15 +139,33 @@ class MultiVAETorch(BaseModuleClass):
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]
-        group = tensors[_CONSTANTS.BATCH_KEY]
-        return dict(x=x, group=group)
+
+        cont_key = _CONSTANTS.CONT_COVS_KEY
+        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+        cat_key = _CONSTANTS.CAT_COVS_KEY
+        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+        input_dict = dict(
+            x=x, cat_covs=cat_covs, cont_covs=cont_covs
+        )
+        return input_dict
 
     def _get_generative_input(self, tensors, inference_outputs):
         z_joint = inference_outputs['z_joint']
-        group = tensors[_CONSTANTS.BATCH_KEY]
-        return dict(z_joint=z_joint, group=group)
 
-    def inference(self, x, group, masks=None):
+        cont_key = _CONSTANTS.CONT_COVS_KEY
+        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+        cat_key = _CONSTANTS.CAT_COVS_KEY
+        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+        return dict(z_joint=z_joint, cat_covs=cat_covs, cont_covs=cont_covs)
+
+    def inference(self, x, cat_covs, cont_covs, masks=None):
+        # cat_covs or cont_covs can be longer than xs in case of MIL and class labels or size_factors,
+        # but it's taken care of later by using zip
+
         # split x into modality xs
         if torch.is_tensor(x):
             xs = torch.split(x, self.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
@@ -154,8 +177,21 @@ class MultiVAETorch(BaseModuleClass):
             masks = torch.stack(masks, dim=1)
 
         if self.condition_encoders:
-            cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
-            xs = [torch.cat([x, cond_emb_vec], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
+
+            cat_embedds = [cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.cat_covariate_embeddings)]
+            cont_embedds = [cont_covariate_embedding(covariate.unsqueeze(-1)) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
+
+            if len(cat_embedds) > 0:
+                cat_embedds = torch.cat(cat_embedds, dim=-1)
+            else:
+                cat_embedds = torch.Tensor()
+
+            if len(cont_embedds) > 0:
+                cont_embedds = torch.cat(cont_embedds, dim=-1)
+            else:
+                cont_embedds = torch.Tensor()
+
+            xs = [torch.cat([x, cat_embedds, cont_embedds], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
         hs = [self.x_to_h(x, mod) for mod, x in enumerate(xs)]
         out = [self.bottleneck(h, mod) for mod, h in enumerate(hs)]
@@ -170,7 +206,7 @@ class MultiVAETorch(BaseModuleClass):
         # return mus+mus_joint
         return dict(z_joint=z_joint, mu=mu_joint, logvar=logvar_joint)
 
-    def generative(self, z_joint, group):
+    def generative(self, z_joint, cat_covs, cont_covs):
         mod_vecs = self.modal_vector(list(range(self.n_modality))) # shape 1 x n_mod x n_mod
         z_joint = z_joint.unsqueeze(1).repeat(1, self.n_modality, 1)
         mod_vecs = mod_vecs.repeat(z_joint.shape[0], 1, 1) # shape batch_size x n_mod x n_mod
@@ -178,9 +214,23 @@ class MultiVAETorch(BaseModuleClass):
         z_joint = torch.cat([z_joint, mod_vecs], dim=-1) # shape batch_size x n_mod x latent_dim+n_mod
         z = self.shared_decoder(z_joint)
         zs = torch.split(z, 1, dim=1)
+
         if self.condition_decoders:
-            cond_emb_vec = self.cond_embedding(group.squeeze().int()) # get embeddings for the batch
-            zs = [torch.cat([z.squeeze(1), cond_emb_vec], dim=-1) for z in zs] # concat embedding to each modality x along the feature axis
+
+            cat_embedds = [cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.cat_covariate_embeddings)]
+            cont_embedds = [cont_covariate_embedding(covariate.unsqueeze(-1)) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
+
+            if len(cat_embedds) > 0:
+                cat_embedds = torch.cat(cat_embedds, dim=-1)
+            else:
+                cat_embedds = torch.Tensor()
+
+            if len(cont_embedds) > 0:
+                cont_embedds = torch.cat(cont_embedds, dim=-1)
+            else:
+                cont_embedds = torch.Tensor()
+
+            zs = [torch.cat([z.squeeze(1), cat_embedds, cont_embedds], dim=-1) for z in zs] # concat embedding to each modality x along the feature axis
 
         rs = [self.h_to_x(z, mod) for mod, z in enumerate(zs)]
         return dict(rs=rs)
@@ -193,8 +243,8 @@ class MultiVAETorch(BaseModuleClass):
     ):
 
         x = tensors[_CONSTANTS.X_KEY]
-        group = tensors[_CONSTANTS.BATCH_KEY]
-        size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)[:, 0]
+        group = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1] # always last
+        size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)[:, -1] # always last
         rs = generative_outputs['rs']
         mu = inference_outputs['mu']
         logvar = inference_outputs['logvar']
@@ -276,9 +326,9 @@ class MultiVAETorch(BaseModuleClass):
                 loss += MMD(kernel_type=self.kernel_type)(zi, zj)
         return loss
 
-    def calc_cycle_loss(self, xs, z, group, masks, losses, size_factor, loss_coefs):
+    def calc_cycle_loss(self, xs, z, cat_covs, cont_covs, masks, losses, size_factor, loss_coefs):
 
-        generative_outputs = self.generative(z, group)
+        generative_outputs = self.generative(z, cat_covs, cont_covs)
         rs = generative_outputs['rs']
         for i, r in enumerate(rs):
             if len(r) == 2: # hack for zinb
@@ -288,10 +338,12 @@ class MultiVAETorch(BaseModuleClass):
         masks_stacked = torch.stack(masks, dim=1)
         complement_masks = torch.logical_not(masks_stacked)
 
-        inference_outputs = self.inference(rs, group, complement_masks)
+        inference_outputs = self.inference(rs, cat_covs, cont_covs, complement_masks)
         z_joint = inference_outputs['z_joint']
         # generate again
-        generative_outputs = self.generative(z_joint, group)
+        generative_outputs = self.generative(z_joint, cat_covs, cont_covs)
         rs = generative_outputs['rs']
+
+        group = cat_covs[:, -1]
 
         return self.calc_recon_loss(xs, rs, losses, group, size_factor, loss_coefs, masks)

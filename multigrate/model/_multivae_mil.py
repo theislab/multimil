@@ -34,27 +34,25 @@ class MultiVAE_MIL(BaseModelClass):
         kernel_type='not gaussian',
         loss_coefs=[],
         # mil specific
-        class_column=None,
         bag_key=None,
         scoring='attn',
         attn_dim=32,
-        covariate_embed_dim=10,
         class_layers=1,
         class_layer_size=128,
-        class_category='condition',
+        class_label='condition',
         class_loss_coef=1.0
     ):
         super().__init__(adata)
 
         self.bag_key = bag_key
-        self.class_column = class_column
+        self.class_column = class_label
         self.scoring = scoring
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
 
-        cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_category]
+        cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
         cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
-        num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_category])
+        num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_label])
 
         self.module = MultiVAETorch_MIL(
                         modality_lengths=modality_lengths,
@@ -75,7 +73,6 @@ class MultiVAE_MIL(BaseModelClass):
                         attn_dim=attn_dim,
                         cat_covariate_dims=cat_covariate_dims,
                         cont_covariate_dims=cont_covariate_dims,
-                        covariate_embed_dim=covariate_embed_dim,
                         class_layers=class_layers,
                         class_layer_size=class_layer_size,
                         class_loss_coef=class_loss_coef
@@ -214,9 +211,10 @@ class MultiVAE_MIL(BaseModelClass):
 
     def setup_anndata(
         adata,
+        class_label,
         rna_indices_end = None,
         categorical_covariate_keys = None,
-        continuous_covariate_keys = None,
+        continuous_covariate_keys = None
     ):
         if rna_indices_end:
             adata.obs['size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()[0]
@@ -226,9 +224,14 @@ class MultiVAE_MIL(BaseModelClass):
             else:
                 continuous_covariate_keys = ['size_factors']
 
+        if categorical_covariate_keys:
+            categorical_covariate_keys.append('group') # from .data._preprocessing.organize_multiome_anndatas
+            categorical_covariate_keys.append(class_label) # order important! class label key always last
+        else:
+            categorical_covariate_keys = ['group', class_label]
+
         return _setup_anndata(
             adata,
-            batch_key='group',
             continuous_covariate_keys=continuous_covariate_keys,
             categorical_covariate_keys=categorical_covariate_keys,
         )

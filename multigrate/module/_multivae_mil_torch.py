@@ -87,12 +87,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         attn_dim=32,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
-        covariate_embed_dim=10,
         class_layers=1,
         class_layer_size=128,
         class_loss_coef=1.0
     ):
         super().__init__()
+
         self.vae = MultiVAETorch(
             modality_lengths=modality_lengths,
             condition_encoders=condition_encoders,
@@ -106,24 +106,13 @@ class MultiVAETorch_MIL(BaseModuleClass):
             kernel_type=kernel_type,
             loss_coefs=loss_coefs,
             num_groups=num_groups,
+            cat_covariate_dims=cat_covariate_dims,
+            cont_covariate_dims=cont_covariate_dims,
         )
-
-        self.cat_covariate_embeddings = [nn.Embedding(dim, covariate_embed_dim) for dim in cat_covariate_dims]
-        self.cont_covariate_embeddings = [nn.Linear(dim, covariate_embed_dim) for dim in cont_covariate_dims]
 
         self.class_loss_coef = class_loss_coef
 
-        for i, emb in enumerate(self.cat_covariate_embeddings):
-            self.add_module(f'cat_covariate_embedding_{i}', emb)
-
-        for i, emb in enumerate(self.cont_covariate_embeddings):
-            self.add_module(f'cont_covariate_embedding_{i}', emb)
-
-        n_cat_covariates = len(cat_covariate_dims)
-        n_cont_covariates = len(cont_covariate_dims)
-
-        mil_dim = covariate_embed_dim
-
+        mil_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
                             CondMLP(
                                 z_dim,
@@ -149,7 +138,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]
-        group = tensors[_CONSTANTS.BATCH_KEY]
 
         cont_key = _CONSTANTS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
@@ -158,39 +146,43 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
         input_dict = dict(
-            x=x, group=group, cat_covs=cat_covs, cont_covs=cont_covs
+            x=x, cat_covs=cat_covs, cont_covs=cont_covs
         )
         return input_dict
 
     def _get_generative_input(self, tensors, inference_outputs):
         z_joint = inference_outputs['z_joint']
-        group = tensors[_CONSTANTS.BATCH_KEY]
-        return dict(z_joint=z_joint, group=group)
 
-    def inference(self, x, group, cat_covs, cont_covs, masks=None):
+        cont_key = _CONSTANTS.CONT_COVS_KEY
+        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+        cat_key = _CONSTANTS.CAT_COVS_KEY
+        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+        return dict(z_joint=z_joint, cat_covs=cat_covs, cont_covs=cont_covs)
+
+    def inference(self, x, cat_covs, cont_covs, masks=None):
         # vae part
-        inference_outputs = self.vae.inference(x, group)
+        inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs['z_joint']
         # MIL part
         z_aggr = self.cell_level_aggregator(z_joint)
 
-        # size factor and class label are included here but taking care of it later
         cat_covs = torch.split(cat_covs[0], 1, dim=-1) # list of tensors shape 1 x 1, assume all same in the batch
         cont_covs = torch.split(cont_covs[0], 1, dim=-1)
 
-        cat_covs_embeds = [cat_covariate_embedding(covariate.squeeze().long()) for covariate, cat_covariate_embedding in zip(cat_covs, self.cat_covariate_embeddings)]
-        cont_covs_embeds = [cont_covariate_embedding(covariate) for covariate, cont_covariate_embedding in zip(cat_covs, self.cont_covariate_embeddings)]
+        # size factors and class label are included here but taking care of by zip
+        cat_embedds = [cat_covariate_embedding(covariate.squeeze().long()) for covariate, cat_covariate_embedding in zip(cat_covs, self.vae.cat_covariate_embeddings)]
+        cont_embedds = [cont_covariate_embedding(covariate) for covariate, cont_covariate_embedding in zip(cont_covs, self.vae.cont_covariate_embeddings)]
 
-        cat_covs_embeds = torch.cat(cat_covs_embeds, dim=-1)
-        cont_covs_embeds = torch.cat(cont_covs_embeds, dim=-1)
-        aggr_bag_level = torch.stack([z_aggr, cat_covs_embeds, cont_covs_embeds], dim=0)
+        aggr_bag_level = torch.stack([z_aggr, *cat_embedds, *cont_embedds], dim=0)
         prediction = self.classifier(aggr_bag_level)
 
         inference_outputs.update({'prediction': prediction})
         return inference_outputs # z_joint, mu, logvar, prediction
 
-    def generative(self, z_joint, group):
-        return self.vae.generative(z_joint, group)
+    def generative(self, z_joint, cat_covs, cont_covs):
+        return self.vae.generative(z_joint, cat_covs, cont_covs)
 
     def loss(self,
         tensors,
@@ -199,7 +191,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         kl_weight: float = 1.0
     ):
         x = tensors[_CONSTANTS.X_KEY]
-        group = tensors[_CONSTANTS.BATCH_KEY]
+        group = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -2] # always second to last
         size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)[:, -1] # always last
         class_label = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1] # always last
 
@@ -244,22 +236,3 @@ class MultiVAETorch_MIL(BaseModuleClass):
             )
 
         return generative_outputs['rs']
-
-    #
-    # def forward(self, xs, modalities, pair_groups, batch_labels, size_factors):
-    #     hs = [self.to_shared_dim(x, mod, batch_label) for x, mod, batch_label in zip(xs, modalities, batch_labels)]
-    #     zs = [self.bottleneck(h) for h in hs]
-    #     mus = [z[1] for z in zs]
-    #     logvars = [z[2] for z in zs]
-    #     zs = [z[0] for z in zs]
-    #     mus_joint, logvars_joint, _ = self.product_of_experts(mus, logvars, pair_groups)
-    #     zs_joint = [self.reparameterize(mu_joint, logvar_joint) for mu_joint, logvar_joint in zip(mus_joint, logvars_joint)]
-    #     out = self.prep_latent(xs, zs, zs_joint, modalities, pair_groups, batch_labels)
-    #     zs = out[0]
-    #     hs_dec = [self.z_to_h(z, mod) for z, mod in zip(zs, modalities)]
-    #     rs = [self.decode_from_shared(h, mod, pair_group, batch_label) for h, mod, pair_group, batch_label in zip(hs_dec, modalities, pair_groups, batch_labels)]
-    #     # classify
-    #     predicted_scores = [self.classifier(z_joint) for z_joint in zs_joint]
-    #     #if len(predicted_scores[0]) == 2:
-    # #        predicted_scores = [predicted_scores[i][0] for i in range(len(predicted_scores))]
-    #     return rs, zs, mus+mus_joint, logvars+logvars_joint, pair_groups, modalities, batch_labels, xs, size_factors, predicted_scores

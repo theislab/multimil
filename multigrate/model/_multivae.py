@@ -54,6 +54,9 @@ class MultiVAE(BaseModelClass):
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
 
+        cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
+        cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+
         self.module = MultiVAETorch(
             modality_lengths=modality_lengths,
             condition_encoders=condition_encoders,
@@ -63,11 +66,12 @@ class MultiVAE(BaseModelClass):
             h_dim=h_dim,
             losses=losses,
             dropout=dropout,
-            #theta=theta,
             cond_dim=cond_dim,
             kernel_type=kernel_type,
             loss_coefs=loss_coefs,
             num_groups=num_groups,
+            cat_covariate_dims=cat_covariate_dims,
+            cont_covariate_dims=cont_covariate_dims,
         )
 
         # self.init_params_ = self._get_init_params(locals())
@@ -260,9 +264,12 @@ class MultiVAE(BaseModelClass):
             else:
                 continuous_covariate_keys = ['size_factors']
 
+        if categorical_covariate_keys:
+            categorical_covariate_keys.append('group') # from .data._preprocessing.organize_multiome_anndatas
+        else:
+            categorical_covariate_keys = ['group']
         return _setup_anndata(
             adata,
-            batch_key='group',
             continuous_covariate_keys=continuous_covariate_keys,
             categorical_covariate_keys=categorical_covariate_keys,
         )
