@@ -1,11 +1,11 @@
 scikit-learn==1.0
 statsmodels==0.12.2
 numba==0.53.1
-#pytables==3.6.1
+tables==3.6.1
 python-igraph==0.9.6
 notebook==6.4.4
 leidenalg==0.8.7
 louvain==0.7.0
-#pytorch==1.9.1
+torch==1.9.1
 scanpy==1.8.1
 scvi-tools==0.14.0
