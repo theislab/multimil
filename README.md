@@ -2,10 +2,13 @@
 
 To start:
 1. Set up a Conda environment:
-`conda create -n multigrate python=3.7`
+`conda create -n multigrate python=3.8`
 and `conda activate multigrate`
 
-2. Install multigrate
-`pip install git+https://github.com/theislab/multigrate.git`
+2. Clone this branch using
+`git clone --branch refactor https://github.com/theislab/multigrate`
 
-There are several example datasets available on [Drive](https://drive.google.com/drive/u/0/folders/1vdO8CJluRp7sOOQHc85YYZXhV2p2QcDN). A quick tutorial can be found in example/integration_example.ipynb.
+3. Install the package (after you cd'ed into the cloned folder)
+`pip install .`
+
+There are several example datasets available on [Drive](https://drive.google.com/drive/u/0/folders/1vdO8CJluRp7sOOQHc85YYZXhV2p2QcDN). A quick tutorial can be found in notebooks/tutorial.ipynb.
