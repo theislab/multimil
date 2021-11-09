@@ -179,7 +179,7 @@ class MultiVAETorch(BaseModuleClass):
         if self.condition_encoders:
 
             cat_embedds = [cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.cat_covariate_embeddings)]
-            cont_embedds = [cont_covariate_embedding(covariate.unsqueeze(-1)) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
+            cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
 
             if len(cat_embedds) > 0:
                 cat_embedds = torch.cat(cat_embedds, dim=-1)
@@ -218,7 +218,7 @@ class MultiVAETorch(BaseModuleClass):
         if self.condition_decoders:
 
             cat_embedds = [cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.cat_covariate_embeddings)]
-            cont_embedds = [cont_covariate_embedding(covariate.unsqueeze(-1)) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
+            cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
 
             if len(cat_embedds) > 0:
                 cat_embedds = torch.cat(cat_embedds, dim=-1)

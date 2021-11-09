@@ -9,6 +9,7 @@ from scvi.dataloaders import AnnTorchDataset
 from typing import List, Optional, Union
 import anndata
 import copy
+import itertools
 
 class BagSampler(torch.utils.data.sampler.Sampler):
     def __init__(
@@ -58,8 +59,6 @@ class BagSampler(torch.utils.data.sampler.Sampler):
             else:
                 self.length += ceil(n_obs / self.batch_size)
 
-
-
     def __iter__(self):
 
         classes = set(self.class_labels)
@@ -101,6 +100,112 @@ class BagSampler(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return self.length
 
+class StratifiedSampler(BagSampler):
+    def __init__(
+        self,
+        indices: np.ndarray,
+        class_labels: np.ndarray,
+        batch_size: int,
+        min_size_per_class: int,
+        shuffle: bool = True,
+        drop_last: Union[bool, int] = True,
+        shuffle_classes: bool = True
+    ):
+        super().__init__(
+            indices=indices,
+            class_labels=class_labels,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            drop_last=drop_last,
+            shuffle_classes=shuffle_classes)
+
+        self.min_size_per_class = min_size_per_class
+
+        if batch_size % min_size_per_class != 0:
+            raise ValueError(
+                "min_size_per_class has to be a divisor of batch_size."
+                + "min_size_per_class is {} but batch_size is {}.".format(min_size_per_class, batch_size)
+            )
+
+        from math import ceil
+
+        classes = set(self.class_labels)
+
+        tmp = 0
+        for cl in classes:
+            idx = np.where(self.class_labels == cl)[0]
+            cl_idx = self.indices[idx]
+            n_obs = len(cl_idx)
+
+            last_batch_len = n_obs % self.min_size_per_class
+            if (self.drop_last is True) or (last_batch_len < self.drop_last):
+                drop_last_n = last_batch_len
+            elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
+                drop_last_n = 0
+            else:
+                raise ValueError("Invalid input for drop_last param. Must be bool or int.")
+
+            if drop_last_n != 0:
+                tmp += n_obs // self.min_size_per_class
+            else:
+                tmp += ceil(n_obs / self.min_size_per_class)
+
+        classes_per_batch = int(self.batch_size / self.min_size_per_class)
+        self.length = ceil(tmp / classes_per_batch)
+
+
+    def __iter__(self):
+
+        classes_per_batch = int(self.batch_size / self.min_size_per_class)
+
+        classes = set(self.class_labels)
+        data_iter = []
+
+        for cl in classes:
+            idx = np.where(self.class_labels == cl)[0]
+            cl_idx = self.indices[idx]
+            n_obs = len(cl_idx)
+
+            if self.shuffle is True:
+                idx = torch.randperm(n_obs).tolist()
+            else:
+                idx = torch.arange(n_obs).tolist()
+
+            last_batch_len = n_obs % self.min_size_per_class
+            if (self.drop_last is True) or (last_batch_len < self.drop_last):
+                drop_last_n = last_batch_len
+            elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
+                drop_last_n = 0
+            else:
+                raise ValueError("Invalid input for drop_last param. Must be bool or int.")
+
+            if drop_last_n != 0:
+                idx = idx[: -drop_last_n]
+
+            data_iter.extend(
+            [
+                cl_idx[idx[i : i + self.min_size_per_class]]
+                for i in range(0, len(idx), self.min_size_per_class)
+            ])
+
+        # TODO fix seed
+        if self.shuffle_classes:
+            shuffle(data_iter)
+
+        final_data_iter = []
+
+        end = len(data_iter) - len(data_iter)%classes_per_batch
+        for i in range(0, end, classes_per_batch):
+            batch_idx = list(itertools.chain.from_iterable(data_iter[i : i+classes_per_batch]))
+            final_data_iter.append(batch_idx)
+
+        # deal with the last manually
+        if end != len(data_iter):
+            batch_idx = list(itertools.chain.from_iterable(data_iter[end:]))
+            final_data_iter.append(batch_idx)
+
+        return iter(final_data_iter)
+
 class BagAnnDataLoader(DataLoader):
     """
     DataLoader for loading tensors from AnnData objects.
@@ -129,8 +234,10 @@ class BagAnnDataLoader(DataLoader):
         shuffle=False,
         indices=None,
         batch_size=128,
+        min_size_per_class=64,
         data_and_attributes: Optional[dict] = None,
-        drop_last: Union[bool, int] = False,
+        drop_last: Union[bool, int] = True,
+        sampler: Optional[torch.utils.data.sampler.Sampler] = StratifiedSampler,
         **data_loader_kwargs,
     ):
 
@@ -160,8 +267,8 @@ class BagAnnDataLoader(DataLoader):
             "batch_size": batch_size,
             "shuffle": shuffle,
             "drop_last": drop_last,
+            "min_size_per_class": min_size_per_class,
         }
-
         if indices is None:
             indices = np.arange(len(self.dataset))
             sampler_kwargs["indices"] = indices
@@ -176,8 +283,7 @@ class BagAnnDataLoader(DataLoader):
         self.indices = indices
         self.sampler_kwargs = sampler_kwargs
 
-        sampler = BagSampler(**self.sampler_kwargs)
-
+        sampler = sampler(**self.sampler_kwargs)
         self.data_loader_kwargs = copy.copy(data_loader_kwargs)
         # do not touch batch size here, sampler gives batched indices
         self.data_loader_kwargs.update({"sampler": sampler, "batch_size": None})

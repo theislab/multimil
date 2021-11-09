@@ -15,6 +15,7 @@ from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
 from ._multivae_torch import MultiVAETorch
+from ..utils._utils import get_split_idx
 
 class Aggregator(nn.Module):
     def __init__(self,
@@ -53,18 +54,24 @@ class Aggregator(nn.Module):
         elif self.scoring == 'attn':
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
             self.A = self.attention(x)  # Nx1
-            self.A = torch.transpose(self.A, 1, 0)  # 1xN
-            self.A = F.softmax(self.A, dim=1)  # softmax over N
-            return torch.mm(self.A, x).squeeze() # z_dim
+            self.A = torch.transpose(self.A, -1, -2)  # 1xN
+            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+            if len(x.shape) == 3:
+                return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
+            elif len(x.shape) == 2:
+                return torch.mm(self.A, x).squeeze()
 
         elif self.scoring == 'gated_attn':
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
             A_V = self.attention_V(x)  # NxD
             A_U = self.attention_U(x)  # NxD
             self.A = self.attention_weights(A_V * A_U) # element wise multiplication # Nx1
-            self.A = torch.transpose(self.A, 1, 0)  # 1xN
-            self.A = F.softmax(self.A, dim=1)  # softmax over N
-            return torch.mm(self.A, x).squeeze()  # z_dim
+            self.A = torch.transpose(self.A, -1, -2)  # 1xN
+            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+            if len(x.shape) == 3:
+                return torch.bmm(self.A, x).squeeze() # z_dim
+            elif len(x.shape) == 2:
+                return torch.mm(self.A, x).squeeze()  # z_dim
 
 class MultiVAETorch_MIL(BaseModuleClass):
     def __init__(
@@ -112,29 +119,28 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         self.class_loss_coef = class_loss_coef
 
-        mil_dim = cond_dim
+        self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
                             CondMLP(
                                 z_dim,
-                                mil_dim,
+                                cond_dim,
                                 embed_dim=0,
                                 n_layers=class_layers,
                                 n_hidden=class_layer_size
                             ),
-                            Aggregator(mil_dim, scoring, attn_dim=attn_dim)
+                            Aggregator(cond_dim, scoring, attn_dim=attn_dim)
                         )
         self.classifier = nn.Sequential(
                             CondMLP(
-                                mil_dim,
-                                mil_dim,
+                                cond_dim,
+                                cond_dim,
                                 embed_dim=0,
                                 n_layers=class_layers,
                                 n_hidden=class_layer_size
                             ),
-                            Aggregator(mil_dim, scoring, attn_dim=attn_dim),
-                            nn.Linear(mil_dim, num_classes)
+                            Aggregator(cond_dim, scoring, attn_dim=attn_dim),
+                            nn.Linear(cond_dim, num_classes)
                         )
-
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]
@@ -165,18 +171,29 @@ class MultiVAETorch_MIL(BaseModuleClass):
         # vae part
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs['z_joint']
+
+
         # MIL part
-        z_aggr = self.cell_level_aggregator(z_joint)
+        class_label = cat_covs[:, -1].cpu().detach().numpy() # always last
+        idx = get_split_idx(class_label)
 
-        cat_covs = torch.split(cat_covs[0], 1, dim=-1) # list of tensors shape 1 x 1, assume all same in the batch
-        cont_covs = torch.split(cont_covs[0], 1, dim=-1)
+        cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
+        cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
 
-        # size factors and class label are included here but taking care of by zip
-        cat_embedds = [cat_covariate_embedding(covariate.squeeze().long()) for covariate, cat_covariate_embedding in zip(cat_covs, self.vae.cat_covariate_embeddings)]
-        cont_embedds = [cont_covariate_embedding(covariate) for covariate, cont_covariate_embedding in zip(cont_covs, self.vae.cont_covariate_embeddings)]
+        cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
 
-        aggr_bag_level = torch.stack([z_aggr, *cat_embedds, *cont_embedds], dim=0)
-        prediction = self.classifier(aggr_bag_level)
+        cov_embedds = torch.tensor_split(cov_embedds, idx)
+        cov_embedds = [embed[0] for embed in cov_embedds]
+        cov_embedds = torch.stack(cov_embedds, dim=0)
+
+        zs = torch.tensor_split(z_joint, idx, dim=0)
+        zs = torch.stack(zs, dim=0)
+        zs = self.cell_level_aggregator(zs)
+
+        aggr_bag_level = torch.cat([zs, cov_embedds], dim=-1)
+        aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
+        aggr_bag_level = torch.stack(aggr_bag_level, dim=1) # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
+        prediction = self.classifier(aggr_bag_level) # num of bags in batch x num of classes
 
         inference_outputs.update({'prediction': prediction})
         return inference_outputs # z_joint, mu, logvar, prediction
@@ -210,7 +227,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cycle_loss = 0 if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, group, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
 
         # MIL classification loss
-        classification_loss = F.cross_entropy(prediction.unsqueeze(0), torch.Tensor([class_label[0]]).long()) # assume same in the batch
+        idx = get_split_idx(class_label.cpu().detach().numpy())
+        class_label = torch.tensor_split(class_label, idx, dim=0)
+        class_label = [torch.Tensor([labels[0]]).long() for labels in class_label]
+        class_label = torch.cat(class_label, dim=0)
+
+        classification_loss = F.cross_entropy(prediction, class_label) # assume same in the batch
 
         loss = torch.mean(self.vae.loss_coefs['recon'] * recon_loss
             + self.vae.loss_coefs['kl'] * kl_loss

@@ -36,7 +36,7 @@ class BagDataSplitter(DataSplitter):
             self.class_column,
             indices=self.train_idx,
             shuffle=True,
-            drop_last=3,
+            drop_last=True,
             pin_memory=self.pin_memory,
             **self.data_loader_kwargs,
         )
@@ -48,7 +48,7 @@ class BagDataSplitter(DataSplitter):
                 self.class_column,
                 indices=self.val_idx,
                 shuffle=True,
-                drop_last=3,
+                drop_last=True,
                 pin_memory=self.pin_memory,
                 **self.data_loader_kwargs,
             )
@@ -62,7 +62,7 @@ class BagDataSplitter(DataSplitter):
                 self.class_column,
                 indices=self.test_idx,
                 shuffle=True,
-                drop_last=3,
+                drop_last=True,
                 pin_memory=self.pin_memory,
                 **self.data_loader_kwargs,
             )
