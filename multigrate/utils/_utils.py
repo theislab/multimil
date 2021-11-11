@@ -1,4 +1,10 @@
 import numpy as np
+import scanpy as sc
+
+def remove_sparsity(adata):
+    if sparse.issparse(adata.X):
+        adata.X = adata.X.A
+    return adata
 
 def get_split_idx(class_label):
     labels = set(list(class_label))

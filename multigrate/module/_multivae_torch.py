@@ -1,4 +1,3 @@
-
 import sys
 import time
 import os
@@ -327,7 +326,6 @@ class MultiVAETorch(BaseModuleClass):
         return loss
 
     def calc_cycle_loss(self, xs, z, cat_covs, cont_covs, masks, losses, size_factor, loss_coefs):
-
         generative_outputs = self.generative(z, cat_covs, cont_covs)
         rs = generative_outputs['rs']
         for i, r in enumerate(rs):

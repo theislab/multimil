@@ -25,6 +25,7 @@ from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
 from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.model._utils import parse_use_gpu_arg
+from scvi.model.base._utils import _initialize_model
 
 class MultiVAE(BaseModelClass):
     def __init__(
@@ -74,7 +75,7 @@ class MultiVAE(BaseModelClass):
             cont_covariate_dims=cont_covariate_dims,
         )
 
-        # self.init_params_ = self._get_init_params(locals())
+        self.init_params_ = self._get_init_params(locals())
 
     def impute(
         self,
@@ -139,7 +140,7 @@ class MultiVAE(BaseModelClass):
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
         batch_size: int = 128,
-        weight_decay: float = 1e-3,
+        weight_decay: float = 0,
         eps: float = 1e-08,
         early_stopping: bool = True,
         save_best: bool = True,
@@ -204,7 +205,7 @@ class MultiVAE(BaseModelClass):
             early_stopping_monitor="reconstruction_loss_validation",
             early_stopping_patience=50,
             optimizer="AdamW",
-            scale_adversarial_loss=1
+            scale_adversarial_loss=1,
         )
         if plan_kwargs is not None:
             plan_kwargs.update(update_dict)
@@ -284,7 +285,9 @@ class MultiVAE(BaseModelClass):
     ):
         pass
 
+    @classmethod
     def load_query_data(
+        cls,
         adata: AnnData,
         reference_model: BaseModelClass,
         use_gpu: Optional[Union[str, int, bool]] = None,
@@ -292,34 +295,57 @@ class MultiVAE(BaseModelClass):
     ):
         use_gpu, device = parse_use_gpu_arg(use_gpu)
 
-        model = deepcopy(reference_model)
-        model.adata = adata
+        attr_dict = reference_model._get_user_attributes()
+        attr_dict = {a[0]: a[1] for a in attr_dict if a[0][-1] == "_"}
+        load_state_dict = deepcopy(reference_model.module.state_dict())
 
-        # check if the reference model was conditioned and update cond_embedding
-        n_new_batches = len(set(reference_model.adata.obs.group))
-        if reference_model.module.cond_embedding:
-            n_batches, cond_dim = reference_model.module.cond_embedding.weight.shape
-            old_embed = reference_model.module.cond_embedding.weight.data
-            model.module.cond_embedding = nn.Embedding(n_batches+n_new_batches, cond_dim)
-            model.module.cond_embedding.weight.data[:n_batches, :] = old_embed
-        else:
-            raise NotImplementedError('The reference model has to be conditioned.')
+        #old_cat_covariates = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
+        #model. = deepcopy(reference_model)
+        model = _initialize_model(cls, adata, attr_dict)
 
-        # add another dim to theta if ref model has it
+        n_new_batches = len(set(model.adata.obs.group))
         if reference_model.module.theta is not None:
             rna_length, n_batches = reference_model.module.theta.shape
             old_theta = reference_model.module.theta.data
             model.module.theta = torch.nn.Parameter(torch.randn(rna_length, n_batches+n_new_batches))
             model.module.theta.data[:, :n_batches] = old_theta
 
+        for attr, val in attr_dict.items():
+            setattr(model, attr, val)
+
+        num_of_cat_to_add = [new_cat - old_cat for old_cat, new_cat in zip(reference_model.adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'], adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
+
+        # model tweaking
+        new_state_dict = model.module.state_dict()
+        for key, load_ten in load_state_dict.items(): # load_state_dict = old
+            new_ten = new_state_dict[key]
+            if new_ten.size() == load_ten.size():
+                continue
+            # new categoricals changed size
+            else:
+                old_shape = new_ten.shape
+                new_shape = load_ten.shape
+                if old_shape[0] == new_shape[0]:
+                    dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
+                    fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
+                else:
+                    dim_diff = new_ten.size()[0] - load_ten.size()[0]
+                    fixed_ten = torch.cat([load_ten, new_ten[-dim_diff:, ...]], dim=0)
+                load_state_dict[key] = fixed_ten
+
+        model.module.load_state_dict(load_state_dict)
         model.to_device(device)
 
         # freeze everything but the condition_layer in condMLPs
         if freeze:
             for key, par in model.module.named_parameters():
-                if not any(module in key for module in ['theta', 'cond_embedding', 'condition_layer']):
+                if key != 'theta': # freeze all but theta
                     par.requires_grad = False
+            for i, embed in enumerate(model.module.cat_covariate_embeddings):
+                if num_of_cat_to_add[i] > 0: # unfreeze the ones where categories were added
+                    embed.weight.requires_grad = True
 
         model.module.eval()
+
         model.is_trained_ = False
         return model
