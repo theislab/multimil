@@ -47,7 +47,6 @@ class MultiVAE(BaseModelClass):
         super().__init__(adata)
 
         # TODO: add options for number of hidden layers, hidden layers dim and output activation functions
-
         if normalization not in ['layer', 'batch', None]:
             raise ValueError(f'Normalization has to be one of ["layer", "batch", None]')
         # TODO: do some assertions for other parameters
@@ -299,8 +298,6 @@ class MultiVAE(BaseModelClass):
         attr_dict = {a[0]: a[1] for a in attr_dict if a[0][-1] == "_"}
         load_state_dict = deepcopy(reference_model.module.state_dict())
 
-        #old_cat_covariates = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
-        #model. = deepcopy(reference_model)
         model = _initialize_model(cls, adata, attr_dict)
 
         n_new_batches = len(set(model.adata.obs.group))
@@ -334,7 +331,6 @@ class MultiVAE(BaseModelClass):
                 load_state_dict[key] = fixed_ten
 
         model.module.load_state_dict(load_state_dict)
-        model.to_device(device)
 
         # freeze everything but the condition_layer in condMLPs
         if freeze:
@@ -345,7 +341,8 @@ class MultiVAE(BaseModelClass):
                 if num_of_cat_to_add[i] > 0: # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
 
+        model.to_device(device)
         model.module.eval()
-
         model.is_trained_ = False
+        
         return model

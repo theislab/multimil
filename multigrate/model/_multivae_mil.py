@@ -79,15 +79,24 @@ class MultiVAE_MIL(BaseModelClass):
                     )
 
 
-    def use_model(self, model, freeze=True):
-        self.model = MultiVAETorch_MIL(model.encoders, model.decoders, model.shared_encoder, model.shared_decoder,
-                                   model.mu, model.logvar, model.modality_vecs, model.device, model.condition, model.n_batch_labels,
-                                   model.pair_groups_dict, model.modalities_per_group, model.paired_networks_per_modality_pairs,
-                                   self.num_classes, self.scoring, self.classifier_hiddens, self.normalization, self.dropout)
-        if freeze:
-            for param in self.model.named_parameters():
-                if not param[0].startswith('classifier'):
-                    param[1].requires_grad = False
+    def use_model(
+        self,
+        model,
+        freeze_vae=True,
+        freeze_cov_embeddings=True
+    ):
+        state_dict = model.module.state_dict()
+        self.module.vae.load_state_dict(state_dict)
+        if freeze_vae:
+            for key, p in self.module.vae.named_parameters():
+                p.requires_grad = False
+        if not freeze_cov_embeddings:
+            for embed in self.module.vae.cat_covariate_embeddings:
+                for _, p in embed.named_parameters():
+                    p.requires_grad = True
+            for embed in self.module.vae.cont_covariate_embeddings:
+                for _, p in embed.named_parameters():
+                    p.requires_grad = True
 
     def train(
         self,
