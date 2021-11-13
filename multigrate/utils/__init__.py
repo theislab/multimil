@@ -1,1 +1,1 @@
-from ._utils import remove_sparsity, get_split_idx
+#from ._utils import get_split_idx

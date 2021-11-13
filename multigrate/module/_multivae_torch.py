@@ -14,7 +14,7 @@ from collections import defaultdict, Counter
 from ..distributions import *
 from ..nn import *
 from operator import itemgetter, attrgetter
-from scvi.module.base import BaseModuleClass, LossRecorder
+from scvi.module.base import BaseModuleClass, LossRecorder, auto_move_data
 from scvi import _CONSTANTS
 from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
 
@@ -71,7 +71,7 @@ class MultiVAETorch(BaseModuleClass):
         self.theta = None
         for i, loss in enumerate(losses):
             if loss in ["nb", "zinb"]:
-                self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))#.to(device).detach().requires_grad_(True)
+                self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))
                 break
 
         self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
@@ -161,6 +161,7 @@ class MultiVAETorch(BaseModuleClass):
 
         return dict(z_joint=z_joint, cat_covs=cat_covs, cont_covs=cont_covs)
 
+    @auto_move_data
     def inference(self, x, cat_covs, cont_covs, masks=None):
         # cat_covs or cont_covs can be longer than xs in case of MIL and class labels or size_factors,
         # but it's taken care of later by using zip
@@ -176,19 +177,24 @@ class MultiVAETorch(BaseModuleClass):
             masks = torch.stack(masks, dim=1)
 
         if self.condition_encoders:
-
-            cat_embedds = [cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.cat_covariate_embeddings)]
-            cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
+            if cat_covs is not None:
+                cat_embedds = [cat_covariate_embedding(covariate.long()) for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)]
+            else:
+                cat_embedds = []
+            if cont_covs is not None:
+                cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for cont_covariate_embedding, covariate in zip(self.cont_covariate_embeddings, cont_covs.T)]
+            else:
+                cont_embedds = []
 
             if len(cat_embedds) > 0:
                 cat_embedds = torch.cat(cat_embedds, dim=-1)
             else:
-                cat_embedds = torch.Tensor()
+                cat_embedds = torch.Tensor().to(self.device)
 
             if len(cont_embedds) > 0:
                 cont_embedds = torch.cat(cont_embedds, dim=-1)
             else:
-                cont_embedds = torch.Tensor()
+                cont_embedds = torch.Tensor().to(self.device)
 
             xs = [torch.cat([x, cat_embedds, cont_embedds], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
@@ -205,6 +211,7 @@ class MultiVAETorch(BaseModuleClass):
         # return mus+mus_joint
         return dict(z_joint=z_joint, mu=mu_joint, logvar=logvar_joint)
 
+    @auto_move_data
     def generative(self, z_joint, cat_covs, cont_covs):
         mod_vecs = self.modal_vector(list(range(self.n_modality))) # shape 1 x n_mod x n_mod
         z_joint = z_joint.unsqueeze(1).repeat(1, self.n_modality, 1)
@@ -215,19 +222,24 @@ class MultiVAETorch(BaseModuleClass):
         zs = torch.split(z, 1, dim=1)
 
         if self.condition_decoders:
-
-            cat_embedds = [cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.cat_covariate_embeddings)]
-            cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.cont_covariate_embeddings)]
+            if cat_covs is not None:
+                cat_embedds = [cat_covariate_embedding(covariate.long()) for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)]
+            else:
+                cat_embedds = []
+            if cont_covs is not None:
+                cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for cont_covariate_embedding, covariate in zip(self.cont_covariate_embeddings, cont_covs.T)]
+            else:
+                cont_embedds = []
 
             if len(cat_embedds) > 0:
                 cat_embedds = torch.cat(cat_embedds, dim=-1)
             else:
-                cat_embedds = torch.Tensor()
+                cat_embedds = torch.Tensor().to(self.device)
 
             if len(cont_embedds) > 0:
                 cont_embedds = torch.cat(cont_embedds, dim=-1)
             else:
-                cont_embedds = torch.Tensor()
+                cont_embedds = torch.Tensor().to(self.device)
 
             zs = [torch.cat([z.squeeze(1), cat_embedds, cont_embedds], dim=-1) for z in zs] # concat embedding to each modality x along the feature axis
 
@@ -243,7 +255,9 @@ class MultiVAETorch(BaseModuleClass):
 
         x = tensors[_CONSTANTS.X_KEY]
         group = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1] # always last
-        size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)[:, -1] # always last
+        size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)
+        if size_factor is not None:
+            size_factor = size_factor[:, -1] # always last
         rs = generative_outputs['rs']
         mu = inference_outputs['mu']
         logvar = inference_outputs['logvar']
@@ -286,7 +300,7 @@ class MultiVAETorch(BaseModuleClass):
                 loss.append(mse_loss)
             elif loss_type == 'nb':
                 dec_mean = r
-                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
+                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[group.squeeze().long()] if condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
                 dispersion = torch.exp(dispersion)
@@ -297,7 +311,7 @@ class MultiVAETorch(BaseModuleClass):
                 dec_mean, dec_dropout = r
                 dec_mean = dec_mean.squeeze()
                 dec_dropout = dec_dropout.squeeze()
-                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1)).to(self.device)
+                size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
                 dec_mean = dec_mean * size_factor_view
                 dispersion = self.theta.T[group.squeeze().long()] if condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
                 dispersion = torch.exp(dispersion)
@@ -314,7 +328,7 @@ class MultiVAETorch(BaseModuleClass):
         loss = 0
         zs = []
 
-        for g in set(list(group.squeeze().numpy())):
+        for g in set(list(group.squeeze().cpu().numpy())):
             idx = (group == g).nonzero(as_tuple=True)[0]
             zs.append(z[idx])
 

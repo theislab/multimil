@@ -1,5 +1,6 @@
 import torch
 import time
+import logging
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
@@ -17,6 +18,8 @@ from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
 from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.data._anndata import _setup_anndata
+
+logger = logging.getLogger(__name__)
 
 class MultiVAE_MIL(BaseModelClass):
     def __init__(
@@ -50,9 +53,19 @@ class MultiVAE_MIL(BaseModelClass):
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
 
-        cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
-        cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
-        num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_label])
+        if adata.uns['_scvi'].get('extra_continuous_keys', None):
+            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+        else:
+            cont_covariate_dims = []
+
+        if adata.uns['_scvi'].get('extra_categoricals', None):
+            try:
+                cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
+                num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_label])
+            except:
+                raise ValueError(f'{class_label} has to be registered as a categorical covariate beforehand with setup_anndata.')
+        else:
+            raise ValueError('Class labels have to be registered as a categorical covariate beforehand with setup_anndata.')
 
         self.module = MultiVAETorch_MIL(
                         modality_lengths=modality_lengths,

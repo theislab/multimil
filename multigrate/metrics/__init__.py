@@ -4,8 +4,7 @@ __all__ = [
     "isolated_labels",
     "metrics",
     "nmi",
-    "pcr",
-    "silhouette"
+    "silhouette",
 ]
 
-from .metrics import *
+from ._metrics import *

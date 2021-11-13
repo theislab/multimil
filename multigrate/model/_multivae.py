@@ -27,6 +27,8 @@ from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.model._utils import parse_use_gpu_arg
 from scvi.model.base._utils import _initialize_model
 
+logger = logging.getLogger(__name__)
+
 class MultiVAE(BaseModelClass):
     def __init__(
         self,
@@ -54,8 +56,15 @@ class MultiVAE(BaseModelClass):
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
 
-        cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
-        cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+        if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
+            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+        else:
+            cont_covariate_dims = []
+
+        if adata.uns['_scvi'].get('extra_categoricals') is not None:
+            cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
+        else:
+            cat_covariate_dims = []
 
         self.module = MultiVAETorch(
             modality_lengths=modality_lengths,
@@ -268,6 +277,7 @@ class MultiVAE(BaseModelClass):
             categorical_covariate_keys.append('group') # from .data._preprocessing.organize_multiome_anndatas
         else:
             categorical_covariate_keys = ['group']
+
         return _setup_anndata(
             adata,
             continuous_covariate_keys=continuous_covariate_keys,
@@ -344,5 +354,5 @@ class MultiVAE(BaseModelClass):
         model.to_device(device)
         model.module.eval()
         model.is_trained_ = False
-        
+
         return model

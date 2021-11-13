@@ -167,6 +167,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         return dict(z_joint=z_joint, cat_covs=cat_covs, cont_covs=cont_covs)
 
+    @auto_move_data
     def inference(self, x, cat_covs, cont_covs, masks=None):
         # vae part
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
@@ -198,6 +199,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         inference_outputs.update({'prediction': prediction})
         return inference_outputs # z_joint, mu, logvar, prediction
 
+    @auto_move_data
     def generative(self, z_joint, cat_covs, cont_covs):
         return self.vae.generative(z_joint, cat_covs, cont_covs)
 
