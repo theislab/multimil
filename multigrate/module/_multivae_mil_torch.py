@@ -8,7 +8,7 @@ from operator import attrgetter
 from itertools import cycle, zip_longest, groupby
 from ..nn import *
 
-from scvi.module.base import BaseModuleClass, LossRecorder
+from scvi.module.base import BaseModuleClass, LossRecorder, auto_move_data
 from scvi import _CONSTANTS
 from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
 
@@ -175,8 +175,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
 
         # MIL part
-        class_label = cat_covs[:, -1].cpu().detach().numpy() # always last
-        idx = get_split_idx(class_label)
+        class_label = cat_covs[:, -1]
+        idx = get_split_idx(class_label.detach().cpu().numpy())
 
         cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
         cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
@@ -229,9 +229,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cycle_loss = 0 if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, group, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
 
         # MIL classification loss
-        idx = get_split_idx(class_label.cpu().detach().numpy())
+        idx = get_split_idx(class_label.detach().cpu().numpy())
         class_label = torch.tensor_split(class_label, idx, dim=0)
-        class_label = [torch.Tensor([labels[0]]).long() for labels in class_label]
+        class_label = [torch.Tensor([labels[0]]).long().to(self.device) for labels in class_label]
         class_label = torch.cat(class_label, dim=0)
 
         classification_loss = F.cross_entropy(prediction, class_label) # assume same in the batch

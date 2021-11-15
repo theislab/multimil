@@ -246,19 +246,6 @@ class MultiVAE(BaseModelClass):
         )
         return runner()
 
-    # TODO
-    def save(self, path):
-        torch.save({
-            'state_dict' : self.module.state_dict(),
-        }, os.path.join(path, 'last-model.pt'), pickle_protocol=4)
-        pd.DataFrame(self._val_history).to_csv(os.path.join(path, 'history.csv'))
-
-    # TODO
-    def load(self, path):
-        model_file = torch.load(os.path.join(path, 'last-model.pt'), map_location=self.device)
-        self.module.load_state_dict(model_file['state_dict'])
-        self._val_history = pd.read_csv(os.path.join(path, 'history.csv'), index_col=0)
-
     def setup_anndata(
         adata,
         rna_indices_end = None,
@@ -320,9 +307,10 @@ class MultiVAE(BaseModelClass):
         for attr, val in attr_dict.items():
             setattr(model, attr, val)
 
-        num_of_cat_to_add = [new_cat - old_cat for old_cat, new_cat in zip(reference_model.adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'], adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
+        model.to_device(device)
 
         # model tweaking
+        num_of_cat_to_add = [new_cat - old_cat for old_cat, new_cat in zip(reference_model.adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'], adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
         new_state_dict = model.module.state_dict()
         for key, load_ten in load_state_dict.items(): # load_state_dict = old
             new_ten = new_state_dict[key]
@@ -351,7 +339,6 @@ class MultiVAE(BaseModelClass):
                 if num_of_cat_to_add[i] > 0: # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
 
-        model.to_device(device)
         model.module.eval()
         model.is_trained_ = False
 

@@ -11,7 +11,7 @@ from scipy import spatial
 from ..nn import *
 from ._multivae import MultiVAE
 from ..module import MultiVAETorch_MIL
-from ..dataloaders import BagDataSplitter
+from ..dataloaders import BagDataSplitter, BagAnnDataLoader
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
@@ -53,12 +53,12 @@ class MultiVAE_MIL(BaseModelClass):
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
 
-        if adata.uns['_scvi'].get('extra_continuous_keys', None):
+        if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
             cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
         else:
             cont_covariate_dims = []
 
-        if adata.uns['_scvi'].get('extra_categoricals', None):
+        if adata.uns['_scvi'].get('extra_categoricals') is not None:
             try:
                 cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
                 num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_label])
@@ -218,19 +218,6 @@ class MultiVAE_MIL(BaseModelClass):
         )
         return runner()
 
-    # TODO
-    def save(self, path):
-        torch.save({
-            'state_dict' : self.module.state_dict(),
-        }, os.path.join(path, 'last-model.pt'), pickle_protocol=4)
-        pd.DataFrame(self._val_history).to_csv(os.path.join(path, 'history.csv'))
-
-    # TODO
-    def load(self, path):
-        model_file = torch.load(os.path.join(path, 'last-model.pt'), map_location=self.device)
-        self.module.load_state_dict(model_file['state_dict'])
-        self._val_history = pd.read_csv(os.path.join(path, 'history.csv'), index_col=0)
-
     def setup_anndata(
         adata,
         class_label,
@@ -257,3 +244,31 @@ class MultiVAE_MIL(BaseModelClass):
             continuous_covariate_keys=continuous_covariate_keys,
             categorical_covariate_keys=categorical_covariate_keys,
         )
+
+    def get_latent_representation(
+        self,
+        adata=None,
+        batch_size=64
+    ):
+        with torch.no_grad():
+            self.module.eval()
+            if not self.is_trained_:
+                raise RuntimeError("Please train the model first.")
+
+            adata = self._validate_anndata(adata)
+
+            scdl = self._make_data_loader(
+                adata=adata,
+                batch_size=batch_size,
+                data_loader_class=BagAnnDataLoader,
+                class_column=self.class_column,
+                drop_last=False,
+            )
+
+            latent = []
+            for tensors in scdl:
+                inference_inputs = self.module._get_inference_input(tensors)
+                outputs = self.module.inference(**inference_inputs)
+                z = outputs['z_joint']
+                latent += [z.cpu()]
+            return torch.cat(latent).numpy()

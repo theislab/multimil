@@ -30,7 +30,8 @@ def organize_multiome_anndatas(
                 adatas[mod][i].obs_names = datasets_obs[i]
                 groups[mod][i] = datasets_groups[i]
             if layers:
-                if layer := layers[mod][i]:
+                if layers[mod][i]:
+                    layer = layers[mod][i]
                     adatas[mod][i].X = adatas[mod][i].layers[layer].A
             adatas[mod][i].obs['group'] = datasets_groups[i]
 
