@@ -148,7 +148,7 @@ class MultiVAE(BaseModelClass):
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
         batch_size: int = 128,
-        weight_decay: float = 0,
+        weight_decay: float = 1e-3,
         eps: float = 1e-08,
         early_stopping: bool = True,
         save_best: bool = True,

@@ -257,18 +257,30 @@ class MultiVAE_MIL(BaseModelClass):
 
             adata = self._validate_anndata(adata)
 
+            # TODO: fix when last can be different sizes for different bags then cat doesn't work
+            # so sth like if drop last is false then feed them separately
             scdl = self._make_data_loader(
                 adata=adata,
                 batch_size=batch_size,
                 data_loader_class=BagAnnDataLoader,
+                shuffle=False,
+                shuffle_classes=False,
                 class_column=self.class_column,
                 drop_last=False,
             )
 
-            latent = []
+            latent, cell_level_attn, cov_level_attn = [], [], []
             for tensors in scdl:
                 inference_inputs = self.module._get_inference_input(tensors)
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
+                cell_attn = self.module.cell_level_aggregator[1].A.squeeze()
+                cell_attn = cell_attn.flatten()
+                cov_attn = self.module.classifier[1].A.squeeze()
+                # TODO: repeat necessary number of times so it's batch_size x number_of_covariates
+                cov_attn = cov_attn.flatten()
+
                 latent += [z.cpu()]
-            return torch.cat(latent).numpy()
+                cell_level_attn += [cell_attn.cpu()]
+                cov_level_attn += [cov_attn.cpu()]
+            return torch.cat(latent).numpy(), torch.cat(cell_level_attn).numpy(), torch.cat(cov_level_attn).numpy()

@@ -49,6 +49,7 @@ class MultiVAETorch(BaseModuleClass):
         self.kernel_type = kernel_type
 
         # TODO fix
+        
         if len(losses) == 0:
             self.losses = ['mse']*self.n_modality
         elif len(losses) == self.n_modality:

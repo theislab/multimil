@@ -178,14 +178,33 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_label = cat_covs[:, -1]
         idx = get_split_idx(class_label.detach().cpu().numpy())
 
-        cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
-        cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
+        if cat_covs is not None:
+            cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
+        else:
+            cat_embedds = []
 
-        cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
+        # fix what happens if only size factors
+        cont_embedds = [] 
+        #if cont_covs is not None:
+        #    cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
+        #else:
+        #   cont_embedds = []
 
-        cov_embedds = torch.tensor_split(cov_embedds, idx)
-        cov_embedds = [embed[0] for embed in cov_embedds]
-        cov_embedds = torch.stack(cov_embedds, dim=0)
+        if len(cat_embedds) > 0 and len(cont_embedds) > 0:
+            cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
+
+            cov_embedds = torch.tensor_split(cov_embedds, idx)
+            cov_embedds = [embed[0] for embed in cov_embedds]
+            cov_embedds = torch.stack(cov_embedds, dim=0)
+
+        elif len(cat_embedds) > 0:
+            cov_embedds = cat_embedds
+
+            cov_embedds = torch.tensor_split(cov_embedds, idx)
+            cov_embedds = [embed[0] for embed in cov_embedds]
+            cov_embedds = torch.stack(cov_embedds, dim=0)
+
+        #todo
 
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0)

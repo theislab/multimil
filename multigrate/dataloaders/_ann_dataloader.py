@@ -231,7 +231,8 @@ class BagAnnDataLoader(DataLoader):
         self,
         adata: anndata.AnnData,
         class_column: str,
-        shuffle=False,
+        shuffle=True,
+        shuffle_classes=True,
         indices=None,
         batch_size=128,
         min_size_per_class=64,
@@ -263,12 +264,16 @@ class BagAnnDataLoader(DataLoader):
 
         self.dataset = AnnTorchDataset(adata, getitem_tensors=data_and_attributes)
 
+        min_size_per_class = batch_size // 2
+
         sampler_kwargs = {
             "batch_size": batch_size,
             "shuffle": shuffle,
             "drop_last": drop_last,
             "min_size_per_class": min_size_per_class,
         }
+        if shuffle_classes:
+            sampler_kwargs["shuffle_classes"] = shuffle_classes
         if indices is None:
             indices = np.arange(len(self.dataset))
             sampler_kwargs["indices"] = indices
