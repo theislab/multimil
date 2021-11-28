@@ -16,7 +16,8 @@ from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
-from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.train import TrainRunner
+from ..train import MILTrainingPlan
 from scvi.data._anndata import _setup_anndata
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class MultiVAE_MIL(BaseModelClass):
         losses=[],
         dropout=0.2,
         cond_dim=10,
-        kernel_type='not gaussian',
+        kernel_type='gaussian',
         loss_coefs=[],
         # mil specific
         bag_key=None,
@@ -206,7 +207,7 @@ class MultiVAE_MIL(BaseModelClass):
             batch_size=batch_size,
             use_gpu=use_gpu,
         )
-        training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
+        training_plan = MILTrainingPlan(self.module, **plan_kwargs)
         runner = TrainRunner(
             self,
             training_plan=training_plan,
@@ -257,11 +258,10 @@ class MultiVAE_MIL(BaseModelClass):
 
             adata = self._validate_anndata(adata)
 
-            # TODO: fix when last can be different sizes for different bags then cat doesn't work
-            # so sth like if drop last is false then feed them separately
             scdl = self._make_data_loader(
                 adata=adata,
                 batch_size=batch_size,
+                min_size_per_class=batch_size, # hack to ensure that not full batches are processed properly
                 data_loader_class=BagAnnDataLoader,
                 shuffle=False,
                 shuffle_classes=False,
@@ -277,8 +277,8 @@ class MultiVAE_MIL(BaseModelClass):
                 cell_attn = self.module.cell_level_aggregator[1].A.squeeze()
                 cell_attn = cell_attn.flatten()
                 cov_attn = self.module.classifier[1].A.squeeze()
-                # TODO: repeat necessary number of times so it's batch_size x number_of_covariates
                 cov_attn = cov_attn.flatten()
+                cov_attn = cov_attn.unsqueeze(0).repeat(z.shape[0], 1)
 
                 latent += [z.cpu()]
                 cell_level_attn += [cell_attn.cpu()]

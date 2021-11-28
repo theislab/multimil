@@ -85,7 +85,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         losses=[],
         dropout=0.2,
         cond_dim=10,
-        kernel_type='not gaussian',
+        kernel_type='gaussian',
         loss_coefs=[],
         num_groups=1,
         # mil specific
@@ -178,33 +178,22 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_label = cat_covs[:, -1]
         idx = get_split_idx(class_label.detach().cpu().numpy())
 
-        if cat_covs is not None:
+        if len(self.vae.cat_covariate_embeddings) > 0:
             cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
         else:
-            cat_embedds = []
+            cat_embedds = torch.Tensor() # so cat works later
 
-        # fix what happens if only size factors
-        cont_embedds = [] 
-        #if cont_covs is not None:
-        #    cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
-        #else:
-        #   cont_embedds = []
+        if len(self.vae.cont_covariate_embeddings) > 0:
+            cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
+        else:
+            cont_embedds = torch.Tensor() # so cat works later
 
-        if len(cat_embedds) > 0 and len(cont_embedds) > 0:
-            cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
+        cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
 
-            cov_embedds = torch.tensor_split(cov_embedds, idx)
-            cov_embedds = [embed[0] for embed in cov_embedds]
-            cov_embedds = torch.stack(cov_embedds, dim=0)
+        cov_embedds = torch.tensor_split(cov_embedds, idx)
+        cov_embedds = [embed[0] for embed in cov_embedds]
+        cov_embedds = torch.stack(cov_embedds, dim=0)
 
-        elif len(cat_embedds) > 0:
-            cov_embedds = cat_embedds
-
-            cov_embedds = torch.tensor_split(cov_embedds, idx)
-            cov_embedds = [embed[0] for embed in cov_embedds]
-            cov_embedds = torch.stack(cov_embedds, dim=0)
-
-        #todo
 
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0)
@@ -244,8 +233,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         recon_loss = self.vae.calc_recon_loss(xs, rs, self.vae.losses, group, size_factor, self.vae.loss_coefs, masks)
         kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        integ_loss = 0 if self.vae.loss_coefs['integ'] == 0 else self.vae.calc_integ_loss(z_joint, group)
-        cycle_loss = 0 if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, group, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
+        integ_loss = torch.tensor(0.0) if self.vae.loss_coefs['integ'] == 0 else self.vae.calc_integ_loss(z_joint, group)
+        cycle_loss = torch.tensor(0.0) if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, group, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
 
         # MIL classification loss
         idx = get_split_idx(class_label.detach().cpu().numpy())
@@ -254,6 +243,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_label = torch.cat(class_label, dim=0)
 
         classification_loss = F.cross_entropy(prediction, class_label) # assume same in the batch
+
+        accuracy = torch.sum(torch.eq(torch.argmax(prediction, dim=-1), class_label)) / class_label.shape[0]
 
         loss = torch.mean(self.vae.loss_coefs['recon'] * recon_loss
             + self.vae.loss_coefs['kl'] * kl_loss
@@ -266,8 +257,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             recon_loss = recon_loss
         )
 
-        # TODO record additional losses
-        return LossRecorder(loss, reconst_losses, self.vae.loss_coefs['kl'] * kl_loss, kl_global=torch.tensor(0.0), integ_loss=integ_loss, cycle_loss=cycle_loss)
+        return LossRecorder(loss, reconst_losses, self.vae.loss_coefs['kl'] * kl_loss, kl_global=torch.tensor(0.0), integ_loss=integ_loss, cycle_loss=cycle_loss, class_loss=classification_loss, accuracy=accuracy)
 
     #TODO ??
     @torch.no_grad()

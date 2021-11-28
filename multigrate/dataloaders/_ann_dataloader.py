@@ -235,7 +235,7 @@ class BagAnnDataLoader(DataLoader):
         shuffle_classes=True,
         indices=None,
         batch_size=128,
-        min_size_per_class=64,
+        min_size_per_class=None,
         data_and_attributes: Optional[dict] = None,
         drop_last: Union[bool, int] = True,
         sampler: Optional[torch.utils.data.sampler.Sampler] = StratifiedSampler,
@@ -264,7 +264,8 @@ class BagAnnDataLoader(DataLoader):
 
         self.dataset = AnnTorchDataset(adata, getitem_tensors=data_and_attributes)
 
-        min_size_per_class = batch_size // 2
+        if not min_size_per_class:
+            min_size_per_class = batch_size // 2
 
         sampler_kwargs = {
             "batch_size": batch_size,
