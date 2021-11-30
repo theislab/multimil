@@ -15,14 +15,14 @@ class BagSampler(torch.utils.data.sampler.Sampler):
     def __init__(
         self,
         indices: np.ndarray,
-        class_labels: np.ndarray,
+        patient_labels: np.ndarray,
         batch_size: int,
         shuffle: bool = True,
         drop_last: Union[bool, int] = False,
         shuffle_classes: bool = True
     ):
         self.indices = indices
-        self.class_labels = class_labels
+        self.patient_labels = patient_labels
         self.n_obs = len(indices)
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -38,11 +38,11 @@ class BagSampler(torch.utils.data.sampler.Sampler):
 
         from math import ceil
 
-        classes = set(self.class_labels)
+        classes = set(self.patient_labels)
 
         self.length = 0
         for cl in classes:
-            idx = np.where(self.class_labels == cl)[0]
+            idx = np.where(self.patient_labels == cl)[0]
             cl_idx = self.indices[idx]
             n_obs = len(cl_idx)
 
@@ -61,11 +61,11 @@ class BagSampler(torch.utils.data.sampler.Sampler):
 
     def __iter__(self):
 
-        classes = set(self.class_labels)
+        classes = set(self.patient_labels)
         data_iter = []
 
         for cl in classes:
-            idx = np.where(self.class_labels == cl)[0]
+            idx = np.where(self.patient_labels == cl)[0]
             cl_idx = self.indices[idx]
             n_obs = len(cl_idx)
 
@@ -104,7 +104,7 @@ class StratifiedSampler(BagSampler):
     def __init__(
         self,
         indices: np.ndarray,
-        class_labels: np.ndarray,
+        patient_labels: np.ndarray,
         batch_size: int,
         min_size_per_class: int,
         shuffle: bool = True,
@@ -113,7 +113,7 @@ class StratifiedSampler(BagSampler):
     ):
         super().__init__(
             indices=indices,
-            class_labels=class_labels,
+            patient_labels=patient_labels,
             batch_size=batch_size,
             shuffle=shuffle,
             drop_last=drop_last,
@@ -129,11 +129,11 @@ class StratifiedSampler(BagSampler):
 
         from math import ceil
 
-        classes = set(self.class_labels)
+        classes = set(self.patient_labels)
 
         tmp = 0
         for cl in classes:
-            idx = np.where(self.class_labels == cl)[0]
+            idx = np.where(self.patient_labels == cl)[0]
             cl_idx = self.indices[idx]
             n_obs = len(cl_idx)
 
@@ -158,11 +158,11 @@ class StratifiedSampler(BagSampler):
 
         classes_per_batch = int(self.batch_size / self.min_size_per_class)
 
-        classes = set(self.class_labels)
+        classes = set(self.patient_labels)
         data_iter = []
 
         for cl in classes:
-            idx = np.where(self.class_labels == cl)[0]
+            idx = np.where(self.patient_labels == cl)[0]
             cl_idx = self.indices[idx]
             n_obs = len(cl_idx)
 
@@ -230,7 +230,7 @@ class BagAnnDataLoader(DataLoader):
     def __init__(
         self,
         adata: anndata.AnnData,
-        class_column: str,
+        patient_column: str,
         shuffle=True,
         shuffle_classes=True,
         indices=None,
@@ -255,10 +255,10 @@ class BagAnnDataLoader(DataLoader):
                         )
                     )
 
-        if class_column not in adata.uns['_scvi']['extra_categoricals']['keys']:
+        if patient_column not in adata.uns['_scvi']['extra_categoricals']['keys']:
             raise ValueError(
                 "{} required for model but not included into categorical covariates when setup_anndata was run".format(
-                    class_column
+                    patient_column
                 )
             )
 
@@ -272,9 +272,9 @@ class BagAnnDataLoader(DataLoader):
             "shuffle": shuffle,
             "drop_last": drop_last,
             "min_size_per_class": min_size_per_class,
+            "shuffle_classes": shuffle_classes
         }
-        if shuffle_classes:
-            sampler_kwargs["shuffle_classes"] = shuffle_classes
+
         if indices is None:
             indices = np.arange(len(self.dataset))
             sampler_kwargs["indices"] = indices
@@ -284,7 +284,7 @@ class BagAnnDataLoader(DataLoader):
             indices = np.asarray(indices)
             sampler_kwargs["indices"] = indices
 
-        sampler_kwargs["class_labels"] = np.array(adata[indices].obsm['_scvi_extra_categoricals'][class_column])
+        sampler_kwargs["patient_labels"] = np.array(adata[indices].obsm['_scvi_extra_categoricals'][patient_column])
 
         self.indices = indices
         self.sampler_kwargs = sampler_kwargs

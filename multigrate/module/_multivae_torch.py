@@ -268,8 +268,8 @@ class MultiVAETorch(BaseModuleClass):
 
         recon_loss = self.calc_recon_loss(xs, rs, self.losses, group, size_factor, self.loss_coefs, masks)
         kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        integ_loss = torch.tensor(0.0) if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, group)
-        cycle_loss = torch.tensor(0.0) if self.loss_coefs['cycle'] == 0 else self.calc_cycle_loss(xs, z_joint, group, masks, self.losses, size_factor, self.loss_coefs)
+        integ_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, group)
+        cycle_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['cycle'] == 0 else self.calc_cycle_loss(xs, z_joint, group, masks, self.losses, size_factor, self.loss_coefs)
 
         loss = torch.mean(self.loss_coefs['recon'] * recon_loss  + self.loss_coefs['kl'] * kl_loss + self.loss_coefs['integ'] * integ_loss + self.loss_coefs['cycle'] * cycle_loss)
         reconst_losses = dict(
@@ -325,7 +325,7 @@ class MultiVAETorch(BaseModuleClass):
         return torch.sum(torch.stack(loss, dim=-1)*torch.stack(masks, dim=-1), dim=1)
 
     def calc_integ_loss(self, z, group):
-        loss = torch.tensor(0.0)
+        loss = torch.tensor(0.0).to(self.device)
         zs = []
 
         for g in set(list(group.squeeze().cpu().numpy())):

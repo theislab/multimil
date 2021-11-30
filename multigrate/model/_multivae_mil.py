@@ -44,12 +44,13 @@ class MultiVAE_MIL(BaseModelClass):
         class_layers=1,
         class_layer_size=128,
         class_label='condition',
+        patient_label='patient',
         class_loss_coef=1.0
     ):
         super().__init__(adata)
 
         self.bag_key = bag_key
-        self.class_column = class_label
+        self.patient_column = patient_label
         self.scoring = scoring
         self.adata = adata
         num_groups = len(set(self.adata.obs.group))
@@ -201,7 +202,7 @@ class MultiVAE_MIL(BaseModelClass):
 
         data_splitter = BagDataSplitter(
             self.adata,
-            class_column=self.class_column,
+            patient_column=self.patient_column,
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
@@ -265,7 +266,7 @@ class MultiVAE_MIL(BaseModelClass):
                 data_loader_class=BagAnnDataLoader,
                 shuffle=False,
                 shuffle_classes=False,
-                class_column=self.class_column,
+                patient_column=self.patient_column,
                 drop_last=False,
             )
 

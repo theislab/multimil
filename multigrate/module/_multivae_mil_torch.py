@@ -173,7 +173,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs['z_joint']
 
-
         # MIL part
         class_label = cat_covs[:, -1]
         idx = get_split_idx(class_label.detach().cpu().numpy())
@@ -181,12 +180,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         if len(self.vae.cat_covariate_embeddings) > 0:
             cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
         else:
-            cat_embedds = torch.Tensor() # so cat works later
+            cat_embedds = torch.Tensor().to(self.device) # so cat works later
 
         if len(self.vae.cont_covariate_embeddings) > 0:
             cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
         else:
-            cont_embedds = torch.Tensor() # so cat works later
+            cont_embedds = torch.Tensor().to(self.device) # so cat works later
 
         cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
 

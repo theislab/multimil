@@ -17,13 +17,13 @@ class BagDataSplitter(DataSplitter):
     def __init__(
         self,
         adata: AnnData,
-        class_column: str,
+        patient_column: str,
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
         use_gpu: bool = False,
         **kwargs,
     ):
-        self.class_column = class_column
+        self.patient_column = patient_column
         super().__init__(adata,
                         train_size,
                         validation_size,
@@ -33,7 +33,7 @@ class BagDataSplitter(DataSplitter):
     def train_dataloader(self):
         return BagAnnDataLoader(
             self.adata,
-            self.class_column,
+            self.patient_column,
             indices=self.train_idx,
             shuffle=True,
             drop_last=True,
@@ -45,7 +45,7 @@ class BagDataSplitter(DataSplitter):
         if len(self.val_idx) > 0:
             return BagAnnDataLoader(
                 self.adata,
-                self.class_column,
+                self.patient_column,
                 indices=self.val_idx,
                 shuffle=True,
                 drop_last=True,
@@ -59,7 +59,7 @@ class BagDataSplitter(DataSplitter):
         if len(self.test_idx) > 0:
             return BagAnnDataLoader(
                 self.adata,
-                self.class_column,
+                self.patient_column,
                 indices=self.test_idx,
                 shuffle=True,
                 drop_last=True,
