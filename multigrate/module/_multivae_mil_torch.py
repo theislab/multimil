@@ -88,6 +88,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         kernel_type='gaussian',
         loss_coefs=[],
         num_groups=1,
+        integrate_on_idx=None,
         # mil specific
         num_classes=None,
         scoring='attn',
@@ -113,10 +114,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
             kernel_type=kernel_type,
             loss_coefs=loss_coefs,
             num_groups=num_groups,
+            integrate_on_idx=integrate_on_idx,
             cat_covariate_dims=cat_covariate_dims,
             cont_covariate_dims=cont_covariate_dims,
         )
 
+        self.integrate_on_idx = integrate_on_idx
         self.class_loss_coef = class_loss_coef
 
         self.cond_dim = cond_dim
@@ -170,7 +173,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs, masks=None):
         # vae part
-        inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
+        inference_outputs = self.vae.inference(x, cat_covs, cont_covs) # cat_covs is 1 longer than needed because of class label but it's taken care of in zip
         z_joint = inference_outputs['z_joint']
 
         # MIL part
@@ -192,7 +195,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cov_embedds = torch.tensor_split(cov_embedds, idx)
         cov_embedds = [embed[0] for embed in cov_embedds]
         cov_embedds = torch.stack(cov_embedds, dim=0)
-
 
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0)
@@ -217,7 +219,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
         kl_weight: float = 1.0
     ):
         x = tensors[_CONSTANTS.X_KEY]
-        group = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -2] # always second to last
+        if self.integrate_on_idx:
+            integrate_on = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, self.integrate_on_idx]
+        else:
+            integrate_on = torch.zeros(x.shape[0], 1).to(self.device)
+
         size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)[:, -1] # always last
         class_label = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1] # always last
 
@@ -230,10 +236,10 @@ class MultiVAETorch_MIL(BaseModuleClass):
         xs = torch.split(x, self.vae.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
         masks = [x.sum(dim=1) > 0 for x in xs]
 
-        recon_loss = self.vae.calc_recon_loss(xs, rs, self.vae.losses, group, size_factor, self.vae.loss_coefs, masks)
+        recon_loss = self.vae.calc_recon_loss(xs, rs, self.vae.losses, integrate_on, size_factor, self.vae.loss_coefs, masks)
         kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        integ_loss = torch.tensor(0.0) if self.vae.loss_coefs['integ'] == 0 else self.vae.calc_integ_loss(z_joint, group)
-        cycle_loss = torch.tensor(0.0) if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, group, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
+        integ_loss = torch.tensor(0.0) if self.vae.loss_coefs['integ'] == 0 else self.vae.calc_integ_loss(z_joint, integrate_on)
+        cycle_loss = torch.tensor(0.0) if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, integrate_on, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
 
         # MIL classification loss
         idx = get_split_idx(class_label.detach().cpu().numpy())

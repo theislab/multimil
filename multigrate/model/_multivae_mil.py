@@ -29,6 +29,7 @@ class MultiVAE_MIL(BaseModelClass):
         modality_lengths,
         class_label,
         patient_label,
+        integrate_on=None,
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
@@ -53,16 +54,25 @@ class MultiVAE_MIL(BaseModelClass):
         self.patient_column = patient_label
         self.scoring = scoring
         self.adata = adata
-        num_groups = len(set(self.adata.obs.group))
 
+        # TODO add check that class is the same within a patient
+
+        cont_covariate_dims = []
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
             cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
-        else:
-            cont_covariate_dims = []
+
+        num_groups = 1
+        integrate_on_idx = None
+        if integrate_on:
+            try:
+                num_groups = len(adata.uns['_scvi']['extra_categoricals']['mappings'][integrate_on])
+                integrate_on_idx = adata.uns['_scvi']['extra_categoricals']['keys'].index(integrate_on)
+            except:
+                raise ValueError(f'Cannot integrate on {integrate_on}, has to be one of extra categoricals = {adata.uns["_scvi"]["extra_categoricals"]["keys"]}')
 
         if adata.uns['_scvi'].get('extra_categoricals') is not None:
+            cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
             try:
-                cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
                 num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_label])
             except:
                 raise ValueError(f'{class_label} has to be registered as a categorical covariate beforehand with setup_anndata.')
@@ -82,6 +92,7 @@ class MultiVAE_MIL(BaseModelClass):
                         kernel_type=kernel_type,
                         loss_coefs=loss_coefs,
                         num_groups=num_groups,
+                        integrate_on_idx=integrate_on_idx,
                         # mil specific
                         num_classes=num_classes,
                         scoring=scoring,
@@ -199,7 +210,6 @@ class MultiVAE_MIL(BaseModelClass):
             kwargs["callbacks"].append(
                 SaveBestState(monitor="reconstruction_loss_validation")
             )
-
         data_splitter = BagDataSplitter(
             self.adata,
             patient_column=self.patient_column,
@@ -236,10 +246,9 @@ class MultiVAE_MIL(BaseModelClass):
                 continuous_covariate_keys = ['size_factors']
 
         if categorical_covariate_keys:
-            categorical_covariate_keys.append('group') # from .data._preprocessing.organize_multiome_anndatas
             categorical_covariate_keys.append(class_label) # order important! class label key always last
         else:
-            categorical_covariate_keys = ['group', class_label]
+            categorical_covariate_keys = [class_label]
 
         return _setup_anndata(
             adata,

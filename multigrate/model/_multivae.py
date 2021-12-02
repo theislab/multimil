@@ -34,6 +34,7 @@ class MultiVAE(BaseModelClass):
         self,
         adata,
         modality_lengths,
+        integrate_on=None,
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
@@ -53,8 +54,16 @@ class MultiVAE(BaseModelClass):
             raise ValueError(f'Normalization has to be one of ["layer", "batch", None]')
         # TODO: do some assertions for other parameters
 
+        num_groups = 1
+        integrate_on_idx = None
+        if integrate_on:
+            if integrate_on not in adata.uns['_scvi']['extra_categoricals']['keys']:
+                raise ValueError(f'Cannot integrate on {integrate_on}, has to be one of extra categoricals = {adata.uns["_scvi"]["extra_categoricals"]["keys"]}')
+            else:
+                num_groups = len(adata.uns['_scvi']['extra_categoricals']['mappings'][integrate_on])
+                integrate_on_idx = adata.uns['_scvi']['extra_categoricals']['keys'].index(integrate_on)
+
         self.adata = adata
-        num_groups = len(set(self.adata.obs.group))
 
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
             cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
@@ -79,6 +88,7 @@ class MultiVAE(BaseModelClass):
             kernel_type=kernel_type,
             loss_coefs=loss_coefs,
             num_groups=num_groups,
+            integrate_on_idx=integrate_on_idx,
             cat_covariate_dims=cat_covariate_dims,
             cont_covariate_dims=cont_covariate_dims,
         )
@@ -259,11 +269,6 @@ class MultiVAE(BaseModelClass):
                 continuous_covariate_keys.append('size_factors')
             else:
                 continuous_covariate_keys = ['size_factors']
-
-        if categorical_covariate_keys:
-            categorical_covariate_keys.append('group') # from .data._preprocessing.organize_multiome_anndatas
-        else:
-            categorical_covariate_keys = ['group']
 
         return _setup_anndata(
             adata,

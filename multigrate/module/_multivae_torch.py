@@ -35,7 +35,8 @@ class MultiVAETorch(BaseModuleClass):
         cond_dim=10,
         kernel_type='not gaussian',
         loss_coefs=[],
-        num_groups=1,
+        num_groups=1, # to integrate on
+        integrate_on_idx=None,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
     ):
@@ -47,6 +48,7 @@ class MultiVAETorch(BaseModuleClass):
         self.input_dims = modality_lengths
         self.n_modality = len(self.input_dims)
         self.kernel_type = kernel_type
+        self.integrate_on_idx = integrate_on_idx
 
         # TODO: clean
         if len(losses) == 0:
@@ -254,7 +256,10 @@ class MultiVAETorch(BaseModuleClass):
     ):
 
         x = tensors[_CONSTANTS.X_KEY]
-        group = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1] # always last
+        if self.integrate_on_idx:
+            integrate_on = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, self.integrate_on_idx]
+        else:
+            integrate_on = torch.zeros(x.shape[0], 1).to(self.device)
         size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)
         if size_factor is not None:
             size_factor = size_factor[:, -1] # always last
@@ -266,10 +271,10 @@ class MultiVAETorch(BaseModuleClass):
         xs = torch.split(x, self.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
         masks = [x.sum(dim=1) > 0 for x in xs]
 
-        recon_loss = self.calc_recon_loss(xs, rs, self.losses, group, size_factor, self.loss_coefs, masks)
+        recon_loss = self.calc_recon_loss(xs, rs, self.losses, integrate_on, size_factor, self.loss_coefs, masks)
         kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        integ_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, group)
-        cycle_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['cycle'] == 0 else self.calc_cycle_loss(xs, z_joint, group, masks, self.losses, size_factor, self.loss_coefs)
+        integ_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, integrate_on)
+        cycle_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['cycle'] == 0 else self.calc_cycle_loss(xs, z_joint, integrate_on, masks, self.losses, size_factor, self.loss_coefs)
 
         loss = torch.mean(self.loss_coefs['recon'] * recon_loss  + self.loss_coefs['kl'] * kl_loss + self.loss_coefs['integ'] * integ_loss + self.loss_coefs['cycle'] * cycle_loss)
         reconst_losses = dict(
@@ -291,7 +296,6 @@ class MultiVAETorch(BaseModuleClass):
 
     def calc_recon_loss(self, xs, rs, losses, group, size_factor, loss_coefs, masks):
         loss = []
-        condition = self.condition_encoders or self.condition_decoders
         for i, (x, r, loss_type) in enumerate(zip(xs, rs, losses)):
             if len(r) != 2 and len(r.shape) == 3:
                 r = r.squeeze()
@@ -302,7 +306,7 @@ class MultiVAETorch(BaseModuleClass):
                 dec_mean = r
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
                 dec_mean = dec_mean * size_factor_view
-                dispersion = self.theta.T[group.squeeze().long()] if condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
+                dispersion = self.theta.T[group.squeeze().long()]
                 dispersion = torch.exp(dispersion)
                 nb_loss = torch.sum(NegativeBinomial(mu=dec_mean, theta=dispersion).log_prob(x), dim=-1)
                 nb_loss = loss_coefs['nb']*nb_loss
@@ -313,7 +317,7 @@ class MultiVAETorch(BaseModuleClass):
                 dec_dropout = dec_dropout.squeeze()
                 size_factor_view = size_factor.unsqueeze(1).expand(dec_mean.size(0), dec_mean.size(1))
                 dec_mean = dec_mean * size_factor_view
-                dispersion = self.theta.T[group.squeeze().long()] if condition else self.theta.T[0].unsqueeze(0).repeat(group.shape[0], 1)
+                dispersion = self.theta.T[group.squeeze().long()]
                 dispersion = torch.exp(dispersion)
                 zinb_loss = torch.sum(ZeroInflatedNegativeBinomial(mu=dec_mean, theta=dispersion, zi_logits=dec_dropout).log_prob(x), dim=-1)
                 zinb_loss = loss_coefs['zinb']*zinb_loss
@@ -356,6 +360,6 @@ class MultiVAETorch(BaseModuleClass):
         generative_outputs = self.generative(z_joint, cat_covs, cont_covs)
         rs = generative_outputs['rs']
 
-        group = cat_covs[:, -1]
+        group = cat_covs[:, self.integrate_on_idx]
 
         return self.calc_recon_loss(xs, rs, losses, group, size_factor, loss_coefs, masks)
