@@ -89,7 +89,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         loss_coefs=[],
         num_groups=1,
         integrate_on_idx=None,
-        # mil specific
+        patient_idx=None,
         num_classes=None,
         scoring='attn',
         attn_dim=32,
@@ -97,7 +97,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cont_covariate_dims=[],
         class_layers=1,
         class_layer_size=128,
-        class_loss_coef=1.0
+        class_loss_coef=1.0,
+        add_patient_to_classifier=False
     ):
         super().__init__()
 
@@ -121,6 +122,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         self.integrate_on_idx = integrate_on_idx
         self.class_loss_coef = class_loss_coef
+        self.add_patient_to_classifier = add_patient_to_classifier
+        self.patient_idx = patient_idx
 
         self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
@@ -180,8 +183,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_label = cat_covs[:, -1]
         idx = get_split_idx(class_label.detach().cpu().numpy())
 
+        add_covariate = lambda i: self.add_patient_to_classifier or (not self.add_patient_to_classifier and i != self.patient_idx)
         if len(self.vae.cat_covariate_embeddings) > 0:
-            cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding in zip(cat_covs.T, self.vae.cat_covariate_embeddings)], dim=-1)
+            cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for i, (covariate, cat_covariate_embedding) in enumerate(zip(cat_covs.T, self.vae.cat_covariate_embeddings)) if add_covariate(i)], dim=-1)
         else:
             cat_embedds = torch.Tensor().to(self.device) # so cat works later
 

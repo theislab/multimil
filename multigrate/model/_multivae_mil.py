@@ -33,7 +33,7 @@ class MultiVAE_MIL(BaseModelClass):
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
-        add_patient_id_to_classifier=False,
+        add_patient_to_classifier=False,
         z_dim=15,
         h_dim=32,
         losses=[],
@@ -45,13 +45,13 @@ class MultiVAE_MIL(BaseModelClass):
         attn_dim=32,
         class_layers=1,
         class_layer_size=128,
-
         class_loss_coef=1.0,
 
     ):
         super().__init__(adata)
 
         self.patient_column = patient_label
+        patient_idx = adata.uns['_scvi']['extra_categoricals']['keys'].index(patient_label)
         self.scoring = scoring
         self.adata = adata
 
@@ -101,7 +101,9 @@ class MultiVAE_MIL(BaseModelClass):
                         cont_covariate_dims=cont_covariate_dims,
                         class_layers=class_layers,
                         class_layer_size=class_layer_size,
-                        class_loss_coef=class_loss_coef
+                        class_loss_coef=class_loss_coef,
+                        add_patient_to_classifier=add_patient_to_classifier,
+                        patient_idx=patient_idx,
                     )
 
 
