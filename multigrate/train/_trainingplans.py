@@ -39,8 +39,8 @@ class MILTrainingPlan(AdversarialTrainingPlan):
         self.log("kl_global_validation", kl_global)
         self.log("integ_validation", integ / n_obs)
         self.log("cycle_validation", cycle / n_obs)
-        self.log("classification_train", cl / n_obs)
-        self.log("accuracy", acc / len(outputs))
+        self.log("classification_validation", cl / n_obs)
+        self.log("accuracy_validation", acc / len(outputs))
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         kappa = (
@@ -115,4 +115,4 @@ class MILTrainingPlan(AdversarialTrainingPlan):
         self.log("integ_train", integ / n_obs)
         self.log("cycle_train", cycle / n_obs)
         self.log("classification_train", cl / n_obs)
-        self.log("accuracy", acc / len(outputs))
+        self.log("accuracy_train", acc / len(outputs))

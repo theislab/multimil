@@ -27,9 +27,12 @@ class MultiVAE_MIL(BaseModelClass):
         self,
         adata,
         modality_lengths,
+        class_label,
+        patient_label,
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
+        add_patient_id_to_classifier=False,
         z_dim=15,
         h_dim=32,
         losses=[],
@@ -37,19 +40,16 @@ class MultiVAE_MIL(BaseModelClass):
         cond_dim=10,
         kernel_type='gaussian',
         loss_coefs=[],
-        # mil specific
-        bag_key=None,
         scoring='attn',
         attn_dim=32,
         class_layers=1,
         class_layer_size=128,
-        class_label='condition',
-        patient_label='patient',
-        class_loss_coef=1.0
+
+        class_loss_coef=1.0,
+
     ):
         super().__init__(adata)
 
-        self.bag_key = bag_key
         self.patient_column = patient_label
         self.scoring = scoring
         self.adata = adata
