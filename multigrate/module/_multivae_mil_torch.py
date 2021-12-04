@@ -98,7 +98,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_layers=1,
         class_layer_size=128,
         class_loss_coef=1.0,
-        add_patient_to_classifier=False
+        add_patient_to_classifier=False,
+        hierarchical_attn=True,
     ):
         super().__init__()
 
@@ -124,6 +125,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.class_loss_coef = class_loss_coef
         self.add_patient_to_classifier = add_patient_to_classifier
         self.patient_idx = patient_idx
+        self.hierarchical_attn = hierarchical_attn
 
         self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
@@ -136,17 +138,18 @@ class MultiVAETorch_MIL(BaseModuleClass):
                             ),
                             Aggregator(cond_dim, scoring, attn_dim=attn_dim)
                         )
-        self.classifier = nn.Sequential(
-                            CondMLP(
-                                cond_dim,
-                                cond_dim,
-                                embed_dim=0,
-                                n_layers=class_layers,
-                                n_hidden=class_layer_size
-                            ),
-                            Aggregator(cond_dim, scoring, attn_dim=attn_dim),
-                            nn.Linear(cond_dim, num_classes)
-                        )
+        if hierarchical_attn:
+            self.cov_level_aggreagation = nn.Sequential(
+                                CondMLP(
+                                    cond_dim,
+                                    cond_dim,
+                                    embed_dim=0,
+                                    n_layers=class_layers,
+                                    n_hidden=class_layer_size
+                                ),
+                                Aggregator(cond_dim, scoring, attn_dim=attn_dim)
+                            )
+        self.classifier = nn.Linear(cond_dim, num_classes)
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]
@@ -202,12 +205,16 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0)
-        zs = self.cell_level_aggregator(zs)
+        zs = self.cell_level_aggregator(zs) # num of bags in batch x cond_dim
 
-        aggr_bag_level = torch.cat([zs, cov_embedds], dim=-1)
-        aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
-        aggr_bag_level = torch.stack(aggr_bag_level, dim=1) # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
-        prediction = self.classifier(aggr_bag_level) # num of bags in batch x num of classes
+        if self.hierarchical_attn:
+            aggr_bag_level = torch.cat([zs, cov_embedds], dim=-1)
+            aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
+            aggr_bag_level = torch.stack(aggr_bag_level, dim=1) # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
+            aggr_bag_level = self.cov_level_aggreagation(aggr_bag_level)
+            prediction = self.classifier(aggr_bag_level) # num of bags in batch x num of classes
+        else:
+            prediction = self.classifier(zs)
 
         inference_outputs.update({'prediction': prediction})
         return inference_outputs # z_joint, mu, logvar, prediction

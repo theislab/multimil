@@ -34,6 +34,7 @@ class MultiVAE_MIL(BaseModelClass):
         condition_decoders=True,
         normalization='layer',
         add_patient_to_classifier=False,
+        hierarchical_attn=True,
         z_dim=15,
         h_dim=32,
         losses=[],
@@ -104,6 +105,7 @@ class MultiVAE_MIL(BaseModelClass):
                         class_loss_coef=class_loss_coef,
                         add_patient_to_classifier=add_patient_to_classifier,
                         patient_idx=patient_idx,
+                        hierarchical_attn=hierarchical_attn,
                     )
 
 
