@@ -55,6 +55,7 @@ class MultiVAE_MIL(BaseModelClass):
         patient_idx = adata.uns['_scvi']['extra_categoricals']['keys'].index(patient_label)
         self.scoring = scoring
         self.adata = adata
+        self.hierarchical_attn = hierarchical_attn
 
         # TODO add check that class is the same within a patient
 
@@ -282,7 +283,6 @@ class MultiVAE_MIL(BaseModelClass):
                 patient_column=self.patient_column,
                 drop_last=False,
             )
-
             latent, cell_level_attn, cov_level_attn = [], [], []
             for tensors in scdl:
                 inference_inputs = self.module._get_inference_input(tensors)
@@ -290,11 +290,15 @@ class MultiVAE_MIL(BaseModelClass):
                 z = outputs['z_joint']
                 cell_attn = self.module.cell_level_aggregator[1].A.squeeze()
                 cell_attn = cell_attn.flatten()
-                cov_attn = self.module.classifier[1].A.squeeze()
-                cov_attn = cov_attn.flatten()
-                cov_attn = cov_attn.unsqueeze(0).repeat(z.shape[0], 1)
+                if self.hierarchical_attn:
+                    cov_attn = self.module.cov_level_aggregator[1].A.squeeze()
+                    cov_attn = cov_attn.flatten()
+                    cov_attn = cov_attn.unsqueeze(0).repeat(z.shape[0], 1)
+                    cov_level_attn += [cov_attn.cpu()]
 
                 latent += [z.cpu()]
                 cell_level_attn += [cell_attn.cpu()]
-                cov_level_attn += [cov_attn.cpu()]
+                
+            if len(cov_level_attn) == 0:
+                cov_level_attn = [torch.Tensor()]
             return torch.cat(latent).numpy(), torch.cat(cell_level_attn).numpy(), torch.cat(cov_level_attn).numpy()

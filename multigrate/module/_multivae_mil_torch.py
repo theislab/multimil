@@ -139,7 +139,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                             Aggregator(cond_dim, scoring, attn_dim=attn_dim)
                         )
         if hierarchical_attn:
-            self.cov_level_aggreagation = nn.Sequential(
+            self.cov_level_aggregator = nn.Sequential(
                                 CondMLP(
                                     cond_dim,
                                     cond_dim,
@@ -211,7 +211,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             aggr_bag_level = torch.cat([zs, cov_embedds], dim=-1)
             aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
             aggr_bag_level = torch.stack(aggr_bag_level, dim=1) # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
-            aggr_bag_level = self.cov_level_aggreagation(aggr_bag_level)
+            aggr_bag_level = self.cov_level_aggregator(aggr_bag_level)
             prediction = self.classifier(aggr_bag_level) # num of bags in batch x num of classes
         else:
             prediction = self.classifier(zs)
