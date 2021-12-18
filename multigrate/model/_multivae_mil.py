@@ -15,6 +15,7 @@ from ..dataloaders import BagDataSplitter, BagAnnDataLoader
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
+from scvi.module.base import auto_move_data
 from scvi.train._callbacks import SaveBestState
 from scvi.train import TrainRunner
 from ..train import MILTrainingPlan
@@ -29,6 +30,7 @@ class MultiVAE_MIL(BaseModelClass):
         modality_lengths,
         class_label,
         patient_label,
+        patient_batch_size=128,
         integrate_on=None,
         condition_encoders=False,
         condition_decoders=True,
@@ -43,7 +45,7 @@ class MultiVAE_MIL(BaseModelClass):
         kernel_type='gaussian',
         loss_coefs=[],
         scoring='attn',
-        attn_dim=32,
+        attn_dim=15,
         class_layers=1,
         class_layer_size=128,
         class_loss_coef=1.0,
@@ -107,7 +109,10 @@ class MultiVAE_MIL(BaseModelClass):
                         add_patient_to_classifier=add_patient_to_classifier,
                         patient_idx=patient_idx,
                         hierarchical_attn=hierarchical_attn,
+                        patient_batch_size=patient_batch_size,
                     )
+                    
+        self.init_params_ = self._get_init_params(locals())
 
 
     def use_model(
@@ -136,7 +141,7 @@ class MultiVAE_MIL(BaseModelClass):
         use_gpu: Optional[Union[str, int, bool]] = None,
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
-        batch_size: int = 128,
+        batch_size: int = 256,
         weight_decay: float = 1e-3,
         eps: float = 1e-08,
         early_stopping: bool = True,
@@ -261,10 +266,11 @@ class MultiVAE_MIL(BaseModelClass):
             categorical_covariate_keys=categorical_covariate_keys,
         )
 
+    @auto_move_data
     def get_latent_representation(
         self,
         adata=None,
-        batch_size=64
+        batch_size=256,
     ):
         with torch.no_grad():
             self.module.eval()
@@ -283,22 +289,34 @@ class MultiVAE_MIL(BaseModelClass):
                 patient_column=self.patient_column,
                 drop_last=False,
             )
-            latent, cell_level_attn, cov_level_attn = [], [], []
+            latent, cell_level_attn, cov_level_attn, predictions = [], [], [], []
             for tensors in scdl:
                 inference_inputs = self.module._get_inference_input(tensors)
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
-                cell_attn = self.module.cell_level_aggregator[1].A.squeeze()
-                cell_attn = cell_attn.flatten()
+                pred = outputs['prediction']
+                cell_attn = self.module.cell_level_aggregator[1].A.squeeze(dim=1)
+                size = cell_attn.shape[-1]
+                cell_attn = cell_attn.flatten() # in inference always one patient per batch
+
                 if self.hierarchical_attn:
-                    cov_attn = self.module.cov_level_aggregator[1].A.squeeze()
-                    cov_attn = cov_attn.flatten()
-                    cov_attn = cov_attn.unsqueeze(0).repeat(z.shape[0], 1)
+                    cov_attn = self.module.cov_level_aggregator[1].A.squeeze(dim=1)
+                    cov_attn = cov_attn.unsqueeze(0).repeat(size, 1, 1)
+                    cov_attn = cov_attn.flatten(start_dim=0, end_dim=1)
                     cov_level_attn += [cov_attn.cpu()]
 
+                pred = torch.argmax(pred, dim=-1).unsqueeze(0).repeat(size, 1)
+                pred = pred.flatten()
+                predictions += [pred.cpu()]
                 latent += [z.cpu()]
                 cell_level_attn += [cell_attn.cpu()]
                 
             if len(cov_level_attn) == 0:
                 cov_level_attn = [torch.Tensor()]
-            return torch.cat(latent).numpy(), torch.cat(cell_level_attn).numpy(), torch.cat(cov_level_attn).numpy()
+
+            latent = torch.cat(latent).numpy()
+            cell_level = torch.cat(cell_level_attn).numpy()
+            cov_level = torch.cat(cov_level_attn).numpy()
+            prediction = torch.cat(predictions).numpy()
+            
+            return latent, cell_level, cov_level, prediction

@@ -302,17 +302,8 @@ class MultiVAE(BaseModelClass):
 
         model = _initialize_model(cls, adata, attr_dict)
 
-        n_new_batches = len(set(model.adata.obs.group))
-        if reference_model.module.theta is not None:
-            rna_length, n_batches = reference_model.module.theta.shape
-            old_theta = reference_model.module.theta.data
-            model.module.theta = torch.nn.Parameter(torch.randn(rna_length, n_batches+n_new_batches))
-            model.module.theta.data[:, :n_batches] = old_theta
-
         for attr, val in attr_dict.items():
             setattr(model, attr, val)
-
-        model.to_device(device)
 
         # model tweaking
         num_of_cat_to_add = [new_cat - old_cat for old_cat, new_cat in zip(reference_model.adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'], adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
@@ -334,6 +325,8 @@ class MultiVAE(BaseModelClass):
                 load_state_dict[key] = fixed_ten
 
         model.module.load_state_dict(load_state_dict)
+
+        model.to_device(device)
 
         # freeze everything but the condition_layer in condMLPs
         if freeze:

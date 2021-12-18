@@ -21,11 +21,15 @@ class Aggregator(nn.Module):
     def __init__(self,
                 z_dim=None,
                 scoring='sum',
-                attn_dim=32 # D
+                attn_dim=15, # D
+                patient_batch_size=None,
+                scale=False,
                 ):
         super().__init__()
 
         self.scoring = scoring
+        self.patient_batch_size = patient_batch_size
+        self.scale = scale
 
         if self.scoring == 'attn':
             self.attn_dim = attn_dim # attn dim from https://arxiv.org/pdf/1802.04712.pdf
@@ -56,10 +60,11 @@ class Aggregator(nn.Module):
             self.A = self.attention(x)  # Nx1
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
             self.A = F.softmax(self.A, dim=-1)  # softmax over N
-            if len(x.shape) == 3:
-                return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
-            elif len(x.shape) == 2:
-                return torch.mm(self.A, x).squeeze()
+
+            if self.scale:
+                self.A = self.A * self.A.shape[-1] / self.patient_batch_size 
+            return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
+            
 
         elif self.scoring == 'gated_attn':
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
@@ -68,10 +73,10 @@ class Aggregator(nn.Module):
             self.A = self.attention_weights(A_V * A_U) # element wise multiplication # Nx1
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
             self.A = F.softmax(self.A, dim=-1)  # softmax over N
-            if len(x.shape) == 3:
-                return torch.bmm(self.A, x).squeeze() # z_dim
-            elif len(x.shape) == 2:
-                return torch.mm(self.A, x).squeeze()  # z_dim
+
+            if self.scale:
+                self.A = self.A * self.A.shape[-1] / self.patient_batch_size 
+            return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
 
 class MultiVAETorch_MIL(BaseModuleClass):
     def __init__(
@@ -92,7 +97,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         patient_idx=None,
         num_classes=None,
         scoring='attn',
-        attn_dim=32,
+        attn_dim=15,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
         class_layers=1,
@@ -100,6 +105,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_loss_coef=1.0,
         add_patient_to_classifier=False,
         hierarchical_attn=True,
+        patient_batch_size=128,
     ):
         super().__init__()
 
@@ -126,6 +132,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.add_patient_to_classifier = add_patient_to_classifier
         self.patient_idx = patient_idx
         self.hierarchical_attn = hierarchical_attn
+        self.patient_batch_size = patient_batch_size
 
         self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
@@ -136,7 +143,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                 n_layers=class_layers,
                                 n_hidden=class_layer_size
                             ),
-                            Aggregator(cond_dim, scoring, attn_dim=attn_dim)
+                            Aggregator(cond_dim, scoring, attn_dim=attn_dim, patient_batch_size=patient_batch_size, scale=True)
                         )
         if hierarchical_attn:
             self.cov_level_aggregator = nn.Sequential(
@@ -184,7 +191,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         # MIL part
         class_label = cat_covs[:, -1]
-        idx = get_split_idx(class_label.detach().cpu().numpy())
 
         add_covariate = lambda i: self.add_patient_to_classifier or (not self.add_patient_to_classifier and i != self.patient_idx)
         if len(self.vae.cat_covariate_embeddings) > 0:
@@ -199,6 +205,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
 
+        idx = [self.patient_batch_size] # or depending on model.train() and model.eval() ???
+        if cov_embedds.shape[0] < 2*self.patient_batch_size:
+            idx = []
         cov_embedds = torch.tensor_split(cov_embedds, idx)
         cov_embedds = [embed[0] for embed in cov_embedds]
         cov_embedds = torch.stack(cov_embedds, dim=0)
@@ -253,7 +262,10 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cycle_loss = torch.tensor(0.0) if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, integrate_on, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
 
         # MIL classification loss
-        idx = get_split_idx(class_label.detach().cpu().numpy())
+        idx = [self.patient_batch_size] # or depending on model.train() and model.eval() ???
+        if class_label.shape[0] < 2*self.patient_batch_size:
+            idx = []
+
         class_label = torch.tensor_split(class_label, idx, dim=0)
         class_label = [torch.Tensor([labels[0]]).long().to(self.device) for labels in class_label]
         class_label = torch.cat(class_label, dim=0)
