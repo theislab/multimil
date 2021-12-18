@@ -6,9 +6,9 @@ To start:
 and `conda activate multigrate`
 
 2. Clone this branch using
-`git clone --branch refactor https://github.com/theislab/multigrate`
+`git clone https://github.com/theislab/multigrate`
 
 3. Install the package (after you cd'ed into the cloned folder)
 `pip install .`
 
-There are several example datasets available on [Drive](https://drive.google.com/drive/u/0/folders/1vdO8CJluRp7sOOQHc85YYZXhV2p2QcDN). A quick tutorial can be found in notebooks/tutorial.ipynb.
+There are several example datasets available on [Drive](https://drive.google.com/drive/u/0/folders/1vdO8CJluRp7sOOQHc85YYZXhV2p2QcDN). Tutorials can be found in the notebooks folder.
