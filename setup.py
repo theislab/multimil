@@ -10,7 +10,7 @@ except ImportError:  # Deps not yet installed
     __author__ = __email__ = ''
 
 setup(name='multigrate',
-      version='0.1.0',
+      version='0.2.0',
       description='Multi-omic data integration and transformation for single-cell genomics',
       long_description=long_description,
       long_description_content_type="text/markdown",
