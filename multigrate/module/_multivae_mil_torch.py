@@ -192,31 +192,32 @@ class MultiVAETorch_MIL(BaseModuleClass):
         # MIL part
         class_label = cat_covs[:, -1]
 
-        add_covariate = lambda i: self.add_patient_to_classifier or (not self.add_patient_to_classifier and i != self.patient_idx)
-        if len(self.vae.cat_covariate_embeddings) > 0:
-            cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for i, (covariate, cat_covariate_embedding) in enumerate(zip(cat_covs.T, self.vae.cat_covariate_embeddings)) if add_covariate(i)], dim=-1)
-        else:
-            cat_embedds = torch.Tensor().to(self.device) # so cat works later
-
-        if len(self.vae.cont_covariate_embeddings) > 0:
-            cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
-        else:
-            cont_embedds = torch.Tensor().to(self.device) # so cat works later
-
-        cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
-
         idx = [self.patient_batch_size] # or depending on model.train() and model.eval() ???
-        if cov_embedds.shape[0] < 2*self.patient_batch_size:
+        if cat_covs.shape[0] < 2*self.patient_batch_size:
             idx = []
-        cov_embedds = torch.tensor_split(cov_embedds, idx)
-        cov_embedds = [embed[0] for embed in cov_embedds]
-        cov_embedds = torch.stack(cov_embedds, dim=0)
 
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0)
         zs = self.cell_level_aggregator(zs) # num of bags in batch x cond_dim
 
         if self.hierarchical_attn:
+            add_covariate = lambda i: self.add_patient_to_classifier or (not self.add_patient_to_classifier and i != self.patient_idx)
+            if len(self.vae.cat_covariate_embeddings) > 0:
+                cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for i, (covariate, cat_covariate_embedding) in enumerate(zip(cat_covs.T, self.vae.cat_covariate_embeddings)) if add_covariate(i)], dim=-1)
+            else:
+                cat_embedds = torch.Tensor().to(self.device) # so cat works later
+
+            if len(self.vae.cont_covariate_embeddings) > 0:
+                cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
+            else:
+                cont_embedds = torch.Tensor().to(self.device) # so cat works later
+
+            cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
+
+            cov_embedds = torch.tensor_split(cov_embedds, idx)
+            cov_embedds = [embed[0] for embed in cov_embedds]
+            cov_embedds = torch.stack(cov_embedds, dim=0)
+
             aggr_bag_level = torch.cat([zs, cov_embedds], dim=-1)
             aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
             aggr_bag_level = torch.stack(aggr_bag_level, dim=1) # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
