@@ -52,19 +52,18 @@ class Aggregator(nn.Module):
 
             self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
 
+        elif self.scoring == 'MLP':
+            self.attention = nn.Linear(z_dim, 1)
+
     def forward(self, x):
         if self.scoring == 'sum':
             return torch.sum(x, dim=0) # z_dim
+
         elif self.scoring == 'attn':
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
             self.A = self.attention(x)  # Nx1
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
             self.A = F.softmax(self.A, dim=-1)  # softmax over N
-
-            if self.scale:
-                self.A = self.A * self.A.shape[-1] / self.patient_batch_size 
-            return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
-            
 
         elif self.scoring == 'gated_attn':
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
@@ -74,9 +73,15 @@ class Aggregator(nn.Module):
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
             self.A = F.softmax(self.A, dim=-1)  # softmax over N
 
-            if self.scale:
-                self.A = self.A * self.A.shape[-1] / self.patient_batch_size 
-            return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
+        elif self.scoring == 'MLP':
+            self.A = self.attention(x) # N
+            self.A = torch.transpose(self.A, -1, -2)
+            self.A = F.softmax(self.A, dim=-1)
+
+        if self.scale:
+            self.A = self.A * self.A.shape[-1] / self.patient_batch_size
+
+        return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
 
 class MultiVAETorch_MIL(BaseModuleClass):
     def __init__(
