@@ -155,8 +155,7 @@ class MultiVAE_MIL(BaseModelClass):
         save_best: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
         n_steps_kl_warmup: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = 50,
-        adversarial_mixing: bool = True,
+        #n_epochs_kl_warmup: Optional[int] = 50,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
     ):
@@ -203,6 +202,7 @@ class MultiVAE_MIL(BaseModelClass):
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
+        n_epochs_kl_warmup = max(max_epochs//3, 1)
         update_dict = dict(
             lr=lr,
             weight_decay=weight_decay,

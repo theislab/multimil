@@ -198,16 +198,16 @@ class MultiVAETorch_MIL(BaseModuleClass):
         return dict(z_joint=z_joint, cat_covs=cat_covs, cont_covs=cont_covs)
 
     @auto_move_data
-    def inference(self, x, cat_covs, cont_covs, masks=None):
+    def inference(self, x, cat_covs, cont_covs):
         # vae part
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs) # cat_covs is 1 longer than needed because of class label but it's taken care of in zip
         z_joint = inference_outputs['z_joint']
 
         # MIL part
-        class_label = cat_covs[:, -1]
+        batch_size = x.shape[0]
 
-        idx = [self.patient_batch_size] # or depending on model.train() and model.eval() ???
-        if cat_covs.shape[0] < 2*self.patient_batch_size:
+        idx = list(range(self.patient_batch_size,  batch_size, self.patient_batch_size)) # or depending on model.train() and model.eval() ???
+        if batch_size % self.patient_batch_size != 0: # can only happen during inference for last batches for each patient
             idx = []
 
         zs = torch.tensor_split(z_joint, idx, dim=0)
@@ -286,8 +286,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cycle_loss = torch.tensor(0.0) if self.vae.loss_coefs['cycle'] == 0 else self.vae.calc_cycle_loss(xs, z_joint, integrate_on, masks, self.vae.losses, size_factor, self.vae.loss_coefs)
 
         # MIL classification loss
-        idx = [self.patient_batch_size] # or depending on model.train() and model.eval() ???
-        if class_label.shape[0] < 2*self.patient_batch_size:
+        batch_size = x.shape[0]
+        idx = list(range(self.patient_batch_size,  batch_size, self.patient_batch_size)) # or depending on model.train() and model.eval() ???
+        if batch_size % self.patient_batch_size != 0: # can only happen during inference for last batches for each patient
             idx = []
 
         class_label = torch.tensor_split(class_label, idx, dim=0)
@@ -328,7 +329,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
             recon_loss = recon_loss
         )
 
-        # TODO reg loss add
         return LossRecorder(loss, reconst_losses, self.vae.loss_coefs['kl'] * kl_loss, kl_global=torch.tensor(0.0), integ_loss=integ_loss, cycle_loss=cycle_loss, class_loss=classification_loss, accuracy=accuracy, reg_loss=reg_loss)
 
     #TODO ??
