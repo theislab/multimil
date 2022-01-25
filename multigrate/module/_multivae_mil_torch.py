@@ -66,10 +66,9 @@ class Aggregator(nn.Module):
                 self.attention = nn.Linear(n_input, 1)
             else:
                 self.attention = nn.Sequential(
-                                CondMLP(
+                                MLP(
                                     n_input,
                                     n_hidden_mlp_attn,
-                                    embed_dim=0,
                                     n_layers=n_layers_mlp_attn-1,
                                     n_hidden=n_hidden_mlp_attn,
                                     dropout_rate=dropout,
@@ -123,6 +122,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         loss_coefs=[],
         num_groups=1,
         integrate_on_idx=None,
+        n_layers_encoders = [],
+        n_layers_decoders = [],
+        n_layers_shared_decoder: int = 1,
+        n_hidden_encoders = [],
+        n_hidden_decoders = [],
+        n_hidden_shared_decoder: int = 32,
         patient_idx=None,
         num_classes=None,
         scoring='gated_attn',
@@ -165,6 +170,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
             integrate_on_idx=integrate_on_idx,
             cat_covariate_dims=cat_covariate_dims,
             cont_covariate_dims=cont_covariate_dims,
+            n_layers_encoders=n_layers_encoders,
+            n_layers_decoders=n_layers_decoders,
+            n_layers_shared_decoder=n_layers_shared_decoder,
+            n_hidden_encoders=n_hidden_encoders,
+            n_hidden_decoders=n_hidden_decoders,
+            n_hidden_shared_decoder=n_hidden_shared_decoder,
         )
 
         self.integrate_on_idx = integrate_on_idx
@@ -180,10 +191,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
-                            CondMLP(
+                            MLP(
                                 z_dim,
                                 cond_dim,
-                                embed_dim=0,
                                 n_layers=n_layers_cell_aggregator,
                                 n_hidden=n_hidden_cell_aggregator,
                                 dropout_rate=dropout,
@@ -202,10 +212,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
                         )
         if hierarchical_attn:
             self.cov_level_aggregator = nn.Sequential(
-                                CondMLP(
+                                MLP(
                                    cond_dim,
                                    cond_dim,
-                                   embed_dim=0,
                                    n_layers=n_layers_cov_aggregator,
                                    n_hidden=n_hidden_cov_aggregator,
                                    dropout_rate=dropout,
@@ -225,10 +234,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
             self.classifier = nn.Linear(cond_dim, num_classes)
         else:
             self.classifier = nn.Sequential(
-                                CondMLP(
+                                MLP(
                                     cond_dim,
                                     n_hidden_classifier,
-                                    embed_dim=0,
                                     n_layers=n_layers_classifier-1,
                                     n_hidden=n_hidden_classifier,
                                     dropout_rate=dropout,

@@ -39,6 +39,12 @@ class MultiVAETorch(BaseModuleClass):
         integrate_on_idx=None,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
+        n_layers_encoders = [],
+        n_layers_decoders = [],
+        n_layers_shared_decoder: int = 1,
+        n_hidden_encoders = [],
+        n_hidden_decoders = [],
+        n_hidden_shared_decoder: int = 32,
     ):
         super().__init__()
 
@@ -58,6 +64,17 @@ class MultiVAETorch(BaseModuleClass):
         else:
             raise ValueError(f'losses has to be the same length as the number of modalities. number of modalities = {self.n_modality} != {len(losses)} = len(losses)')
 
+        # TODO: add warning that using these
+        if len(n_layers_encoders) == 0:
+            n_layers_encoders = [2]*self.n_modality # 2 here because decoders are usually 2 layers as mlp layer if followed by loss specific layer, e.g. mean_decoder
+        if len(n_layers_decoders) == 0:
+            n_layers_decoders = [1]*self.n_modality
+        if len(n_hidden_encoders) == 0:
+            n_hidden_encoders = [128]*self.n_modality
+        if len(n_hidden_decoders) == 0:
+            n_hidden_decoders = [128]*self.n_modality
+
+
         self.loss_coefs = {'recon': 1,
                           'kl': 1e-6,
                           'integ': 1e-2,
@@ -76,11 +93,41 @@ class MultiVAETorch(BaseModuleClass):
                 self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))
                 break
 
-        self.shared_decoder = CondMLP(z_dim + self.n_modality, h_dim, dropout_rate=dropout, normalization=normalization)
+        # shared decoder
+        self.shared_decoder = MLP(
+                                n_input=z_dim+self.n_modality, 
+                                n_output=h_dim, 
+                                n_layers=n_layers_shared_decoder,
+                                n_hidden=n_hidden_shared_decoder,
+                                dropout_rate=dropout, 
+                                normalization=normalization,
+                            )
+        # modality encoders
         cond_dim_enc = cond_dim*(len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_encoders else 0
-        self.encoders = [CondMLP(x_dim + cond_dim_enc, z_dim, embed_dim=0, dropout_rate=dropout, normalization=normalization) for x_dim in self.input_dims]
+        self.encoders = [
+                            MLP(
+                                n_input=x_dim+cond_dim_enc, 
+                                n_output=z_dim, 
+                                n_layers=n_layers,
+                                n_hidden=n_hidden,
+                                dropout_rate=dropout, 
+                                normalization=normalization
+                            ) for x_dim, n_layers, n_hidden in zip(self.input_dims, n_layers_encoders, n_hidden_encoders)
+                        ]
+        # modality decoders
         cond_dim_dec = cond_dim*(len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_decoders else 0
-        self.decoders = [Decoder(h_dim + cond_dim_dec, x_dim, embed_dim=0, dropout_rate=dropout, normalization=normalization, loss=loss) for x_dim, loss in zip(self.input_dims, self.losses)]
+        
+        self.decoders = [
+                            Decoder(
+                                n_input=h_dim+cond_dim_dec, 
+                                n_output=x_dim, 
+                                n_layers=n_layers,
+                                n_hidden=n_hidden,
+                                dropout_rate=dropout, 
+                                normalization=normalization, 
+                                loss=loss
+                            ) for x_dim, loss, n_layers, n_hidden in zip(self.input_dims, self.losses, n_layers_decoders, n_hidden_decoders)
+                        ]
 
         self.mus = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
         self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]

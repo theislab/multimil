@@ -44,7 +44,13 @@ class MultiVAE(BaseModelClass):
         dropout=0.2,
         cond_dim=10,
         kernel_type='not gaussian',
-        loss_coefs=[]
+        loss_coefs=[],
+        n_layers_encoders = [],
+        n_layers_decoders = [],
+        n_layers_shared_decoder: int = 1,
+        n_hidden_encoders = [],
+        n_hidden_decoders = [],
+        n_hidden_shared_decoder: int = 16,
     ):
 
         super().__init__(adata)
@@ -91,6 +97,12 @@ class MultiVAE(BaseModelClass):
             integrate_on_idx=integrate_on_idx,
             cat_covariate_dims=cat_covariate_dims,
             cont_covariate_dims=cont_covariate_dims,
+            n_layers_encoders=n_layers_encoders,
+            n_layers_decoders=n_layers_decoders,
+            n_layers_shared_decoder=n_layers_shared_decoder,
+            n_hidden_encoders=n_hidden_encoders,
+            n_hidden_decoders=n_hidden_decoders,
+            n_hidden_shared_decoder=n_hidden_shared_decoder,
         )
 
         self.init_params_ = self._get_init_params(locals())

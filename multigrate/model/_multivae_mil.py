@@ -35,6 +35,12 @@ class MultiVAE_MIL(BaseModelClass):
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
+        n_layers_encoders = [],
+        n_layers_decoders = [],
+        n_layers_shared_decoder: int = 1,
+        n_hidden_encoders = [],
+        n_hidden_decoders = [],
+        n_hidden_shared_decoder: int = 32,
         add_patient_to_classifier=False,
         hierarchical_attn=True,
         z_dim=16,
@@ -70,7 +76,7 @@ class MultiVAE_MIL(BaseModelClass):
         self.hierarchical_attn = hierarchical_attn
 
         # TODO add check that class is the same within a patient
-
+        # TODO assert length of things is the same as number of modalities
         # TODO add that n_layers has to be > 0 for all
         # TODO warning if n_layers == 1 then n_hidden is not used for classifier and MLP attention
         # TODO warning if MLP attention is used but n layers and n hidden not given that using default values
@@ -116,6 +122,12 @@ class MultiVAE_MIL(BaseModelClass):
                         loss_coefs=loss_coefs,
                         num_groups=num_groups,
                         integrate_on_idx=integrate_on_idx,
+                        n_layers_encoders=n_layers_encoders,
+                        n_layers_decoders=n_layers_decoders,
+                        n_layers_shared_decoder=n_layers_shared_decoder,
+                        n_hidden_encoders=n_hidden_encoders,
+                        n_hidden_decoders=n_hidden_decoders,
+                        n_hidden_shared_decoder=n_hidden_shared_decoder,
                         # mil specific
                         num_classes=num_classes,
                         scoring=scoring,
