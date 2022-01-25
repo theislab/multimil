@@ -1,4 +1,4 @@
-from ._ann_dataloader import BagSampler, BagAnnDataLoader
+from ._ann_dataloader import BagAnnDataLoader
 from ._data_splitting import BagDataSplitter
 
-__all__ = ['BagSampler', 'BagAnnDataLoader', 'BagDataSplitter']
+__all__ = ['BagAnnDataLoader', 'BagDataSplitter']

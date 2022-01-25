@@ -4,103 +4,100 @@
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from random import shuffle
 from scvi.dataloaders import AnnTorchDataset
 from typing import List, Optional, Union
 import anndata
 import copy
 import itertools
 
-class BagSampler(torch.utils.data.sampler.Sampler):
-    def __init__(
-        self,
-        indices: np.ndarray,
-        patient_labels: np.ndarray,
-        batch_size: int,
-        shuffle: bool = True,
-        drop_last: Union[bool, int] = False,
-        shuffle_classes: bool = True
-    ):
-        self.indices = indices
-        self.patient_labels = patient_labels
-        self.n_obs = len(indices)
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.shuffle_classes = shuffle_classes
+# class BagSampler(torch.utils.data.sampler.Sampler):
+#     def __init__(
+#         self,
+#         indices: np.ndarray,
+#         patient_labels: np.ndarray,
+#         batch_size: int,
+#         shuffle: bool = True,
+#         drop_last: Union[bool, int] = False,
+#         shuffle_classes: bool = True
+#     ):
+#         self.indices = indices
+#         self.patient_labels = patient_labels
+#         self.n_obs = len(indices)
+#         self.batch_size = batch_size
+#         self.shuffle = shuffle
+#         self.shuffle_classes = shuffle_classes
 
-        if drop_last > batch_size:
-            raise ValueError(
-                "drop_last can't be greater than batch_size. "
-                + "drop_last is {} but batch_size is {}.".format(drop_last, batch_size)
-            )
+#         if drop_last > batch_size:
+#             raise ValueError(
+#                 "drop_last can't be greater than batch_size. "
+#                 + "drop_last is {} but batch_size is {}.".format(drop_last, batch_size)
+#             )
 
-        self.drop_last = drop_last
+#         self.drop_last = drop_last
 
-        from math import ceil
+#         from math import ceil
 
-        classes = set(self.patient_labels)
+#         classes = set(self.patient_labels)
 
-        self.length = 0
-        for cl in classes:
-            idx = np.where(self.patient_labels == cl)[0]
-            cl_idx = self.indices[idx]
-            n_obs = len(cl_idx)
+#         self.length = 0
+#         for cl in classes:
+#             idx = np.where(self.patient_labels == cl)[0]
+#             cl_idx = self.indices[idx]
+#             n_obs = len(cl_idx)
 
-            last_batch_len = n_obs % self.batch_size
-            if (self.drop_last is True) or (last_batch_len < self.drop_last):
-                drop_last_n = last_batch_len
-            elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
-                drop_last_n = 0
-            else:
-                raise ValueError("Invalid input for drop_last param. Must be bool or int.")
+#             last_batch_len = n_obs % self.batch_size
+#             if (self.drop_last is True) or (last_batch_len < self.drop_last):
+#                 drop_last_n = last_batch_len
+#             elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
+#                 drop_last_n = 0
+#             else:
+#                 raise ValueError("Invalid input for drop_last param. Must be bool or int.")
 
-            if drop_last_n != 0:
-                self.length += n_obs // self.batch_size
-            else:
-                self.length += ceil(n_obs / self.batch_size)
+#             if drop_last_n != 0:
+#                 self.length += n_obs // self.batch_size
+#             else:
+#                 self.length += ceil(n_obs / self.batch_size)
 
-    def __iter__(self):
+#     def __iter__(self):
 
-        classes = set(self.patient_labels)
-        data_iter = []
+#         classes = set(self.patient_labels)
+#         data_iter = []
 
-        for cl in classes:
-            idx = np.where(self.patient_labels == cl)[0]
-            cl_idx = self.indices[idx]
-            n_obs = len(cl_idx)
+#         for cl in classes:
+#             idx = np.where(self.patient_labels == cl)[0]
+#             cl_idx = self.indices[idx]
+#             n_obs = len(cl_idx)
 
-            if self.shuffle is True:
-                idx = torch.randperm(n_obs).tolist()
-            else:
-                idx = torch.arange(n_obs).tolist()
+#             if self.shuffle is True:
+#                 idx = torch.randperm(n_obs).tolist()
+#             else:
+#                 idx = torch.arange(n_obs).tolist()
 
-            last_batch_len = n_obs % self.batch_size
-            if (self.drop_last is True) or (last_batch_len < self.drop_last):
-                drop_last_n = last_batch_len
-            elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
-                drop_last_n = 0
-            else:
-                raise ValueError("Invalid input for drop_last param. Must be bool or int.")
+#             last_batch_len = n_obs % self.batch_size
+#             if (self.drop_last is True) or (last_batch_len < self.drop_last):
+#                 drop_last_n = last_batch_len
+#             elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
+#                 drop_last_n = 0
+#             else:
+#                 raise ValueError("Invalid input for drop_last param. Must be bool or int.")
 
-            if drop_last_n != 0:
-                idx = idx[: -drop_last_n]
+#             if drop_last_n != 0:
+#                 idx = idx[: -drop_last_n]
 
-            data_iter.extend(
-            [
-                cl_idx[idx[i : i + self.batch_size]]
-                for i in range(0, len(idx), self.batch_size)
-            ])
+#             data_iter.extend(
+#             [
+#                 cl_idx[idx[i : i + self.batch_size]]
+#                 for i in range(0, len(idx), self.batch_size)
+#             ])
 
-        # TODO fix seed
-        if self.shuffle_classes:
-            shuffle(data_iter)
+#         # TODO fix seed
+#         if self.shuffle_classes:
+#             shuffle(data_iter)
 
-        return iter(data_iter)
+#         return iter(data_iter)
 
-    def __len__(self):
-        return self.length
 
-class StratifiedSampler(BagSampler):
+class StratifiedSampler(torch.utils.data.sampler.Sampler):
     def __init__(
         self,
         indices: np.ndarray,
@@ -111,21 +108,26 @@ class StratifiedSampler(BagSampler):
         drop_last: Union[bool, int] = True,
         shuffle_classes: bool = True
     ):
-        super().__init__(
-            indices=indices,
-            patient_labels=patient_labels,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            drop_last=drop_last,
-            shuffle_classes=shuffle_classes)
-
-        self.min_size_per_class = min_size_per_class
+        if drop_last > batch_size:
+            raise ValueError(
+                "drop_last can't be greater than batch_size. "
+                + "drop_last is {} but batch_size is {}.".format(drop_last, batch_size)
+            )
 
         if batch_size % min_size_per_class != 0:
             raise ValueError(
                 "min_size_per_class has to be a divisor of batch_size."
                 + "min_size_per_class is {} but batch_size is {}.".format(min_size_per_class, batch_size)
             )
+
+        self.indices = indices
+        self.patient_labels = patient_labels
+        self.n_obs = len(indices)
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.shuffle_classes = shuffle_classes
+        self.min_size_per_class = min_size_per_class 
+        self.drop_last = drop_last
 
         from math import ceil
 
@@ -188,9 +190,9 @@ class StratifiedSampler(BagSampler):
                 for i in range(0, len(idx), self.min_size_per_class)
             ])
 
-        # TODO fix seed
         if self.shuffle_classes:
-            shuffle(data_iter)
+            idx = torch.randperm(len(data_iter)).tolist()
+            data_iter = [data_iter[id] for id in idx]
 
         final_data_iter = []
 
@@ -205,6 +207,10 @@ class StratifiedSampler(BagSampler):
             final_data_iter.append(batch_idx)
 
         return iter(final_data_iter)
+
+
+    def __len__(self):
+        return self.length
 
 class BagAnnDataLoader(DataLoader):
     """
