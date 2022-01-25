@@ -19,11 +19,15 @@ from ..utils._utils import get_split_idx
 
 class Aggregator(nn.Module):
     def __init__(self,
-                z_dim=None,
+                n_input=None,
                 scoring='sum',
-                attn_dim=15, # D
+                attn_dim=16, # D
                 patient_batch_size=None,
                 scale=False,
+                attention_dropout=True,
+                dropout=0.2,
+                n_layers_mlp_attn=1,
+                n_hidden_mlp_attn=16,
                 ):
         super().__init__()
 
@@ -34,27 +38,46 @@ class Aggregator(nn.Module):
         if self.scoring == 'attn':
             self.attn_dim = attn_dim # attn dim from https://arxiv.org/pdf/1802.04712.pdf
             self.attention = nn.Sequential(
-                nn.Linear(z_dim, self.attn_dim),
+                nn.Linear(n_input, self.attn_dim),
                 nn.Tanh(),
+                nn.Dropout(dropout) if attention_dropout else None,
                 nn.Linear(self.attn_dim, 1, bias=False),
             )
         elif self.scoring == 'gated_attn':
             self.attn_dim = attn_dim
             self.attention_V = nn.Sequential(
-                nn.Linear(z_dim, self.attn_dim),
-                nn.Tanh()
+                nn.Linear(n_input, self.attn_dim),
+                nn.Tanh(),
+                nn.Dropout(dropout) if attention_dropout else None,
             )
 
             self.attention_U = nn.Sequential(
                 #orthogonal(nn.Linear(z_dim, self.attn_dim)),
-                nn.Linear(z_dim, self.attn_dim),
-                nn.Sigmoid()
+                nn.Linear(n_input, self.attn_dim),
+                nn.Sigmoid(),
+                nn.Dropout(dropout) if attention_dropout else None,
             )
 
             self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
 
         elif self.scoring == 'MLP':
-            self.attention = nn.Linear(z_dim, 1)
+
+            if n_layers_mlp_attn == 1:
+                self.attention = nn.Linear(n_input, 1)
+            else:
+                self.attention = nn.Sequential(
+                                CondMLP(
+                                    n_input,
+                                    n_hidden_mlp_attn,
+                                    embed_dim=0,
+                                    n_layers=n_layers_mlp_attn-1,
+                                    n_hidden=n_hidden_mlp_attn,
+                                    dropout_rate=dropout,
+                                ),
+                                nn.Linear(n_hidden_mlp_attn, 1)
+                            )
+
+            
 
     def forward(self, x):
         if self.scoring == 'sum':
@@ -91,23 +114,29 @@ class MultiVAETorch_MIL(BaseModuleClass):
         condition_encoders=False,
         condition_decoders=True,
         normalization='layer',
-        z_dim=15,
+        z_dim=16,
         h_dim=32,
         losses=[],
         dropout=0.2,
-        cond_dim=10,
+        cond_dim=16,
         kernel_type='gaussian',
         loss_coefs=[],
         num_groups=1,
         integrate_on_idx=None,
         patient_idx=None,
         num_classes=None,
-        scoring='attn',
-        attn_dim=15,
+        scoring='gated_attn',
+        attn_dim=16,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
-        class_layers=1,
-        class_layer_size=128,
+        n_layers_cell_aggregator=1,
+        n_layers_cov_aggregator=1,
+        n_layers_classifier=1,
+        n_layers_mlp_attn=1,
+        n_hidden_cell_aggregator=16,
+        n_hidden_cov_aggregator=16,
+        n_hidden_classifier=16,
+        n_hidden_mlp_attn=16,
         class_loss_coef=1.0,
         reg_coef=1, 
         add_patient_to_classifier=False,
@@ -116,6 +145,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         regularize_cell_attn=False,
         regularize_cov_attn=False,
         regularize_vae=False,
+        attention_dropout=True,
     ):
         super().__init__()
 
@@ -154,10 +184,21 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                 z_dim,
                                 cond_dim,
                                 embed_dim=0,
-                                n_layers=class_layers,
-                                n_hidden=class_layer_size
+                                n_layers=n_layers_cell_aggregator,
+                                n_hidden=n_hidden_cell_aggregator,
+                                dropout_rate=dropout,
                             ),
-                            Aggregator(cond_dim, scoring, attn_dim=attn_dim, patient_batch_size=patient_batch_size, scale=True)
+                            Aggregator(
+                                n_input=cond_dim, 
+                                scoring=scoring, 
+                                attn_dim=attn_dim, 
+                                patient_batch_size=patient_batch_size, 
+                                scale=True,
+                                attention_dropout=attention_dropout,
+                                dropout=dropout,
+                                n_layers_mlp_attn=n_layers_mlp_attn,
+                                n_hidden_mlp_attn=n_hidden_mlp_attn,
+                            )
                         )
         if hierarchical_attn:
             self.cov_level_aggregator = nn.Sequential(
@@ -165,12 +206,35 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                    cond_dim,
                                    cond_dim,
                                    embed_dim=0,
-                                   n_layers=class_layers,
-                                   n_hidden=class_layer_size
+                                   n_layers=n_layers_cov_aggregator,
+                                   n_hidden=n_hidden_cov_aggregator,
+                                   dropout_rate=dropout,
                                 ),
-                                Aggregator(cond_dim, scoring, attn_dim=attn_dim)
+                                Aggregator(
+                                    n_input=cond_dim, 
+                                    scoring=scoring, 
+                                    attn_dim=attn_dim,
+                                    attention_dropout=True,
+                                    dropout=dropout,
+                                    n_layers_mlp_attn=n_layers_mlp_attn,
+                                    n_hidden_mlp_attn=n_hidden_mlp_attn,
+                                )
                             )
-        self.classifier = nn.Linear(cond_dim, num_classes)
+
+        if n_layers_classifier == 1:
+            self.classifier = nn.Linear(cond_dim, num_classes)
+        else:
+            self.classifier = nn.Sequential(
+                                CondMLP(
+                                    cond_dim,
+                                    n_hidden_classifier,
+                                    embed_dim=0,
+                                    n_layers=n_layers_classifier-1,
+                                    n_hidden=n_hidden_classifier,
+                                    dropout_rate=dropout,
+                                ),
+                                nn.Linear(n_hidden_classifier, num_classes)
+                            )
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]

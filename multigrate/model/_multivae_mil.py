@@ -37,17 +37,24 @@ class MultiVAE_MIL(BaseModelClass):
         normalization='layer',
         add_patient_to_classifier=False,
         hierarchical_attn=True,
-        z_dim=15,
+        z_dim=16,
         h_dim=32,
         losses=[],
         dropout=0.2,
-        cond_dim=10,
+        cond_dim=16,
         kernel_type='gaussian',
         loss_coefs=[],
-        scoring='attn',
-        attn_dim=15,
-        class_layers=1,
-        class_layer_size=128,
+        scoring='gated_attn',
+        attn_dim=16,
+        n_layers_cell_aggregator: int = 1,
+        n_layers_cov_aggregator: int = 1,
+        n_layers_classifier: int = 1,
+        n_layers_mlp_attn = None,
+        n_hidden_cell_aggregator: int = 16,
+        n_hidden_cov_aggregator: int = 16,
+        n_hidden_classifier: int = 16,
+        n_hidden_mlp_attn = None,
+        attention_dropout=True,
         class_loss_coef=1.0,
         reg_coef=1,
         regularize_cell_attn=False,
@@ -63,6 +70,15 @@ class MultiVAE_MIL(BaseModelClass):
         self.hierarchical_attn = hierarchical_attn
 
         # TODO add check that class is the same within a patient
+
+        # TODO add that n_layers has to be > 0 for all
+        # TODO warning if n_layers == 1 then n_hidden is not used for classifier and MLP attention
+        # TODO warning if MLP attention is used but n layers and n hidden not given that using default values
+        if scoring == 'MLP':
+            if not n_layers_mlp_attn:
+                n_layers_mlp_attn = 1
+            if not n_hidden_mlp_attn:
+                n_hidden_mlp_attn = 16
 
         cont_covariate_dims = []
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
@@ -106,8 +122,14 @@ class MultiVAE_MIL(BaseModelClass):
                         attn_dim=attn_dim,
                         cat_covariate_dims=cat_covariate_dims,
                         cont_covariate_dims=cont_covariate_dims,
-                        class_layers=class_layers,
-                        class_layer_size=class_layer_size,
+                        n_layers_cell_aggregator=n_layers_cell_aggregator,
+                        n_layers_cov_aggregator=n_layers_cov_aggregator,
+                        n_layers_classifier=n_layers_classifier,
+                        n_layers_mlp_attn=n_layers_mlp_attn,
+                        n_hidden_cell_aggregator=n_hidden_cell_aggregator,
+                        n_hidden_cov_aggregator=n_hidden_cov_aggregator,
+                        n_hidden_classifier=n_hidden_classifier,
+                        n_hidden_mlp_attn=n_hidden_mlp_attn,
                         class_loss_coef=class_loss_coef,
                         reg_coef=reg_coef,
                         add_patient_to_classifier=add_patient_to_classifier,
@@ -117,6 +139,7 @@ class MultiVAE_MIL(BaseModelClass):
                         regularize_cell_attn=regularize_cell_attn,
                         regularize_cov_attn=regularize_cov_attn,
                         regularize_vae=regularize_vae,
+                        attention_dropout=attention_dropout,
                     )
                     
         self.init_params_ = self._get_init_params(locals())
@@ -302,12 +325,12 @@ class MultiVAE_MIL(BaseModelClass):
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
                 pred = outputs['prediction']
-                cell_attn = self.module.cell_level_aggregator[1].A.squeeze(dim=1)
+                cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
                 size = cell_attn.shape[-1]
                 cell_attn = cell_attn.flatten() # in inference always one patient per batch
 
                 if self.hierarchical_attn:
-                    cov_attn = self.module.cov_level_aggregator[1].A.squeeze(dim=1)
+                    cov_attn = self.module.cov_level_aggregator[-1].A.squeeze(dim=1) # aggregator is always last after hidden MLP layers 
                     cov_attn = cov_attn.unsqueeze(0).repeat(size, 1, 1)
                     cov_attn = cov_attn.flatten(start_dim=0, end_dim=1)
                     cov_level_attn += [cov_attn.cpu()]
