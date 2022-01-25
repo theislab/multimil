@@ -49,7 +49,10 @@ class MultiVAE_MIL(BaseModelClass):
         class_layers=1,
         class_layer_size=128,
         class_loss_coef=1.0,
-
+        reg_coef=1,
+        regularize_cell_attn=False,
+        regularize_cov_attn=False,
+        regularize_vae=False,
     ):
         super().__init__(adata)
 
@@ -106,10 +109,14 @@ class MultiVAE_MIL(BaseModelClass):
                         class_layers=class_layers,
                         class_layer_size=class_layer_size,
                         class_loss_coef=class_loss_coef,
+                        reg_coef=reg_coef,
                         add_patient_to_classifier=add_patient_to_classifier,
                         patient_idx=patient_idx,
                         hierarchical_attn=hierarchical_attn,
                         patient_batch_size=patient_batch_size,
+                        regularize_cell_attn=regularize_cell_attn,
+                        regularize_cov_attn=regularize_cov_attn,
+                        regularize_vae=regularize_vae,
                     )
                     
         self.init_params_ = self._get_init_params(locals())

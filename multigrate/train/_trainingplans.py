@@ -16,11 +16,12 @@ class MILTrainingPlan(AdversarialTrainingPlan):
             "cycle_loss": scvi_loss.cycle_loss,
             "class_loss": scvi_loss.class_loss,
             "accuracy": scvi_loss.accuracy,
+            "reg_loss": scvi_loss.reg_loss,
         }
 
     def validation_epoch_end(self, outputs):
         """Aggregate validation step information."""
-        n_obs, elbo, rec_loss, kl_local, integ, cycle, cl, acc = 0, 0, 0, 0, 0, 0, 0, 0
+        n_obs, elbo, rec_loss, kl_local, integ, cycle, cl, acc, reg = 0, 0, 0, 0, 0, 0, 0, 0, 0
         for tensors in outputs:
             elbo += tensors["reconstruction_loss_sum"] + tensors["kl_local_sum"]
             rec_loss += tensors["reconstruction_loss_sum"]
@@ -30,6 +31,7 @@ class MILTrainingPlan(AdversarialTrainingPlan):
             cycle += tensors["cycle_loss"]
             cl += tensors["class_loss"]
             acc += tensors["accuracy"]
+            reg += tensors["reg_loss"]
         # kl global same for each minibatch
         kl_global = outputs[0]["kl_global"]
         elbo += kl_global
@@ -41,6 +43,7 @@ class MILTrainingPlan(AdversarialTrainingPlan):
         self.log("cycle_validation", cycle / n_obs)
         self.log("classification_validation", cl / n_obs)
         self.log("accuracy_validation", acc / len(outputs))
+        self.log("reg_loss_validation", reg / n_obs)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         kappa = (
@@ -74,6 +77,7 @@ class MILTrainingPlan(AdversarialTrainingPlan):
                 "cycle_loss": scvi_loss.cycle_loss.detach(),
                 "class_loss": scvi_loss.class_loss.detach(),
                 "accuracy": scvi_loss.accuracy.detach(),
+                "reg_loss": scvi_loss.reg_loss.detach(),
             }
 
         # train adversarial classifier
@@ -95,7 +99,7 @@ class MILTrainingPlan(AdversarialTrainingPlan):
             self.training_epoch_end_mil(outputs)
 
     def training_epoch_end_mil(self, outputs):
-        n_obs, elbo, rec_loss, kl_local, integ, cycle, cl, acc = 0, 0, 0, 0, 0, 0, 0, 0
+        n_obs, elbo, rec_loss, kl_local, integ, cycle, cl, acc, reg = 0, 0, 0, 0, 0, 0, 0, 0, 0
         for tensors in outputs:
             elbo += tensors["reconstruction_loss_sum"] + tensors["kl_local_sum"]
             rec_loss += tensors["reconstruction_loss_sum"]
@@ -105,6 +109,7 @@ class MILTrainingPlan(AdversarialTrainingPlan):
             cycle += tensors["cycle_loss"]
             cl += tensors["class_loss"]
             acc += tensors["accuracy"]
+            reg += tensors["reg_loss"]
         # kl global same for each minibatch
         kl_global = outputs[0]["kl_global"]
         elbo += kl_global
@@ -116,3 +121,4 @@ class MILTrainingPlan(AdversarialTrainingPlan):
         self.log("cycle_train", cycle / n_obs)
         self.log("classification_train", cl / n_obs)
         self.log("accuracy_train", acc / len(outputs))
+        self.log("reg_loss_train", reg / n_obs)

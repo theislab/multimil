@@ -46,6 +46,7 @@ class Aggregator(nn.Module):
             )
 
             self.attention_U = nn.Sequential(
+                #orthogonal(nn.Linear(z_dim, self.attn_dim)),
                 nn.Linear(z_dim, self.attn_dim),
                 nn.Sigmoid()
             )
@@ -108,9 +109,13 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_layers=1,
         class_layer_size=128,
         class_loss_coef=1.0,
+        reg_coef=1, 
         add_patient_to_classifier=False,
         hierarchical_attn=True,
         patient_batch_size=128,
+        regularize_cell_attn=False,
+        regularize_cov_attn=False,
+        regularize_vae=False,
     ):
         super().__init__()
 
@@ -134,10 +139,14 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         self.integrate_on_idx = integrate_on_idx
         self.class_loss_coef = class_loss_coef
+        self.reg_coef = reg_coef
         self.add_patient_to_classifier = add_patient_to_classifier
         self.patient_idx = patient_idx
         self.hierarchical_attn = hierarchical_attn
         self.patient_batch_size = patient_batch_size
+        self.regularize_cell_attn = regularize_cell_attn
+        self.regularize_cov_attn = regularize_cov_attn
+        self.regularize_vae = regularize_vae
 
         self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
@@ -153,11 +162,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
         if hierarchical_attn:
             self.cov_level_aggregator = nn.Sequential(
                                 CondMLP(
-                                    cond_dim,
-                                    cond_dim,
-                                    embed_dim=0,
-                                    n_layers=class_layers,
-                                    n_hidden=class_layer_size
+                                   cond_dim,
+                                   cond_dim,
+                                   embed_dim=0,
+                                   n_layers=class_layers,
+                                   n_hidden=class_layer_size
                                 ),
                                 Aggregator(cond_dim, scoring, attn_dim=attn_dim)
                             )
@@ -238,6 +247,15 @@ class MultiVAETorch_MIL(BaseModuleClass):
     def generative(self, z_joint, cat_covs, cont_covs):
         return self.vae.generative(z_joint, cat_covs, cont_covs)
 
+    def orthogonal_regularization(self, weights, axis=0):
+        loss = torch.tensor(0.0).to(self.device)
+        for weight in weights:
+            if axis == 1:
+                weight = weight.T 
+            dim = weight.shape[1]
+            loss += torch.sqrt(torch.sum((torch.matmul(weight.T, weight) - torch.eye(dim).to(self.device)).pow(2)))
+        return loss
+
     def loss(self,
         tensors,
         inference_outputs,
@@ -277,21 +295,41 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_label = torch.cat(class_label, dim=0)
 
         classification_loss = F.cross_entropy(prediction, class_label) # assume same in the batch
-
         accuracy = torch.sum(torch.eq(torch.argmax(prediction, dim=-1), class_label)) / class_label.shape[0]
+
+        # what to regularize:
+        weights = []
+        if self.regularize_cov_attn:
+            weights.append(self.cov_level_aggregator[1].attention_U[0].weight)
+            weights.append(self.cov_level_aggregator[1].attention_V[0].weight)
+        if self.regularize_cell_attn:
+            weights.append(self.cell_level_aggregator[1].attention_U[0].weight)
+            weights.append(self.cell_level_aggregator[1].attention_V[0].weight)
+
+        # TODO: fix if other layers
+        if self.regularize_vae:
+            weights.append(self.vae.shared_decoder.encoder.fc_layers[0][0].weight)
+            weights.append(self.vae.encoder_0.encoder.fc_layers[0][0].weight)
+            weights.append(self.vae.encoder_1.encoder.fc_layers[0][0].weight)
+            weights.append(self.vae.decoder_0.decoder.encoder.fc_layers[0][0].weight)
+            weights.append(self.vae.decoder_1.decoder.encoder.fc_layers[0][0].weight)
+
+        reg_loss = self.orthogonal_regularization(weights)
 
         loss = torch.mean(self.vae.loss_coefs['recon'] * recon_loss
             + self.vae.loss_coefs['kl'] * kl_loss
             + self.vae.loss_coefs['integ'] * integ_loss
             + self.vae.loss_coefs['cycle'] * cycle_loss
             + self.class_loss_coef * classification_loss
+            + self.reg_coef * reg_loss
             )
 
         reconst_losses = dict(
             recon_loss = recon_loss
         )
 
-        return LossRecorder(loss, reconst_losses, self.vae.loss_coefs['kl'] * kl_loss, kl_global=torch.tensor(0.0), integ_loss=integ_loss, cycle_loss=cycle_loss, class_loss=classification_loss, accuracy=accuracy)
+        # TODO reg loss add
+        return LossRecorder(loss, reconst_losses, self.vae.loss_coefs['kl'] * kl_loss, kl_global=torch.tensor(0.0), integ_loss=integ_loss, cycle_loss=cycle_loss, class_loss=classification_loss, accuracy=accuracy, reg_loss=reg_loss)
 
     #TODO ??
     @torch.no_grad()

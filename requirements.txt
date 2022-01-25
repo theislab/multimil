@@ -6,6 +6,6 @@ python-igraph==0.9.6
 notebook==6.4.4
 leidenalg==0.8.7
 louvain==0.7.0
-torch==1.9.1
+torch
 scanpy==1.8.2
 scvi-tools==0.14.0
