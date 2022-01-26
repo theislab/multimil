@@ -39,9 +39,12 @@ class MultiVAETorch(BaseModuleClass):
         integrate_on_idx=None,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
+        cont_cov_type='logsigm',
+        n_layers_cont_embed: int = 1,
         n_layers_encoders = [],
         n_layers_decoders = [],
         n_layers_shared_decoder: int = 1,
+        n_hidden_cont_embed: int = 32,
         n_hidden_encoders = [],
         n_hidden_decoders = [],
         n_hidden_shared_decoder: int = 32,
@@ -57,6 +60,8 @@ class MultiVAETorch(BaseModuleClass):
         self.kernel_type = kernel_type
         self.integrate_on_idx = integrate_on_idx
         self.add_shared_decoder = shared_decoder
+        self.n_cont_cov = len(cont_covariate_dims)
+        self.cont_cov_type = cont_cov_type
 
         # TODO: clean
         if len(losses) == 0:
@@ -75,7 +80,6 @@ class MultiVAETorch(BaseModuleClass):
             n_hidden_encoders = [128]*self.n_modality
         if len(n_hidden_decoders) == 0:
             n_hidden_decoders = [128]*self.n_modality
-
 
         self.loss_coefs = {'recon': 1,
                           'kl': 1e-6,
@@ -137,7 +141,33 @@ class MultiVAETorch(BaseModuleClass):
         self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
 
         self.cat_covariate_embeddings = [nn.Embedding(dim, cond_dim) for dim in cat_covariate_dims]
-        self.cont_covariate_embeddings = [nn.Linear(dim, cond_dim) for dim in cont_covariate_dims] # dim is always 1 here
+        self.cont_covariate_embeddings = nn.Embedding(self.n_cont_cov, cond_dim)
+
+        if self.cont_cov_type == 'mlp':
+            self.cont_covariate_curves = torch.nn.ModuleList()
+            for _ in range(self.n_cont_cov):
+                n_input = n_hidden_cont_embed if n_layers_cont_embed > 1 else 1
+                self.cont_covariate_curves.append(
+                    nn.Sequential(
+                        MLP(
+                            n_input=1, 
+                            n_output=n_hidden_cont_embed, 
+                            n_layers=n_layers_cont_embed-1,
+                            n_hidden=n_hidden_cont_embed,
+                            dropout_rate=dropout, 
+                            normalization=normalization,
+                        ),
+                        nn.Linear(n_input, 1)
+                    ) if n_layers_cont_embed > 1 else nn.Linear(n_input, 1)
+                )
+        else:
+            self.cont_covariate_curves = GeneralizedSigmoid(
+                                                dim=self.n_cont_cov, 
+                                                # device=self.device,
+                                                nonlin=self.cont_cov_type
+                                            )
+
+        # self.cont_covariate_embeddings = [nn.Linear(dim, cond_dim) for dim in cont_covariate_dims] # dim is always 1 here
 
         # register sub-modules
         for i, (enc, dec, mu, logvar) in enumerate(zip(self.encoders, self.decoders, self.mus, self.logvars)):
@@ -149,8 +179,7 @@ class MultiVAETorch(BaseModuleClass):
         for i, emb in enumerate(self.cat_covariate_embeddings):
             self.add_module(f'cat_covariate_embedding_{i}', emb)
 
-        for i, emb in enumerate(self.cont_covariate_embeddings):
-            self.add_module(f'cont_covariate_embedding_{i}', emb)
+        ##     self.add_module(f'cont_covariate_embedding_{i}', emb)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -234,26 +263,24 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = [cat_covariate_embedding(covariate.long()) for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)]
             else:
                 cat_embedds = []
-            if cont_covs is not None:
-                cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for cont_covariate_embedding, covariate in zip(self.cont_covariate_embeddings, cont_covs.T)]
-            else:
-                cont_embedds = []
 
             if len(cat_embedds) > 0:
                 cat_embedds = torch.cat(cat_embedds, dim=-1)
             else:
                 cat_embedds = torch.Tensor().to(self.device)
 
-            if len(cont_embedds) > 0:
-                cont_embedds = torch.cat(cont_embedds, dim=-1)
+            if self.n_cont_cov > 0:
+                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors
+                    cont_covs = cont_covs[:, 0:self.n_cont_cov]
+                cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
-
+                
             xs = [torch.cat([x, cat_embedds, cont_embedds], dim=-1) for x in xs] # concat embedding to each modality x along the feature axis
 
         hs = [self.x_to_h(x, mod) for mod, x in enumerate(xs)]
         out = [self.bottleneck(h, mod) for mod, h in enumerate(hs)]
-        mus = [mod_out[1] for mod_out in out]
+        mus = [mod_out[1] for mod_out in out] # TODO check if easier to use split
         mu = torch.stack(mus, dim=1)
         logvars = [mod_out[2] for mod_out in out]
         logvar = torch.stack(logvars, dim=1)
@@ -281,18 +308,15 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = [cat_covariate_embedding(covariate.long()) for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)]
             else:
                 cat_embedds = []
-            if cont_covs is not None:
-                cont_embedds = [cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for cont_covariate_embedding, covariate in zip(self.cont_covariate_embeddings, cont_covs.T)]
-            else:
-                cont_embedds = []
-
             if len(cat_embedds) > 0:
                 cat_embedds = torch.cat(cat_embedds, dim=-1)
             else:
                 cat_embedds = torch.Tensor().to(self.device)
 
-            if len(cont_embedds) > 0:
-                cont_embedds = torch.cat(cont_embedds, dim=-1)
+            if self.n_cont_cov > 0:
+                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors
+                    cont_covs = cont_covs[:, 0:self.n_cont_cov]
+                cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
 
@@ -416,3 +440,23 @@ class MultiVAETorch(BaseModuleClass):
         group = cat_covs[:, self.integrate_on_idx]
 
         return self.calc_recon_loss(xs, rs, losses, group, size_factor, loss_coefs, masks)
+
+    def compute_cont_cov_embeddings_(self, covs):
+        """ Adapted from
+        Title: CPA (c) Facebook, Inc.
+        Date: 26.01.2022
+        Link to the used code:
+        https://github.com/facebookresearch/CPA/blob/382ff641c588820a453d801e5d0e5bb56642f282/compert/model.py#L342
+        """
+        """
+        Compute sum of drug embeddings, each of them multiplied by its
+        dose-response curve.
+        """
+        if self.cont_cov_type == 'mlp':
+            embeddings = []
+            for cov in range(covs.size(1)):
+                this_cov = covs[:, cov].view(-1, 1)
+                embeddings.append(self.cont_covariate_curves[cov](this_cov).sigmoid()) # * this_drug.gt(0))
+            return torch.cat(embeddings, 1) @ self.cont_covariate_embeddings.weight
+        else:
+            return self.cont_covariate_curves(covs) @ self.cont_covariate_embeddings.weight

@@ -57,9 +57,11 @@ class MultiVAE_MIL(BaseModelClass):
         n_layers_cov_aggregator: int = 1,
         n_layers_classifier: int = 1,
         n_layers_mlp_attn = None,
+        n_layers_cont_embed: int = 1,
         n_hidden_cell_aggregator: int = 16,
         n_hidden_cov_aggregator: int = 16,
         n_hidden_classifier: int = 16,
+        n_hidden_cont_embed: int = 16,
         n_hidden_mlp_attn = None,
         attention_dropout=True,
         class_loss_coef=1.0,
@@ -67,6 +69,7 @@ class MultiVAE_MIL(BaseModelClass):
         regularize_cell_attn=False,
         regularize_cov_attn=False,
         regularize_vae=False,
+        cont_cov_type='logsigm',
     ):
         super().__init__(adata)
 
@@ -126,9 +129,11 @@ class MultiVAE_MIL(BaseModelClass):
                         n_layers_encoders=n_layers_encoders,
                         n_layers_decoders=n_layers_decoders,
                         n_layers_shared_decoder=n_layers_shared_decoder,
+                        n_layers_cont_embed=n_layers_cont_embed,
                         n_hidden_encoders=n_hidden_encoders,
                         n_hidden_decoders=n_hidden_decoders,
                         n_hidden_shared_decoder=n_hidden_shared_decoder,
+                        n_hidden_cont_embed=n_hidden_cont_embed,
                         shared_decoder=shared_decoder,
                         # mil specific
                         num_classes=num_classes,
@@ -136,6 +141,7 @@ class MultiVAE_MIL(BaseModelClass):
                         attn_dim=attn_dim,
                         cat_covariate_dims=cat_covariate_dims,
                         cont_covariate_dims=cont_covariate_dims,
+                        cont_cov_type=cont_cov_type,
                         n_layers_cell_aggregator=n_layers_cell_aggregator,
                         n_layers_cov_aggregator=n_layers_cov_aggregator,
                         n_layers_classifier=n_layers_classifier,

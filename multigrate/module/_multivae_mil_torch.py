@@ -135,14 +135,17 @@ class MultiVAETorch_MIL(BaseModuleClass):
         attn_dim=16,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
+        cont_cov_type='logsigm',
         n_layers_cell_aggregator=1,
         n_layers_cov_aggregator=1,
         n_layers_classifier=1,
         n_layers_mlp_attn=1,
+        n_layers_cont_embed=1,
         n_hidden_cell_aggregator=16,
         n_hidden_cov_aggregator=16,
         n_hidden_classifier=16,
         n_hidden_mlp_attn=16,
+        n_hidden_cont_embed=16,
         class_loss_coef=1.0,
         reg_coef=1, 
         add_patient_to_classifier=False,
@@ -171,12 +174,15 @@ class MultiVAETorch_MIL(BaseModuleClass):
             integrate_on_idx=integrate_on_idx,
             cat_covariate_dims=cat_covariate_dims,
             cont_covariate_dims=cont_covariate_dims,
+            cont_cov_type=cont_cov_type,
             n_layers_encoders=n_layers_encoders,
             n_layers_decoders=n_layers_decoders,
             n_layers_shared_decoder=n_layers_shared_decoder,
+            n_layers_cont_embed=n_layers_cont_embed,
             n_hidden_encoders=n_hidden_encoders,
             n_hidden_decoders=n_hidden_decoders,
             n_hidden_shared_decoder=n_hidden_shared_decoder,
+            n_hidden_cont_embed=n_hidden_cont_embed,
             shared_decoder=shared_decoder,
         )
 
@@ -295,10 +301,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
             else:
                 cat_embedds = torch.Tensor().to(self.device) # so cat works later
 
-            if len(self.vae.cont_covariate_embeddings) > 0:
-                cont_embedds = torch.cat([cont_covariate_embedding(torch.log1p(covariate.unsqueeze(-1))) for covariate, cont_covariate_embedding in zip(cont_covs.T, self.vae.cont_covariate_embeddings)], dim=-1)
+            if self.vae.n_cont_cov > 0:
+                if cont_covs.shape[-1] != self.vae.n_cont_cov: # get rid of size_factors
+                    cont_covs = cont_covs[:, 0:self.vae.n_cont_cov]
+                cont_embedds = self.vae.compute_cont_cov_embeddings_(cont_covs)
             else:
-                cont_embedds = torch.Tensor().to(self.device) # so cat works later
+                cont_embedds = torch.Tensor().to(self.device)
 
             cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
 
