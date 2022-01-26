@@ -43,6 +43,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_hidden_shared_decoder: int = 32,
         add_patient_to_classifier=False,
         hierarchical_attn=True,
+        shared_decoder=True,
         z_dim=16,
         h_dim=32,
         losses=[],
@@ -128,6 +129,7 @@ class MultiVAE_MIL(BaseModelClass):
                         n_hidden_encoders=n_hidden_encoders,
                         n_hidden_decoders=n_hidden_decoders,
                         n_hidden_shared_decoder=n_hidden_shared_decoder,
+                        shared_decoder=shared_decoder,
                         # mil specific
                         num_classes=num_classes,
                         scoring=scoring,

@@ -45,6 +45,7 @@ class MultiVAETorch(BaseModuleClass):
         n_hidden_encoders = [],
         n_hidden_decoders = [],
         n_hidden_shared_decoder: int = 32,
+        shared_decoder = True,
     ):
         super().__init__()
 
@@ -55,6 +56,7 @@ class MultiVAETorch(BaseModuleClass):
         self.n_modality = len(self.input_dims)
         self.kernel_type = kernel_type
         self.integrate_on_idx = integrate_on_idx
+        self.add_shared_decoder = shared_decoder
 
         # TODO: clean
         if len(losses) == 0:
@@ -94,14 +96,15 @@ class MultiVAETorch(BaseModuleClass):
                 break
 
         # shared decoder
-        self.shared_decoder = MLP(
-                                n_input=z_dim+self.n_modality, 
-                                n_output=h_dim, 
-                                n_layers=n_layers_shared_decoder,
-                                n_hidden=n_hidden_shared_decoder,
-                                dropout_rate=dropout, 
-                                normalization=normalization,
-                            )
+        if self.add_shared_decoder:
+            self.shared_decoder = MLP(
+                                    n_input=z_dim+self.n_modality, 
+                                    n_output=h_dim, 
+                                    n_layers=n_layers_shared_decoder,
+                                    n_hidden=n_hidden_shared_decoder,
+                                    dropout_rate=dropout, 
+                                    normalization=normalization,
+                                )
         # modality encoders
         cond_dim_enc = cond_dim*(len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_encoders else 0
         self.encoders = [
@@ -116,10 +119,11 @@ class MultiVAETorch(BaseModuleClass):
                         ]
         # modality decoders
         cond_dim_dec = cond_dim*(len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_decoders else 0
-        
+        dec_input = h_dim if self.add_shared_decoder else z_dim
+
         self.decoders = [
                             Decoder(
-                                n_input=h_dim+cond_dim_dec, 
+                                n_input=dec_input+cond_dim_dec, 
                                 n_output=x_dim, 
                                 n_layers=n_layers,
                                 n_hidden=n_hidden,
@@ -262,12 +266,14 @@ class MultiVAETorch(BaseModuleClass):
 
     @auto_move_data
     def generative(self, z_joint, cat_covs, cont_covs):
-        mod_vecs = self.modal_vector(list(range(self.n_modality))) # shape 1 x n_mod x n_mod
-        z_joint = z_joint.unsqueeze(1).repeat(1, self.n_modality, 1)
-        mod_vecs = mod_vecs.repeat(z_joint.shape[0], 1, 1) # shape batch_size x n_mod x n_mod
+        z = z_joint.unsqueeze(1).repeat(1, self.n_modality, 1)
 
-        z_joint = torch.cat([z_joint, mod_vecs], dim=-1) # shape batch_size x n_mod x latent_dim+n_mod
-        z = self.shared_decoder(z_joint)
+        if self.add_shared_decoder:
+            mod_vecs = self.modal_vector(list(range(self.n_modality))) # shape 1 x n_mod x n_mod
+            mod_vecs = mod_vecs.repeat(z.shape[0], 1, 1) # shape batch_size x n_mod x n_mod
+            z = torch.cat([z, mod_vecs], dim=-1) # shape batch_size x n_mod x latent_dim+n_mod
+            z = self.shared_decoder(z)
+        
         zs = torch.split(z, 1, dim=1)
 
         if self.condition_decoders:
