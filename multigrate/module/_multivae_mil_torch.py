@@ -128,7 +128,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         n_hidden_encoders = [],
         n_hidden_decoders = [],
         n_hidden_shared_decoder: int = 32,
-        shared_decoder = True,
+        add_shared_decoder=True,
         patient_idx=None,
         num_classes=None,
         scoring='gated_attn',
@@ -183,7 +183,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             n_hidden_decoders=n_hidden_decoders,
             n_hidden_shared_decoder=n_hidden_shared_decoder,
             n_hidden_cont_embed=n_hidden_cont_embed,
-            shared_decoder=shared_decoder,
+            add_shared_decoder=add_shared_decoder,
         )
 
         self.integrate_on_idx = integrate_on_idx

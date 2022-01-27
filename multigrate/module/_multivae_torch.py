@@ -48,20 +48,35 @@ class MultiVAETorch(BaseModuleClass):
         n_hidden_encoders = [],
         n_hidden_decoders = [],
         n_hidden_shared_decoder: int = 32,
-        shared_decoder = True,
+        add_shared_decoder = True,
     ):
         super().__init__()
 
         self.input_dims = modality_lengths
         self.condition_encoders = condition_encoders
         self.condition_decoders = condition_decoders
-        self.input_dims = modality_lengths
         self.n_modality = len(self.input_dims)
         self.kernel_type = kernel_type
         self.integrate_on_idx = integrate_on_idx
-        self.add_shared_decoder = shared_decoder
+        self.add_shared_decoder = add_shared_decoder
         self.n_cont_cov = len(cont_covariate_dims)
         self.cont_cov_type = cont_cov_type
+
+        # needed to query to reference
+        self.normalization = normalization
+        self.z_dim=z_dim
+        self.h_dim=h_dim
+        self.dropout=dropout
+        self.cond_dim=cond_dim
+        self.kernel_type=kernel_type
+        self.n_layers_cont_embed=n_layers_cont_embed
+        self.n_layers_encoders=n_layers_encoders
+        self.n_layers_decoders=n_layers_decoders
+        self.n_layers_shared_decoder=n_layers_shared_decoder
+        self.n_hidden_cont_embed=n_hidden_cont_embed
+        self.n_hidden_encoders=n_hidden_encoders
+        self.n_hidden_decoders=n_hidden_decoders
+        self.n_hidden_shared_decoder=n_hidden_shared_decoder
 
         # TODO: clean
         if len(losses) == 0:
@@ -97,6 +112,7 @@ class MultiVAETorch(BaseModuleClass):
         for i, loss in enumerate(losses):
             if loss in ["nb", "zinb"]:
                 self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))
+                # self.register_parameter(name='theta', param=self.theta)
                 break
 
         # shared decoder
@@ -247,7 +263,6 @@ class MultiVAETorch(BaseModuleClass):
     def inference(self, x, cat_covs, cont_covs, masks=None):
         # cat_covs or cont_covs can be longer than xs in case of MIL and class labels or size_factors,
         # but it's taken care of later by using zip
-
         # split x into modality xs
         if torch.is_tensor(x):
             xs = torch.split(x, self.input_dims, dim=-1) # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim

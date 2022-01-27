@@ -1,4 +1,5 @@
 import torch
+import scvi
 import time
 import logging
 from torch import nn
@@ -23,6 +24,11 @@ from ..train import MILTrainingPlan
 from scvi.data._anndata import _setup_anndata
 from sklearn.metrics import classification_report
 from scvi import _CONSTANTS
+from anndata import AnnData
+from scvi.model._utils import parse_use_gpu_arg
+from scvi.model.base._utils import _initialize_model
+from copy import deepcopy
+from scvi.data import transfer_anndata_setup
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +52,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_hidden_shared_decoder: int = 32,
         add_patient_to_classifier=False,
         hierarchical_attn=True,
-        shared_decoder=True,
+        add_shared_decoder=True,
         z_dim=16,
         h_dim=32,
         losses=[],
@@ -138,7 +144,7 @@ class MultiVAE_MIL(BaseModelClass):
                         n_hidden_decoders=n_hidden_decoders,
                         n_hidden_shared_decoder=n_hidden_shared_decoder,
                         n_hidden_cont_embed=n_hidden_cont_embed,
-                        shared_decoder=shared_decoder,
+                        add_shared_decoder=add_shared_decoder,
                         # mil specific
                         num_classes=num_classes,
                         scoring=scoring,
@@ -167,7 +173,6 @@ class MultiVAE_MIL(BaseModelClass):
                     )
                     
         self.init_params_ = self._get_init_params(locals())
-
 
     def use_model(
         self,
@@ -320,6 +325,26 @@ class MultiVAE_MIL(BaseModelClass):
             categorical_covariate_keys=categorical_covariate_keys,
         )
 
+    def setup_query(
+        adata,
+        query,
+        class_label=None,
+        rna_indices_end=None, 
+        categorical_covariate_keys = None,
+        continuous_covariate_keys = None,
+    ):
+        MultiVAE.setup_anndata(
+            query,
+            rna_indices_end=rna_indices_end, 
+            categorical_covariate_keys=categorical_covariate_keys,
+            continuous_covariate_keys=continuous_covariate_keys,
+        )
+        scvi.data.transfer_anndata_setup(
+            adata,
+            query,
+            extend_categories = True,
+        )
+
     @auto_move_data
     def get_model_output(
         self,
@@ -422,3 +447,141 @@ class MultiVAE_MIL(BaseModelClass):
             print(classification_report(y_true, y_pred, target_names=target_names))
         else:
             raise RuntimeError(f"level={level} not in ['patient', 'bag', 'cell'].")
+
+    @classmethod
+    def load_query_data(
+        cls,
+        adata: AnnData,
+        reference_model: BaseModelClass,
+        use_gpu: Optional[Union[str, int, bool]] = None,
+        freeze: bool = True
+    ):
+        attr_dict = reference_model._get_user_attributes()
+        attr_dict = {a[0]: a[1] for a in attr_dict if a[0][-1] == "_"}
+
+        model = _initialize_model(cls, adata, attr_dict)
+
+        scvi_setup_dict = attr_dict.pop("scvi_setup_dict_")
+        transfer_anndata_setup(scvi_setup_dict, adata, extend_categories=True)
+
+        for attr, val in attr_dict.items():
+            setattr(model, attr, val)
+
+        vae = MultiVAE(
+            reference_model.adata, 
+            modality_lengths=reference_model.module.vae.input_dims,
+            losses=reference_model.module.vae.losses,
+            loss_coefs=reference_model.module.vae.loss_coefs,
+            integrate_on=reference_model.module.vae.integrate_on_idx,
+            condition_encoders=reference_model.module.vae.condition_encoders,
+            condition_decoders=reference_model.module.vae.condition_decoders,
+            normalization=reference_model.module.vae.normalization,
+            z_dim=reference_model.module.vae.z_dim,
+            h_dim=reference_model.module.vae.h_dim,
+            dropout=reference_model.module.vae.dropout,
+            cond_dim=reference_model.module.vae.cond_dim,
+            kernel_type=reference_model.module.vae.kernel_type,
+            n_layers_encoders = reference_model.module.vae.n_layers_encoders,
+            n_layers_decoders = reference_model.module.vae.n_layers_decoders,
+            n_layers_shared_decoder = reference_model.module.vae.n_layers_shared_decoder,
+            n_hidden_encoders = reference_model.module.vae.n_hidden_encoders,
+            n_hidden_decoders = reference_model.module.vae.n_hidden_decoders,
+            n_hidden_shared_decoder = reference_model.module.vae.n_hidden_shared_decoder,
+            add_shared_decoder = reference_model.module.vae.add_shared_decoder,
+            cont_cov_type = reference_model.module.vae.cont_cov_type,
+            n_hidden_cont_embed = reference_model.module.vae.n_hidden_cont_embed,
+            n_layers_cont_embed = reference_model.module.vae.n_layers_cont_embed,
+            ignore_categories = reference_model.class_label
+        )
+
+        vae.module.load_state_dict(reference_model.module.vae.state_dict())
+
+        new_vae = MultiVAE.load_query_data(
+            adata,
+            reference_model=vae,
+            use_gpu=use_gpu,
+            freeze=freeze,
+        )
+
+        model.module = reference_model.module
+        model.module.vae = new_vae.module
+
+        use_gpu, device = parse_use_gpu_arg(use_gpu)
+        model.to_device(device)
+
+        if freeze:
+            for name, p in model.module.named_parameters():
+                if 'vae' not in name:
+                    p.requires_grad = False
+
+        model.module.eval()
+        model.is_trained_ = False
+
+        return model
+
+    def finetune_query(
+        self,
+        max_epochs: int = 500,
+        lr: float = 1e-4,
+        use_gpu: Optional[Union[str, int, bool]] = None,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        batch_size: int = 256,
+        weight_decay: float = 0,
+        eps: float = 1e-08,
+        early_stopping: bool = True,
+        save_best: bool = True,
+        check_val_every_n_epoch: Optional[int] = None,
+        n_steps_kl_warmup: Optional[int] = None,
+        plan_kwargs: Optional[dict] = None,
+        plot_losses=True,
+    ):
+        vae = MultiVAE(
+            self.adata, 
+            modality_lengths=self.module.vae.input_dims,
+            losses=self.module.vae.losses,
+            loss_coefs=self.module.vae.loss_coefs,
+            integrate_on=self.module.vae.integrate_on_idx,
+            condition_encoders=self.module.vae.condition_encoders,
+            condition_decoders=self.module.vae.condition_decoders,
+            normalization=self.module.vae.normalization,
+            z_dim=self.module.vae.z_dim,
+            h_dim=self.module.vae.h_dim,
+            dropout=self.module.vae.dropout,
+            cond_dim=self.module.vae.cond_dim,
+            kernel_type=self.module.vae.kernel_type,
+            n_layers_encoders = self.module.vae.n_layers_encoders,
+            n_layers_decoders = self.module.vae.n_layers_decoders,
+            n_layers_shared_decoder = self.module.vae.n_layers_shared_decoder,
+            n_hidden_encoders = self.module.vae.n_hidden_encoders,
+            n_hidden_decoders = self.module.vae.n_hidden_decoders,
+            n_hidden_shared_decoder = self.module.vae.n_hidden_shared_decoder,
+            add_shared_decoder = self.module.vae.add_shared_decoder,
+            cont_cov_type = self.module.vae.cont_cov_type,
+            n_hidden_cont_embed = self.module.vae.n_hidden_cont_embed,
+            n_layers_cont_embed = self.module.vae.n_layers_cont_embed,
+            ignore_categories = self.class_label
+        )
+
+        vae.module.load_state_dict(self.module.vae.state_dict())
+
+        vae.train(
+            max_epochs=max_epochs,
+            lr=lr,
+            use_gpu=use_gpu,
+            train_size=train_size,
+            validation_size=validation_size,
+            batch_size=batch_size,
+            weight_decay=weight_decay,
+            eps=eps,
+            early_stopping=early_stopping,
+            save_best=save_best,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            n_steps_kl_warmup=n_steps_kl_warmup,
+            plan_kwargs=plan_kwargs,
+        )
+        if plot_losses:
+            vae.plot_losses()
+
+        self.module.vae = vae.module
+        self.is_trained_ = True
