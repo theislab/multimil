@@ -4,6 +4,7 @@ import logging
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
+import pandas as pd
 import scanpy as sc
 from operator import attrgetter
 from itertools import cycle, zip_longest, groupby
@@ -20,6 +21,8 @@ from scvi.train._callbacks import SaveBestState
 from scvi.train import TrainRunner
 from ..train import MILTrainingPlan
 from scvi.data._anndata import _setup_anndata
+from sklearn.metrics import classification_report
+from scvi import _CONSTANTS
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,7 @@ class MultiVAE_MIL(BaseModelClass):
         self.scoring = scoring
         self.adata = adata
         self.hierarchical_attn = hierarchical_attn
+        self.class_label = class_label
 
         # TODO add check that class is the same within a patient
         # TODO assert length of things is the same as number of modalities
@@ -317,10 +321,11 @@ class MultiVAE_MIL(BaseModelClass):
         )
 
     @auto_move_data
-    def get_latent_representation(
+    def get_model_output(
         self,
         adata=None,
         batch_size=256,
+        inplace=True,
     ):
         with torch.no_grad():
             self.module.eval()
@@ -340,7 +345,17 @@ class MultiVAE_MIL(BaseModelClass):
                 drop_last=False,
             )
             latent, cell_level_attn, cov_level_attn, predictions = [], [], [], []
+            bag_true, bag_pred = [], []
             for tensors in scdl:
+                class_label = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1]
+                batch_size = class_label.shape[0]
+                idx = list(range(self.module.patient_batch_size,  batch_size, self.module.patient_batch_size)) # or depending on model.train() and model.eval() ???
+                if batch_size % self.module.patient_batch_size != 0: # can only happen during inference for last batches for each patient
+                    idx = []
+
+                class_label = torch.tensor_split(class_label, idx, dim=0)
+                class_label = [torch.Tensor([labels[0]]).long().to(self.device) for labels in class_label]
+                class_label = torch.cat(class_label, dim=0)
                 inference_inputs = self.module._get_inference_input(tensors)
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
@@ -355,6 +370,8 @@ class MultiVAE_MIL(BaseModelClass):
                     cov_attn = cov_attn.flatten(start_dim=0, end_dim=1)
                     cov_level_attn += [cov_attn.cpu()]
 
+                bag_pred += [torch.argmax(pred, dim=-1).cpu()]
+                bag_true += [class_label.cpu()]
                 pred = torch.argmax(pred, dim=-1).unsqueeze(0).repeat(size, 1)
                 pred = pred.flatten()
                 predictions += [pred.cpu()]
@@ -368,5 +385,40 @@ class MultiVAE_MIL(BaseModelClass):
             cell_level = torch.cat(cell_level_attn).numpy()
             cov_level = torch.cat(cov_level_attn).numpy()
             prediction = torch.cat(predictions).numpy()
-            
-            return latent, cell_level, cov_level, prediction
+            bag_pred = torch.cat(bag_pred).numpy()
+            bag_true = torch.cat(bag_true).numpy()
+
+            if inplace:
+                adata.obsm['latent'] = latent
+                adata.obsm['cov_attn'] = cov_level
+                adata.obs['cell_attn'] = cell_level
+                adata.obs['predicted_class'] = prediction
+                adata.uns['bag_true'] = bag_true
+                adata.uns['bag_pred'] = bag_pred
+            else:
+                return latent, cell_level, cov_level, prediction, bag_true, bag_pred
+
+    def classification_report(self, adata=None, level='patient'):
+        
+        adata = self._validate_anndata(adata)
+        if 'predicted_class' not in adata.obs.keys():
+            raise RuntimeError(f'"predicted_class" not in adata.obs.keys(), please run model.get_model_output(adata) first.')
+
+        target_names = adata.uns['_scvi']['extra_categoricals']['mappings'][self.class_label]
+
+        if level == 'cell':
+            y_true = adata.obsm['_scvi_extra_categoricals'][self.class_label].values
+            y_pred = adata.obs['predicted_class'].values    
+            print(classification_report(y_true, y_pred, target_names=target_names))
+        elif level == 'bag':
+            y_true = adata.uns['bag_true']
+            y_pred = adata.uns['bag_pred']
+            print(classification_report(y_true, y_pred, target_names=target_names))
+        elif level == 'patient':
+            y_true = pd.DataFrame(adata.obs[self.patient_column]).join(pd.DataFrame(adata.obsm['_scvi_extra_categoricals'][self.class_label])).groupby(self.patient_column).agg('first')
+            y_true = y_true[self.class_label].values
+            y_pred = adata.obs[[self.patient_column, 'predicted_class']].groupby(self.patient_column).agg(lambda x:x.value_counts().index[0])
+            y_pred = y_pred['predicted_class'].values
+            print(classification_report(y_true, y_pred, target_names=target_names))
+        else:
+            raise RuntimeError(f"level={level} not in ['patient', 'bag', 'cell'].")
