@@ -261,6 +261,7 @@ class MultiVAETorch(BaseModuleClass):
 
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs, masks=None):
+        # TODO i think shouldn't happen any more what is written below
         # cat_covs or cont_covs can be longer than xs in case of MIL and class labels or size_factors,
         # but it's taken care of later by using zip
         # split x into modality xs
@@ -285,8 +286,9 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = torch.Tensor().to(self.device)
 
             if self.n_cont_cov > 0:
-                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors
-                    cont_covs = cont_covs[:, 0:self.n_cont_cov]
+                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors # TODO shouldn't happen any more
+                    raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov")
+                    # cont_covs = cont_covs[:, 0:self.n_cont_cov]
                 cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
@@ -329,8 +331,9 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = torch.Tensor().to(self.device)
 
             if self.n_cont_cov > 0:
-                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors
-                    cont_covs = cont_covs[:, 0:self.n_cont_cov]
+                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors # TODO shouldn't happen any more
+                    raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov")
+                    # cont_covs = cont_covs[:, 0:self.n_cont_cov]
                 cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
@@ -344,7 +347,7 @@ class MultiVAETorch(BaseModuleClass):
         tensors,
         inference_outputs,
         generative_outputs,
-        kl_weight: float = 1.0
+        # kl_weight: float = 1.0
     ):
 
         x = tensors[_CONSTANTS.X_KEY]
@@ -471,7 +474,7 @@ class MultiVAETorch(BaseModuleClass):
             embeddings = []
             for cov in range(covs.size(1)):
                 this_cov = covs[:, cov].view(-1, 1)
-                embeddings.append(self.cont_covariate_curves[cov](this_cov).sigmoid()) # * this_drug.gt(0))
+                embeddings.append(self.cont_covariate_curves[cov](this_cov).sigmoid()) # * this_drug.gt(0)) # TODO check what this .gt(0) is
             return torch.cat(embeddings, 1) @ self.cont_covariate_embeddings.weight
         else:
             return self.cont_covariate_curves(covs) @ self.cont_covariate_embeddings.weight

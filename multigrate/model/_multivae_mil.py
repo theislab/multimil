@@ -1,3 +1,4 @@
+from tkinter.ttk import Sizegrip
 import torch
 import scvi
 import time
@@ -37,8 +38,10 @@ class MultiVAE_MIL(BaseModelClass):
         self,
         adata,
         modality_lengths,
-        class_label,
         patient_label,
+        classification=[], 
+        regression=[],
+        ordinal_regression=[],
         patient_batch_size=128,
         integrate_on=None,
         condition_encoders=False,
@@ -65,6 +68,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_layers_cell_aggregator: int = 1,
         n_layers_cov_aggregator: int = 1,
         n_layers_classifier: int = 1,
+        n_layers_regressor: int = 1,
         n_layers_mlp_attn = None,
         n_layers_cont_embed: int = 1,
         n_hidden_cell_aggregator: int = 16,
@@ -72,6 +76,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_hidden_classifier: int = 16,
         n_hidden_cont_embed: int = 16,
         n_hidden_mlp_attn = None,
+        n_hidden_regressor: int = 16,
         attention_dropout=True,
         class_loss_coef=1.0,
         reg_coef=1,
@@ -87,8 +92,15 @@ class MultiVAE_MIL(BaseModelClass):
         self.scoring = scoring
         self.adata = adata
         self.hierarchical_attn = hierarchical_attn
-        self.class_label = class_label
 
+        if len(classification) + len(regression) + len(ordinal_regression) == 0:
+            raise ValueError('At least one of "classification", "regression", "ordinal_regression" has to be specified.')
+
+        self.classification = classification
+        self.regression = regression
+        self.ordinal_regression = ordinal_regression
+        
+        # TODO check if all of the three above were registered with setup anndata
         # TODO add check that class is the same within a patient
         # TODO assert length of things is the same as number of modalities
         # TODO add that n_layers has to be > 0 for all
@@ -100,9 +112,15 @@ class MultiVAE_MIL(BaseModelClass):
             if not n_hidden_mlp_attn:
                 n_hidden_mlp_attn = 16
 
+        self.regression_idx = []
         cont_covariate_dims = []
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
-            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+            for i, key in enumerate(adata.uns['_scvi']['extra_continuous_keys']):
+                if key != 'size_factors':
+                    if key in self.regression:
+                        self.regression_idx.append(i)
+                    else:
+                        cont_covariate_dims.append(1)
 
         num_groups = 1
         integrate_on_idx = None
@@ -113,14 +131,26 @@ class MultiVAE_MIL(BaseModelClass):
             except:
                 raise ValueError(f'Cannot integrate on {integrate_on}, has to be one of extra categoricals = {adata.uns["_scvi"]["extra_categoricals"]["keys"]}')
 
+        # classification and ordinal regression together here as ordinal regression values need to be registered as categorical covariates
+        self.class_idx, self.ord_idx = [], []
+        cat_covariate_dims = []
+        num_classes = []
         if adata.uns['_scvi'].get('extra_categoricals') is not None:
-            cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] != class_label]
-            try:
-                num_classes = len(adata.uns['_scvi']['extra_categoricals']['mappings'][class_label])
-            except:
-                raise ValueError(f'{class_label} has to be registered as a categorical covariate beforehand with setup_anndata.')
-        else:
-            raise ValueError('Class labels have to be registered as a categorical covariate beforehand with setup_anndata.')
+            for i, key in enumerate(adata.uns['_scvi']['extra_categoricals']['keys']):
+                if key in self.classification:
+                    num_classes.append(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'][i])
+                    self.class_idx.append(i)
+                elif key in self.ordinal_regression:
+                    self.ord_idx.append(i) 
+                else: # the actual categorical covariate 
+                    cat_covariate_dims.append(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'][i])
+            
+        for label in ordinal_regression:
+            print(f'The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with "ordinal_regression_order" parameter.')
+
+        self.class_idx = torch.tensor(self.class_idx)
+        self.ord_idx = torch.tensor(self.ord_idx)
+        self.regression_idx = torch.tensor(self.regression_idx)
 
         self.module = MultiVAETorch_MIL(
                         modality_lengths=modality_lengths,
@@ -156,6 +186,8 @@ class MultiVAE_MIL(BaseModelClass):
                         n_layers_cov_aggregator=n_layers_cov_aggregator,
                         n_layers_classifier=n_layers_classifier,
                         n_layers_mlp_attn=n_layers_mlp_attn,
+                        n_layers_regressor=n_layers_regressor,
+                        n_hidden_regressor=n_hidden_regressor,
                         n_hidden_cell_aggregator=n_hidden_cell_aggregator,
                         n_hidden_cov_aggregator=n_hidden_cov_aggregator,
                         n_hidden_classifier=n_hidden_classifier,
@@ -170,10 +202,14 @@ class MultiVAE_MIL(BaseModelClass):
                         regularize_cov_attn=regularize_cov_attn,
                         regularize_vae=regularize_vae,
                         attention_dropout=attention_dropout,
+                        class_idx=self.class_idx,
+                        ord_idx=self.ord_idx,
+                        reg_idx=self.regression_idx,
                     )
                     
         self.init_params_ = self._get_init_params(locals())
 
+    # TODO discuss if we still need it
     def use_model(
         self,
         model,
@@ -207,7 +243,6 @@ class MultiVAE_MIL(BaseModelClass):
         save_best: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
         n_steps_kl_warmup: Optional[int] = None,
-        #n_epochs_kl_warmup: Optional[int] = 50,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
     ):
@@ -301,10 +336,10 @@ class MultiVAE_MIL(BaseModelClass):
 
     def setup_anndata(
         adata,
-        class_label,
         rna_indices_end = None,
         categorical_covariate_keys = None,
-        continuous_covariate_keys = None
+        continuous_covariate_keys = None,
+        ordinal_regression_order = None,
     ):
         if rna_indices_end:
             adata.obs['size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()[0]
@@ -314,10 +349,14 @@ class MultiVAE_MIL(BaseModelClass):
             else:
                 continuous_covariate_keys = ['size_factors']
 
-        if categorical_covariate_keys:
-            categorical_covariate_keys.append(class_label) # order important! class label key always last
-        else:
-            categorical_covariate_keys = [class_label]
+        if ordinal_regression_order:
+            if not set(ordinal_regression_order.keys()).issubset(categorical_covariate_keys):
+                raise ValueError(f'All keys {ordinal_regression_order.keys()} has to be registered as categorical covariates too.')
+            for key in ordinal_regression_order.keys():
+                adata.obs[key] = adata.obs[key].astype('category')
+                if set(adata.obs[key].cat.categories) != set(ordinal_regression_order[key]):
+                    raise ValueError(f'Categories of adata.obs[{key}]={adata.obs[key].cat.categories} are not the same as categories specified = {ordinal_regression_order[key]}')
+                adata.obs[key] = adata.obs[key].cat.reorder_categories(ordinal_regression_order[key])
 
         return _setup_anndata(
             adata,
@@ -328,7 +367,6 @@ class MultiVAE_MIL(BaseModelClass):
     def setup_query(
         adata,
         query,
-        class_label=None,
         rna_indices_end=None, 
         categorical_covariate_keys = None,
         continuous_covariate_keys = None,
@@ -345,12 +383,22 @@ class MultiVAE_MIL(BaseModelClass):
             extend_categories = True,
         )
 
+    def create_df(pred, columns=None, index=None):
+        for key in pred.keys():
+            pred[key] = torch.cat(pred[key]).flatten().cpu().numpy()
+        df = pd.DataFrame(pred)
+        if index:
+            df.index = index
+        if columns:
+            df.columns = columns
+        return df
+
+
     @auto_move_data
     def get_model_output(
         self,
         adata=None,
         batch_size=256,
-        inplace=True,
     ):
         with torch.no_grad():
             self.module.eval()
@@ -369,37 +417,63 @@ class MultiVAE_MIL(BaseModelClass):
                 patient_column=self.patient_column,
                 drop_last=False,
             )
-            latent, cell_level_attn, cov_level_attn, predictions = [], [], [], []
-            bag_true, bag_pred = [], []
+
+            latent, cell_level_attn, cov_level_attn = [], [], []
+            class_pred, ord_pred, reg_pred = {}, {}, {}
+            bag_class_true, bag_class_pred, bag_reg_true, bag_reg_pred, bag_ord_true, bag_ord_pred = {}, {}, {}, {}, {}, {}
+
             for tensors in scdl:
-                class_label = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, -1]
-                batch_size = class_label.shape[0]
+
+                cont_key = _CONSTANTS.CONT_COVS_KEY
+                cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+                cat_key = _CONSTANTS.CAT_COVS_KEY
+                cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+                batch_size = cat_covs.shape[0]
+
                 idx = list(range(self.module.patient_batch_size,  batch_size, self.module.patient_batch_size)) # or depending on model.train() and model.eval() ???
                 if batch_size % self.module.patient_batch_size != 0: # can only happen during inference for last batches for each patient
                     idx = []
 
-                class_label = torch.tensor_split(class_label, idx, dim=0)
-                class_label = [torch.Tensor([labels[0]]).long().to(self.device) for labels in class_label]
-                class_label = torch.cat(class_label, dim=0)
+                if len(self.regression_idx) > 0:
+                    regression = torch.index_select(cont_covs, 1, self.regression_idx)
+                    regression = regression.view(len(idx)+1, -1, len(self.regression_idx))[:, 0, :]
+                
+                if len(self.ord_idx) > 0:
+                    ordinal_regression = torch.index_select(cat_covs, 1, self.ord_idx)
+                    ordinal_regression = ordinal_regression.view(len(idx)+1, -1, len(self.ord_idx))[:, 0, :]
+                if len(self.class_idx) > 0:
+                    classification = torch.index_select(cat_covs, 1, self.class_idx)
+                    classification = classification.view(len(idx)+1, -1, len(self.class_idx))[:, 0, :]
+
                 inference_inputs = self.module._get_inference_input(tensors)
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
-                pred = outputs['prediction']
+                pred = outputs['predictions']
                 cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
                 size = cell_attn.shape[-1]
                 cell_attn = cell_attn.flatten() # in inference always one patient per batch
 
                 if self.hierarchical_attn:
                     cov_attn = self.module.cov_level_aggregator[-1].A.squeeze(dim=1) # aggregator is always last after hidden MLP layers 
-                    cov_attn = cov_attn.unsqueeze(0).repeat(size, 1, 1)
+                    cov_attn = cov_attn.unsqueeze(1).repeat(1, size, 1)
                     cov_attn = cov_attn.flatten(start_dim=0, end_dim=1)
                     cov_level_attn += [cov_attn.cpu()]
 
-                bag_pred += [torch.argmax(pred, dim=-1).cpu()]
-                bag_true += [class_label.cpu()]
-                pred = torch.argmax(pred, dim=-1).unsqueeze(0).repeat(size, 1)
-                pred = pred.flatten()
-                predictions += [pred.cpu()]
+                for i in range(len(self.class_idx)):
+                    bag_class_pred[i] = bag_class_pred.get(i, []) + [pred[i].cpu()]
+                    bag_class_true[i] = bag_class_true.get(i, []) + [classification[:, i].cpu()]
+                    class_pred[i] = class_pred.get(i, []) + [pred[i].unsqueeze(0).repeat(1, size).flatten()]
+                for i in range(len(self.ord_idx)):
+                    bag_ord_pred[i] = bag_ord_pred.get(i, []) + [pred[len(self.class_idx)+i]]
+                    bag_ord_true[i] = bag_ord_true.get(i, [])+ [ordinal_regression[:, i].cpu()]
+                    ord_pred[i] = ord_pred.get(i, []) + [pred[len(self.class_idx)+i].repeat(1, size).flatten()]
+                for i in range(len(self.regression_idx)):
+                    bag_reg_pred[i] = bag_reg_pred.get(i, []) + [pred[len(self.class_idx)+len(self.ord_idx)+i].cpu()]
+                    bag_reg_true[i] = bag_reg_true.get(i, []) + [regression[:, i].cpu()]
+                    reg_pred[i] = reg_pred.get(i, []) + [pred[len(self.class_idx)+len(self.ord_idx)+i].repeat(1, size).flatten()]
+            
                 latent += [z.cpu()]
                 cell_level_attn += [cell_attn.cpu()]
                 
@@ -409,39 +483,79 @@ class MultiVAE_MIL(BaseModelClass):
             latent = torch.cat(latent).numpy()
             cell_level = torch.cat(cell_level_attn).numpy()
             cov_level = torch.cat(cov_level_attn).numpy()
-            prediction = torch.cat(predictions).numpy()
-            bag_pred = torch.cat(bag_pred).numpy()
-            bag_true = torch.cat(bag_true).numpy()
 
-            if inplace:
-                adata.obsm['latent'] = latent
-                adata.obsm['cov_attn'] = cov_level
-                adata.obs['cell_attn'] = cell_level
-                adata.obs['predicted_class'] = prediction
-                adata.uns['bag_true'] = bag_true
-                adata.uns['bag_pred'] = bag_pred
-            else:
-                return latent, cell_level, cov_level, prediction, bag_true, bag_pred
+            # bag_class_pred = create_df(bag_class_pred, self.classification, )
 
-    def classification_report(self, adata=None, level='patient'):
-        
+            # for key in bag_class_pred.keys():
+            #     bag_class_pred[key] = torch.cat(bag_class_pred[key]).numpy()
+            # for key in bag_class_true.keys():
+            #     bag_class_true[key] = torch.cat(bag_class_true[key]).numpy()
+            # for key in class_pred.keys():
+            #     class_pred[key] = torch.cat(class_pred[key]).numpy()
+
+            # for key in bag_ord_pred.keys():
+            #     bag_ord_pred[key] = torch.cat(bag_ord_pred[key]).flatten().numpy()
+            # for key in bag_ord_true.keys():
+            #     bag_ord_true[key] = torch.cat(bag_ord_true[key]).numpy()
+            # for key in ord_pred.keys():
+            #     ord_pred[key] = torch.cat(ord_pred[key]).numpy()
+
+            # for key in bag_reg_pred.keys():
+            #     bag_reg_pred[key] = torch.cat(bag_reg_pred[key]).flatten().numpy()
+            # for key in bag_reg_true.keys():
+            #     bag_reg_true[key] = torch.cat(bag_reg_true[key]).numpy()
+            # for key in reg_pred.keys():
+            #     reg_pred[key] = torch.cat(reg_pred[key]).numpy()
+
+            adata.obsm['latent'] = latent
+            adata.obsm['cov_attn'] = cov_level
+            adata.obs['cell_attn'] = cell_level
+
+            if len(self.class_idx) > 0:
+                adata.obsm['classification_predictions'] = create_df(class_pred, self.classification, index=adata.obs_names)
+                adata.uns['bag_classification_true'] = create_df(bag_class_true, self.classification)
+                adata.uns['bag_classification_predictions'] = create_df(bag_class_pred, self.classification)
+            if len(self.ord_idx) > 0:
+                adata.obsm['ordinal_predictions'] = create_df(ord_pred, self.ordinal_regression, index=adata.obs_names)
+                adata.uns['bag_ordinal_true'] = create_df(bag_ord_true, self.ordinal_regression)
+                adata.uns['bag_ordinal_predictions'] = create_df(bag_ord_pred, self.ordinal_regression)
+                # adata.obsm['ordinal_predictions'] = pd.DataFrame(ord_pred, index = adata.obs_names)
+                # adata.obsm['ordinal_predictions'].columns = self.ordinal_regression
+                # adata.uns['bag_ordinal_true'] = pd.DataFrame(bag_ord_true)
+                # adata.uns['bag_ordinal_true'].columns = self.ordinal_regression
+                # adata.uns['bag_ordinal_predictions'] = pd.DataFrame(bag_ord_pred)
+                # adata.uns['bag_ordinal_predictions'].columns = self.ordinal_regression
+            if len(self.regression_idx) > 0:
+                adata.obsm['regression_predictions'] = create_df(reg_pred, self.regression, index=adata.obs_names)
+                adata.uns['bag_regression_true'] = create_df(bag_reg_true, self.regression)
+                adata.uns['bag_regression_predictions'] = create_df(bag_reg_pred, self.regression)
+                # adata.obsm['regression_predictions'] = pd.DataFrame(reg_pred, index=adata.obs_names)
+                # adata.obsm['regression_predictions'].columns = self.regression
+                # adata.uns['bag_regression_true'] = pd.DataFrame(bag_reg_true)
+                # adata.uns['bag_regression_true'].columns = self.regression
+                # adata.uns['bag_regression_predictions'] = pd.DataFrame(bag_reg_pred)
+                # adata.uns['bag_regression_predictions'].columns = self.regression
+
+    def classification_report(self, label, adata=None, level='patient'):
+        # TODO this works if classification now, do a custom one for ordinal and check what to report for regression
         adata = self._validate_anndata(adata)
+        # TODO check if label is in cat covariates and was predicted
         if 'predicted_class' not in adata.obs.keys():
             raise RuntimeError(f'"predicted_class" not in adata.obs.keys(), please run model.get_model_output(adata) first.')
 
-        target_names = adata.uns['_scvi']['extra_categoricals']['mappings'][self.class_label]
+        target_names = adata.uns['_scvi']['extra_categoricals']['mappings'][label]
 
         if level == 'cell':
-            y_true = adata.obsm['_scvi_extra_categoricals'][self.class_label].values
-            y_pred = adata.obs['predicted_class'].values    
+            y_true = adata.obsm['_scvi_extra_categoricals'][label].values
+            y_pred = adata.obs['predicted_class'].values  # TODO can be more now
             print(classification_report(y_true, y_pred, target_names=target_names))
         elif level == 'bag':
             y_true = adata.uns['bag_true']
             y_pred = adata.uns['bag_pred']
             print(classification_report(y_true, y_pred, target_names=target_names))
         elif level == 'patient':
-            y_true = pd.DataFrame(adata.obs[self.patient_column]).join(pd.DataFrame(adata.obsm['_scvi_extra_categoricals'][self.class_label])).groupby(self.patient_column).agg('first')
-            y_true = y_true[self.class_label].values
+            y_true = pd.DataFrame(adata.obs[self.patient_column]).join(pd.DataFrame(adata.obsm['_scvi_extra_categoricals'][label])).groupby(self.patient_column).agg('first')
+            y_true = y_true[label].values
             y_pred = adata.obs[[self.patient_column, 'predicted_class']].groupby(self.patient_column).agg(lambda x:x.value_counts().index[0])
             y_pred = y_pred['predicted_class'].values
             print(classification_report(y_true, y_pred, target_names=target_names))
@@ -491,7 +605,7 @@ class MultiVAE_MIL(BaseModelClass):
             cont_cov_type = reference_model.module.vae.cont_cov_type,
             n_hidden_cont_embed = reference_model.module.vae.n_hidden_cont_embed,
             n_layers_cont_embed = reference_model.module.vae.n_layers_cont_embed,
-            ignore_categories = reference_model.class_label
+            ignore_categories = reference_model.classification + reference_model.regression + reference_model.ordinal_regression
         )
 
         vae.module.load_state_dict(reference_model.module.vae.state_dict())
@@ -560,7 +674,7 @@ class MultiVAE_MIL(BaseModelClass):
             cont_cov_type = self.module.vae.cont_cov_type,
             n_hidden_cont_embed = self.module.vae.n_hidden_cont_embed,
             n_layers_cont_embed = self.module.vae.n_layers_cont_embed,
-            ignore_categories = self.class_label
+            ignore_categories = self.classification + self.regression + self.ordinal_regression
         )
 
         vae.module.load_state_dict(self.module.vae.state_dict())
@@ -585,3 +699,5 @@ class MultiVAE_MIL(BaseModelClass):
 
         self.module.vae = vae.module
         self.is_trained_ = True
+
+    

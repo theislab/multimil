@@ -80,7 +80,7 @@ class MultiVAE(BaseModelClass):
 
         cont_covariate_dims = []
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
-            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
+            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors' and key not in ignore_categories]
 
         if adata.uns['_scvi'].get('extra_categoricals') is not None:
             cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] not in ignore_categories]
@@ -296,7 +296,7 @@ class MultiVAE(BaseModelClass):
             categorical_covariate_keys=categorical_covariate_keys,
         )
 
-    # TODO
+    # TODO add new losses
     def plot_losses(self):
         df = pd.DataFrame(self.history['train_loss_epoch'])
         for key in self.history.keys():
