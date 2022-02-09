@@ -479,7 +479,7 @@ class MultiVAE_MIL(BaseModelClass):
             adata.obs['cell_attn'] = cell_level
 
             for i in range(len(self.class_idx)):
-                name = self.classification[i]
+                name = self.classification
                 classes = adata.uns['_scvi']['extra_categoricals']['mappings'][name]
                 df = create_df(class_pred[i], classes, index=adata.obs_names)
                 adata.obsm[f'classification_predictions_{name}'] = df
