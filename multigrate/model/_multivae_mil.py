@@ -15,6 +15,7 @@ from ..nn import *
 from ._multivae import MultiVAE
 from ..module import MultiVAETorch_MIL
 from ..dataloaders import BagDataSplitter, BagAnnDataLoader
+from ..utils import create_df
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
@@ -60,26 +61,26 @@ class MultiVAE_MIL(BaseModelClass):
         h_dim=32,
         losses=[],
         dropout=0.2,
-        cond_dim=16,
+        cond_dim=10,
         kernel_type='gaussian',
         loss_coefs=[],
         scoring='gated_attn',
-        attn_dim=16,
+        attn_dim=15,
         n_layers_cell_aggregator: int = 1,
         n_layers_cov_aggregator: int = 1,
         n_layers_classifier: int = 1,
         n_layers_regressor: int = 1,
         n_layers_mlp_attn = None,
         n_layers_cont_embed: int = 1,
-        n_hidden_cell_aggregator: int = 16,
-        n_hidden_cov_aggregator: int = 16,
-        n_hidden_classifier: int = 16,
-        n_hidden_cont_embed: int = 16,
+        n_hidden_cell_aggregator: int = 128,
+        n_hidden_cov_aggregator: int = 128,
+        n_hidden_classifier: int = 128,
+        n_hidden_cont_embed: int = 128,
         n_hidden_mlp_attn = None,
-        n_hidden_regressor: int = 16,
+        n_hidden_regressor: int = 128,
         attention_dropout=True,
         class_loss_coef=1.0,
-        reg_coef=1,
+        reg_coef=1.0,
         regularize_cell_attn=False,
         regularize_cov_attn=False,
         regularize_vae=False,
@@ -383,17 +384,6 @@ class MultiVAE_MIL(BaseModelClass):
             extend_categories = True,
         )
 
-    def create_df(pred, columns=None, index=None):
-        for key in pred.keys():
-            pred[key] = torch.cat(pred[key]).flatten().cpu().numpy()
-        df = pd.DataFrame(pred)
-        if index:
-            df.index = index
-        if columns:
-            df.columns = columns
-        return df
-
-
     @auto_move_data
     def get_model_output(
         self,
@@ -464,7 +454,7 @@ class MultiVAE_MIL(BaseModelClass):
                 for i in range(len(self.class_idx)):
                     bag_class_pred[i] = bag_class_pred.get(i, []) + [pred[i].cpu()]
                     bag_class_true[i] = bag_class_true.get(i, []) + [classification[:, i].cpu()]
-                    class_pred[i] = class_pred.get(i, []) + [pred[i].unsqueeze(0).repeat(1, size).flatten()]
+                    class_pred[i] = class_pred.get(i, []) + [pred[i].unsqueeze(1).repeat(1, size, 1).flatten(0,1)]
                 for i in range(len(self.ord_idx)):
                     bag_ord_pred[i] = bag_ord_pred.get(i, []) + [pred[len(self.class_idx)+i]]
                     bag_ord_true[i] = bag_ord_true.get(i, [])+ [ordinal_regression[:, i].cpu()]
@@ -484,57 +474,30 @@ class MultiVAE_MIL(BaseModelClass):
             cell_level = torch.cat(cell_level_attn).numpy()
             cov_level = torch.cat(cov_level_attn).numpy()
 
-            # bag_class_pred = create_df(bag_class_pred, self.classification, )
-
-            # for key in bag_class_pred.keys():
-            #     bag_class_pred[key] = torch.cat(bag_class_pred[key]).numpy()
-            # for key in bag_class_true.keys():
-            #     bag_class_true[key] = torch.cat(bag_class_true[key]).numpy()
-            # for key in class_pred.keys():
-            #     class_pred[key] = torch.cat(class_pred[key]).numpy()
-
-            # for key in bag_ord_pred.keys():
-            #     bag_ord_pred[key] = torch.cat(bag_ord_pred[key]).flatten().numpy()
-            # for key in bag_ord_true.keys():
-            #     bag_ord_true[key] = torch.cat(bag_ord_true[key]).numpy()
-            # for key in ord_pred.keys():
-            #     ord_pred[key] = torch.cat(ord_pred[key]).numpy()
-
-            # for key in bag_reg_pred.keys():
-            #     bag_reg_pred[key] = torch.cat(bag_reg_pred[key]).flatten().numpy()
-            # for key in bag_reg_true.keys():
-            #     bag_reg_true[key] = torch.cat(bag_reg_true[key]).numpy()
-            # for key in reg_pred.keys():
-            #     reg_pred[key] = torch.cat(reg_pred[key]).numpy()
-
             adata.obsm['latent'] = latent
             adata.obsm['cov_attn'] = cov_level
             adata.obs['cell_attn'] = cell_level
 
-            if len(self.class_idx) > 0:
-                adata.obsm['classification_predictions'] = create_df(class_pred, self.classification, index=adata.obs_names)
-                adata.uns['bag_classification_true'] = create_df(bag_class_true, self.classification)
-                adata.uns['bag_classification_predictions'] = create_df(bag_class_pred, self.classification)
+            for i in range(len(self.class_idx)):
+                name = self.classification[i]
+                classes = adata.uns['_scvi']['extra_categoricals']['mappings'][name]
+                df = create_df(class_pred[i], classes, index=adata.obs_names)
+                adata.obsm[f'classification_predictions_{name}'] = df
+                adata.obs[f'predicted_{name}'] = df.to_numpy().argmax(axis=1)
+                adata.obs[f'predicted_{name}'] = adata.obs[f'predicted_{name}'].astype('category')
+                adata.obs[f'predicted_{name}'] = adata.obs[f'predicted_{name}'].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
+                adata.uns[f'bag_classification_true_{name}'] = create_df(bag_class_true)
+                df_bag = create_df(bag_class_pred[i], classes)
+                adata.uns[f'bag_classification_predictions_{name}'] = df_bag
+                adata.uns[f'bag_predicted_{name}'] = df_bag.to_numpy().argmax(axis=1)
             if len(self.ord_idx) > 0:
                 adata.obsm['ordinal_predictions'] = create_df(ord_pred, self.ordinal_regression, index=adata.obs_names)
                 adata.uns['bag_ordinal_true'] = create_df(bag_ord_true, self.ordinal_regression)
                 adata.uns['bag_ordinal_predictions'] = create_df(bag_ord_pred, self.ordinal_regression)
-                # adata.obsm['ordinal_predictions'] = pd.DataFrame(ord_pred, index = adata.obs_names)
-                # adata.obsm['ordinal_predictions'].columns = self.ordinal_regression
-                # adata.uns['bag_ordinal_true'] = pd.DataFrame(bag_ord_true)
-                # adata.uns['bag_ordinal_true'].columns = self.ordinal_regression
-                # adata.uns['bag_ordinal_predictions'] = pd.DataFrame(bag_ord_pred)
-                # adata.uns['bag_ordinal_predictions'].columns = self.ordinal_regression
             if len(self.regression_idx) > 0:
                 adata.obsm['regression_predictions'] = create_df(reg_pred, self.regression, index=adata.obs_names)
                 adata.uns['bag_regression_true'] = create_df(bag_reg_true, self.regression)
                 adata.uns['bag_regression_predictions'] = create_df(bag_reg_pred, self.regression)
-                # adata.obsm['regression_predictions'] = pd.DataFrame(reg_pred, index=adata.obs_names)
-                # adata.obsm['regression_predictions'].columns = self.regression
-                # adata.uns['bag_regression_true'] = pd.DataFrame(bag_reg_true)
-                # adata.uns['bag_regression_true'].columns = self.regression
-                # adata.uns['bag_regression_predictions'] = pd.DataFrame(bag_reg_pred)
-                # adata.uns['bag_regression_predictions'].columns = self.regression
 
     def classification_report(self, label, adata=None, level='patient'):
         # TODO this works if classification now, do a custom one for ordinal and check what to report for regression

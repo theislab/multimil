@@ -1,6 +1,6 @@
-from . import nn, distributions, metrics, model, module, data
+from . import nn, distributions, metrics, model, module, data, utils
 
-__all__ = ["nn", "distributions", "metrics", "model", "module", "data"]
+__all__ = ["nn", "distributions", "metrics", "model", "module", "data", "utils"]
 
 __author__ = ', '.join([
     'Alireza Omidi',

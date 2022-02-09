@@ -39,7 +39,7 @@ class Aggregator(nn.Module):
             self.attention = nn.Sequential(
                 nn.Linear(n_input, self.attn_dim),
                 nn.Tanh(),
-                nn.Dropout(dropout) if attention_dropout else None,
+                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
                 nn.Linear(self.attn_dim, 1, bias=False),
             )
         elif self.scoring == 'gated_attn':
@@ -47,14 +47,14 @@ class Aggregator(nn.Module):
             self.attention_V = nn.Sequential(
                 nn.Linear(n_input, self.attn_dim),
                 nn.Tanh(),
-                nn.Dropout(dropout) if attention_dropout else None,
+                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
             )
 
             self.attention_U = nn.Sequential(
                 #orthogonal(nn.Linear(z_dim, self.attn_dim)),
                 nn.Linear(n_input, self.attn_dim),
                 nn.Sigmoid(),
-                nn.Dropout(dropout) if attention_dropout else None,
+                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
             )
 
             self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
@@ -314,11 +314,10 @@ class MultiVAETorch_MIL(BaseModuleClass):
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs):
         # vae part
-
         if len(self.cont_cov_idx) > 0:
-            cont_covs = torch.index_select(cont_covs, 1, self.cont_cov_idx)
+            cont_covs = torch.index_select(cont_covs, 1, self.cont_cov_idx.to(self.device))
         if len(self.cat_cov_idx) > 0:
-            cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx)
+            cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx.to(self.device))
 
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs['z_joint']
@@ -373,9 +372,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
     @auto_move_data
     def generative(self, z_joint, cat_covs, cont_covs):
         if len(self.cont_cov_idx) > 0:
-            cont_covs = torch.index_select(cont_covs, 1, self.cont_cov_idx)
+            cont_covs = torch.index_select(cont_covs, 1, self.cont_cov_idx.to(self.device))
         if len(self.cat_cov_idx) > 0:
-            cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx)
+            cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx.to(self.device))
         return self.vae.generative(z_joint, cat_covs, cont_covs)
 
     def orthogonal_regularization(self, weights, axis=0):
@@ -416,19 +415,19 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         # TODO in a function
         if len(self.reg_idx) > 0:
-            regression = torch.index_select(cont_covs, 1, self.reg_idx)
+            regression = torch.index_select(cont_covs, 1, self.reg_idx.to(self.device))
             regression = regression.view(len(idx)+1, -1, len(self.reg_idx))[:, 0, :]
         if len(self.cont_cov_idx) > 0:
-            cont_covs = torch.index_select(cont_covs, 1, self.cont_cov_idx)
+            cont_covs = torch.index_select(cont_covs, 1, self.cont_cov_idx.to(self.device))
 
         if len(self.ord_idx) > 0:
-            ordinal_regression = torch.index_select(cat_covs, 1, self.ord_idx)
+            ordinal_regression = torch.index_select(cat_covs, 1, self.ord_idx.to(self.device))
             ordinal_regression = ordinal_regression.view(len(idx)+1, -1, len(self.ord_idx))[:, 0, :]
         if len(self.class_idx) > 0:
-            classification = torch.index_select(cat_covs, 1, self.class_idx)
+            classification = torch.index_select(cat_covs, 1, self.class_idx.to(self.device))
             classification = classification.view(len(idx)+1, -1, len(self.class_idx))[:, 0, :]
         if len(self.cat_cov_idx) > 0:
-            cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx)
+            cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx.to(self.device))
 
         rs = generative_outputs['rs']
         mu = inference_outputs['mu']
