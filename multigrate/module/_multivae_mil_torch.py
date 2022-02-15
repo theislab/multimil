@@ -203,11 +203,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.regularize_cov_attn = regularize_cov_attn
         self.regularize_vae = regularize_vae
 
-        self.class_idx = class_idx
-        self.ord_idx = ord_idx
-        self.reg_idx = reg_idx
         self.cat_cov_idx = torch.tensor(list(set(range(len(class_idx) + len(ord_idx) +  len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))))
         self.cont_cov_idx = torch.tensor(list(set(range(len(reg_idx) + len(cont_covariate_dims))).difference(set(reg_idx))))
+
+        self.class_idx = torch.tensor(class_idx)
+        self.ord_idx = torch.tensor(ord_idx)
+        self.reg_idx = torch.tensor(reg_idx)
 
         self.cond_dim = cond_dim
         self.cell_level_aggregator = nn.Sequential(
@@ -243,7 +244,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                     n_input=cond_dim, 
                                     scoring=scoring, 
                                     attn_dim=attn_dim,
-                                    attention_dropout=True,
+                                    attention_dropout=attention_dropout,
                                     dropout=dropout,
                                     n_layers_mlp_attn=n_layers_mlp_attn,
                                     n_hidden_mlp_attn=n_hidden_mlp_attn,
@@ -337,10 +338,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         if self.hierarchical_attn:
             add_covariate = lambda i: self.add_patient_to_classifier or (not self.add_patient_to_classifier and i != self.patient_idx)
             if len(self.vae.cat_covariate_embeddings) > 0:
-                cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for i, (covariate, cat_covariate_embedding) in enumerate(zip(cat_covs.T, self.vae.cat_covariate_embeddings)) if add_covariate(i)], dim=-1)
+                cat_embedds = torch.cat([cat_covariate_embedding(covariate.long()) for covariate, cat_covariate_embedding, i in zip(cat_covs.T, self.vae.cat_covariate_embeddings, self.cat_cov_idx) if add_covariate(i)], dim=-1)
             else:
                 cat_embedds = torch.Tensor().to(self.device) # so cat works later
-
             if self.vae.n_cont_cov > 0:
                 if cont_covs.shape[-1] != self.vae.n_cont_cov: # get rid of size_factors
                     raise RuntimeError("cont_covs.shape[-1] != self.vae.n_cont_cov")

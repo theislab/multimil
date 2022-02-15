@@ -17,13 +17,14 @@ from operator import itemgetter, attrgetter
 from torch.nn import functional as F
 from itertools import cycle, zip_longest, groupby
 from ..module import MultiVAETorch
+from ..train import MultiVAETrainingPlan
 from ..distributions import *
 from scvi.data._anndata import _setup_anndata
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
-from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.train import TrainRunner
 from scvi.model._utils import parse_use_gpu_arg
 from scvi.model.base._utils import _initialize_model
 from matplotlib import pyplot as plt
@@ -82,6 +83,7 @@ class MultiVAE(BaseModelClass):
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
             cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors' and key not in ignore_categories]
 
+        cat_covariate_dims = []
         if adata.uns['_scvi'].get('extra_categoricals') is not None:
             cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] not in ignore_categories]
 
@@ -168,7 +170,8 @@ class MultiVAE(BaseModelClass):
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
                 latent += [z.cpu()]
-            return torch.cat(latent).numpy()
+        
+        adata.obsm['latent'] = torch.cat(latent).numpy()
 
     def train(
         self,
@@ -184,7 +187,6 @@ class MultiVAE(BaseModelClass):
         save_best: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
         n_steps_kl_warmup: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = 50,
         adversarial_mixing: bool = True,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
@@ -223,15 +225,13 @@ class MultiVAE(BaseModelClass):
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
             Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
             to `floor(0.75 * adata.n_obs)`.
-        n_epochs_kl_warmup
-            Number of epochs to scale weight on KL divergences from 0 to 1.
-            Overrides `n_steps_kl_warmup` when both are not `None`.
         plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
+        n_epochs_kl_warmup = max(max_epochs//3, 1)
         update_dict = dict(
             lr=lr,
             weight_decay=weight_decay,
@@ -264,7 +264,7 @@ class MultiVAE(BaseModelClass):
             batch_size=batch_size,
             use_gpu=use_gpu,
         )
-        training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
+        training_plan = MultiVAETrainingPlan(self.module, **plan_kwargs)
         runner = TrainRunner(
             self,
             training_plan=training_plan,
@@ -305,9 +305,13 @@ class MultiVAE(BaseModelClass):
 
         df['epoch'] = df.index
 
-        plt.figure(figsize=(15, 15))
+        plt.figure(figsize=(15, 10))
+
         loss_names = ['kl_local', 'elbo', 'reconstruction_loss']
-        nrows = 3
+        if self.module.loss_coefs['integ'] != 0:
+            loss_names.append('integ')
+
+        nrows = 2
 
         for i, name in enumerate(loss_names):
             plt.subplot(nrows, 2, i+1)

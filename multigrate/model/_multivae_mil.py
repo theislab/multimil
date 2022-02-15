@@ -65,7 +65,7 @@ class MultiVAE_MIL(BaseModelClass):
         kernel_type='gaussian',
         loss_coefs=[],
         scoring='gated_attn',
-        attn_dim=15,
+        attn_dim=16,
         n_layers_cell_aggregator: int = 1,
         n_layers_cov_aggregator: int = 1,
         n_layers_classifier: int = 1,
@@ -149,10 +149,6 @@ class MultiVAE_MIL(BaseModelClass):
         for label in ordinal_regression:
             print(f'The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with "ordinal_regression_order" parameter.')
 
-        self.class_idx = torch.tensor(self.class_idx)
-        self.ord_idx = torch.tensor(self.ord_idx)
-        self.regression_idx = torch.tensor(self.regression_idx)
-
         self.module = MultiVAETorch_MIL(
                         modality_lengths=modality_lengths,
                         condition_encoders=condition_encoders,
@@ -208,6 +204,10 @@ class MultiVAE_MIL(BaseModelClass):
                         reg_idx=self.regression_idx,
                     )
                     
+        self.class_idx = torch.tensor(self.class_idx)
+        self.ord_idx = torch.tensor(self.ord_idx)
+        self.regression_idx = torch.tensor(self.regression_idx)
+
         self.init_params_ = self._get_init_params(locals())
 
     # TODO discuss if we still need it
@@ -279,11 +279,8 @@ class MultiVAE_MIL(BaseModelClass):
             If so, val is checked every epoch.
         n_steps_kl_warmup
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
-            Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
+        If `None`, defaults
             to `floor(0.75 * adata.n_obs)`.
-        n_epochs_kl_warmup
-            Number of epochs to scale weight on KL divergences from 0 to 1.
-            Overrides `n_steps_kl_warmup` when both are not `None`.
         plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
@@ -479,7 +476,7 @@ class MultiVAE_MIL(BaseModelClass):
             adata.obs['cell_attn'] = cell_level
 
             for i in range(len(self.class_idx)):
-                name = self.classification
+                name = self.classification[i]
                 classes = adata.uns['_scvi']['extra_categoricals']['mappings'][name]
                 df = create_df(class_pred[i], classes, index=adata.obs_names)
                 adata.obsm[f'classification_predictions_{name}'] = df

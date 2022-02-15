@@ -347,7 +347,7 @@ class MultiVAETorch(BaseModuleClass):
         tensors,
         inference_outputs,
         generative_outputs,
-        # kl_weight: float = 1.0
+        kl_weight: float = 1.0
     ):
 
         x = tensors[_CONSTANTS.X_KEY]
