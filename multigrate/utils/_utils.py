@@ -45,6 +45,9 @@ def create_df(pred, columns=None, index=None):
         pred = torch.cat(pred).squeeze().cpu().numpy()
 
     df = pd.DataFrame(pred)
+    print('creating df....')
+    print(df)
+    print(columns)
     if index is not None:
         df.index = index
     if columns is not None:

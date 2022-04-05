@@ -78,13 +78,15 @@ class MultiVAE_MIL(BaseModelClass):
         n_hidden_cont_embed: int = 128,
         n_hidden_mlp_attn = None,
         n_hidden_regressor: int = 128,
-        attention_dropout=True,
+        attention_dropout=False,
         class_loss_coef=1.0,
-        reg_coef=1.0,
+        regression_loss_coef=1.0,
+        reg_coef=1.0, # regularization
         regularize_cell_attn=False,
         regularize_cov_attn=False,
         regularize_vae=False,
         cont_cov_type='logsigm',
+        drop_attn=False,
     ):
         super().__init__(adata)
 
@@ -190,6 +192,7 @@ class MultiVAE_MIL(BaseModelClass):
                         n_hidden_classifier=n_hidden_classifier,
                         n_hidden_mlp_attn=n_hidden_mlp_attn,
                         class_loss_coef=class_loss_coef,
+                        regression_loss_coef=regression_loss_coef,
                         reg_coef=reg_coef,
                         add_patient_to_classifier=add_patient_to_classifier,
                         patient_idx=patient_idx,
@@ -202,6 +205,7 @@ class MultiVAE_MIL(BaseModelClass):
                         class_idx=self.class_idx,
                         ord_idx=self.ord_idx,
                         reg_idx=self.regression_idx,
+                        drop_attn=drop_attn,
                     )
                     
         self.class_idx = torch.tensor(self.class_idx)
@@ -340,7 +344,10 @@ class MultiVAE_MIL(BaseModelClass):
         ordinal_regression_order = None,
     ):
         if rna_indices_end:
-            adata.obs['size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()[0]
+            if scipy.sparse.issparse(adata.X):
+                adata.obs['size_factors'] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
+            else:
+                adata.obs['size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()
 
             if continuous_covariate_keys:
                 continuous_covariate_keys.append('size_factors')
@@ -368,12 +375,14 @@ class MultiVAE_MIL(BaseModelClass):
         rna_indices_end=None, 
         categorical_covariate_keys = None,
         continuous_covariate_keys = None,
+        ordinal_regression_order = None,
     ):
-        MultiVAE.setup_anndata(
+        MultiVAE_MIL.setup_anndata(
             query,
             rna_indices_end=rna_indices_end, 
             categorical_covariate_keys=categorical_covariate_keys,
             continuous_covariate_keys=continuous_covariate_keys,
+            ordinal_regression_order=ordinal_regression_order,
         )
         scvi.data.transfer_anndata_setup(
             adata,
@@ -472,7 +481,8 @@ class MultiVAE_MIL(BaseModelClass):
             cov_level = torch.cat(cov_level_attn).numpy()
 
             adata.obsm['latent'] = latent
-            adata.obsm['cov_attn'] = cov_level
+            if self.hierarchical_attn:
+                adata.obsm['cov_attn'] = cov_level
             adata.obs['cell_attn'] = cell_level
 
             for i in range(len(self.class_idx)):
@@ -483,10 +493,11 @@ class MultiVAE_MIL(BaseModelClass):
                 adata.obs[f'predicted_{name}'] = df.to_numpy().argmax(axis=1)
                 adata.obs[f'predicted_{name}'] = adata.obs[f'predicted_{name}'].astype('category')
                 adata.obs[f'predicted_{name}'] = adata.obs[f'predicted_{name}'].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
-                adata.uns[f'bag_classification_true_{name}'] = create_df(bag_class_true)
+                adata.uns[f'bag_classification_true_{name}'] = create_df(bag_class_true, self.classification)
                 df_bag = create_df(bag_class_pred[i], classes)
                 adata.uns[f'bag_classification_predictions_{name}'] = df_bag
                 adata.uns[f'bag_predicted_{name}'] = df_bag.to_numpy().argmax(axis=1)
+            
             if len(self.ord_idx) > 0:
                 adata.obsm['ordinal_predictions'] = create_df(ord_pred, self.ordinal_regression, index=adata.obs_names)
                 adata.uns['bag_ordinal_true'] = create_df(bag_ord_true, self.ordinal_regression)
@@ -609,6 +620,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_steps_kl_warmup: Optional[int] = None,
         plan_kwargs: Optional[dict] = None,
         plot_losses=True,
+        save_loss=None,
     ):
         vae = MultiVAE(
             self.adata, 
@@ -639,6 +651,10 @@ class MultiVAE_MIL(BaseModelClass):
 
         vae.module.load_state_dict(self.module.vae.state_dict())
 
+        for (frozen_name, frozen_p), (name, p) in zip(self.module.vae.named_parameters(), vae.module.named_parameters()):
+            assert frozen_name == name
+            p.requires_grad = frozen_p.requires_grad
+
         vae.train(
             max_epochs=max_epochs,
             lr=lr,
@@ -655,7 +671,7 @@ class MultiVAE_MIL(BaseModelClass):
             plan_kwargs=plan_kwargs,
         )
         if plot_losses:
-            vae.plot_losses()
+            vae.plot_losses(save=save_loss)
 
         self.module.vae = vae.module
         self.is_trained_ = True

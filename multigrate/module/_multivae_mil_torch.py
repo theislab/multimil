@@ -24,6 +24,7 @@ class Aggregator(nn.Module):
                 patient_batch_size=None,
                 scale=False,
                 attention_dropout=True,
+                drop_attn=False,
                 dropout=0.2,
                 n_layers_mlp_attn=1,
                 n_hidden_mlp_attn=16,
@@ -74,6 +75,7 @@ class Aggregator(nn.Module):
                                 ),
                                 nn.Linear(n_hidden_mlp_attn, 1)
                             )
+        self.dropout_attn = nn.Dropout(dropout) if drop_attn else nn.Identity()
 
             
 
@@ -102,6 +104,8 @@ class Aggregator(nn.Module):
 
         if self.scale:
             self.A = self.A * self.A.shape[-1] / self.patient_batch_size
+
+        self.A = self.dropout_attn(self.A)
 
         return torch.bmm(self.A, x).squeeze(dim=1) # z_dim
 
@@ -160,6 +164,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_idx=[], # which indices in cat covariates to do classification on, i.e. exclude from inference
         ord_idx=[], # which indices in cat covariates to do ordinal regression on and also exclude from inference
         reg_idx=[], # which indices in cont covariates to do regression on and also exclude from inference
+        drop_attn=False,
     ):
         super().__init__()
 
@@ -226,6 +231,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                 patient_batch_size=patient_batch_size, 
                                 scale=True,
                                 attention_dropout=attention_dropout,
+                                drop_attn=drop_attn,
                                 dropout=dropout,
                                 n_layers_mlp_attn=n_layers_mlp_attn,
                                 n_hidden_mlp_attn=n_hidden_mlp_attn,
@@ -245,6 +251,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                     scoring=scoring, 
                                     attn_dim=attn_dim,
                                     attention_dropout=attention_dropout,
+                                    drop_attn=drop_attn,
                                     dropout=dropout,
                                     n_layers_mlp_attn=n_layers_mlp_attn,
                                     n_hidden_mlp_attn=n_hidden_mlp_attn,

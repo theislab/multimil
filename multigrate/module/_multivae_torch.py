@@ -286,9 +286,9 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = torch.Tensor().to(self.device)
 
             if self.n_cont_cov > 0:
-                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors # TODO shouldn't happen any more
-                    raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov")
-                    # cont_covs = cont_covs[:, 0:self.n_cont_cov]
+                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors
+                    # raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov")
+                    cont_covs = cont_covs[:, 0:self.n_cont_cov]
                 cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
@@ -331,9 +331,9 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = torch.Tensor().to(self.device)
 
             if self.n_cont_cov > 0:
-                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors # TODO shouldn't happen any more
-                    raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov")
-                    # cont_covs = cont_covs[:, 0:self.n_cont_cov]
+                if cont_covs.shape[-1] != self.n_cont_cov: # get rid of size_factors
+                    # raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov") # still can happen when query to ref
+                    cont_covs = cont_covs[:, 0:self.n_cont_cov]
                 cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
@@ -351,10 +351,11 @@ class MultiVAETorch(BaseModuleClass):
     ):
 
         x = tensors[_CONSTANTS.X_KEY]
-        if self.integrate_on_idx:
+        if self.integrate_on_idx is not None:
             integrate_on = tensors.get(_CONSTANTS.CAT_COVS_KEY)[:, self.integrate_on_idx]
         else:
             integrate_on = torch.zeros(x.shape[0], 1).to(self.device)
+
         size_factor = tensors.get(_CONSTANTS.CONT_COVS_KEY)
         if size_factor is not None:
             size_factor = size_factor[:, -1] # always last
@@ -368,7 +369,7 @@ class MultiVAETorch(BaseModuleClass):
 
         recon_loss = self.calc_recon_loss(xs, rs, self.losses, integrate_on, size_factor, self.loss_coefs, masks)
         kl_loss = kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        integ_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, integrate_on)
+        integ_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['integ'] == 0 else self.calc_integ_loss(z_joint, integrate_on).to(self.device)
         cycle_loss = torch.tensor(0.0).to(self.device) if self.loss_coefs['cycle'] == 0 else self.calc_cycle_loss(xs, z_joint, integrate_on, masks, self.losses, size_factor, self.loss_coefs)
 
         loss = torch.mean(self.loss_coefs['recon'] * recon_loss  + self.loss_coefs['kl'] * kl_loss + self.loss_coefs['integ'] * integ_loss + self.loss_coefs['cycle'] * cycle_loss)
@@ -426,16 +427,13 @@ class MultiVAETorch(BaseModuleClass):
     def calc_integ_loss(self, z, group):
         loss = torch.tensor(0.0).to(self.device)
         zs = []
-
         for g in set(list(group.squeeze().cpu().numpy())):
             idx = (group == g).nonzero(as_tuple=True)[0]
             zs.append(z[idx])
 
-        for i, zi in enumerate(zs):
-            for j, zj in enumerate(zs):
-                if i == j:  # do not integrate one dataset with itself
-                    continue
-                loss += MMD(kernel_type=self.kernel_type)(zi, zj)
+        for i in range(len(zs)):
+            for j in range(i+1, len(zs)):
+                loss += MMD(kernel_type=self.kernel_type)(zs[i], zs[j])
         return loss
 
     def calc_cycle_loss(self, xs, z, cat_covs, cont_covs, masks, losses, size_factor, loss_coefs):

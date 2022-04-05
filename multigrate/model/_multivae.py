@@ -2,6 +2,7 @@ import sys
 import torch
 import time
 import os
+import scipy
 
 import numpy as np
 import pandas as pd
@@ -282,8 +283,11 @@ class MultiVAE(BaseModelClass):
         categorical_covariate_keys = None,
         continuous_covariate_keys = None,
     ):
-        if rna_indices_end:
-            adata.obs['size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()[0]
+        if rna_indices_end is not None:
+            if scipy.sparse.issparse(adata.X):
+                adata.obs.loc[:, 'size_factors'] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
+            else:
+                adata.obs.loc[:, 'size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()
 
             if continuous_covariate_keys:
                 continuous_covariate_keys.append('size_factors')
@@ -297,7 +301,7 @@ class MultiVAE(BaseModelClass):
         )
 
     # TODO add new losses
-    def plot_losses(self):
+    def plot_losses(self, save=None):
         df = pd.DataFrame(self.history['train_loss_epoch'])
         for key in self.history.keys():
             if key != 'train_loss_epoch':
@@ -319,6 +323,8 @@ class MultiVAE(BaseModelClass):
             plt.plot(df['epoch'], df[name+'_validation'], '.-', label=name+'_validation')
             plt.xlabel('epoch')
             plt.legend()
+        if save is not None:
+            plt.savefig(save, bbox_inches='tight')
 
     @classmethod
     def load_query_data(
