@@ -2,6 +2,7 @@ import sys
 import torch
 import time
 import os
+import scipy
 
 import numpy as np
 import pandas as pd
@@ -17,15 +18,17 @@ from operator import itemgetter, attrgetter
 from torch.nn import functional as F
 from itertools import cycle, zip_longest, groupby
 from ..module import MultiVAETorch
+from ..train import MultiVAETrainingPlan
 from ..distributions import *
 from scvi.data._anndata import _setup_anndata
 from scvi.dataloaders import DataSplitter, AnnDataLoader
 from typing import List, Optional, Union
 from scvi.model.base import BaseModelClass
 from scvi.train._callbacks import SaveBestState
-from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.train import TrainRunner
 from scvi.model._utils import parse_use_gpu_arg
 from scvi.model.base._utils import _initialize_model
+from matplotlib import pyplot as plt
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,19 @@ class MultiVAE(BaseModelClass):
         dropout=0.2,
         cond_dim=10,
         kernel_type='not gaussian',
-        loss_coefs=[]
+        loss_coefs=[],
+        integrate_on_idx=None,
+        cont_cov_type='logsigm',
+        n_layers_cont_embed: int = 1,
+        n_layers_encoders = [],
+        n_layers_decoders = [],
+        n_layers_shared_decoder: int = 1,
+        n_hidden_cont_embed: int = 32,
+        n_hidden_encoders = [],
+        n_hidden_decoders = [],
+        n_hidden_shared_decoder: int = 32,
+        add_shared_decoder = True,
+        ignore_categories = [],
     ):
 
         super().__init__(adata)
@@ -65,15 +80,13 @@ class MultiVAE(BaseModelClass):
 
         self.adata = adata
 
+        cont_covariate_dims = []
         if adata.uns['_scvi'].get('extra_continuous_keys') is not None:
-            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors']
-        else:
-            cont_covariate_dims = []
+            cont_covariate_dims = [1 for key in adata.uns['_scvi']['extra_continuous_keys'] if key != 'size_factors' and key not in ignore_categories]
 
+        cat_covariate_dims = []
         if adata.uns['_scvi'].get('extra_categoricals') is not None:
-            cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
-        else:
-            cat_covariate_dims = []
+            cat_covariate_dims = [num_cat for i, num_cat in enumerate(adata.uns['_scvi']['extra_categoricals']['n_cats_per_key']) if adata.uns['_scvi']['extra_categoricals']['keys'][i] not in ignore_categories]
 
         self.module = MultiVAETorch(
             modality_lengths=modality_lengths,
@@ -91,6 +104,16 @@ class MultiVAE(BaseModelClass):
             integrate_on_idx=integrate_on_idx,
             cat_covariate_dims=cat_covariate_dims,
             cont_covariate_dims=cont_covariate_dims,
+            n_layers_encoders=n_layers_encoders,
+            n_layers_decoders=n_layers_decoders,
+            n_layers_shared_decoder=n_layers_shared_decoder,
+            n_hidden_encoders=n_hidden_encoders,
+            n_hidden_decoders=n_hidden_decoders,
+            n_hidden_shared_decoder=n_hidden_shared_decoder,
+            cont_cov_type=cont_cov_type,
+            n_layers_cont_embed=n_layers_cont_embed,
+            n_hidden_cont_embed=n_hidden_cont_embed,
+            add_shared_decoder=add_shared_decoder,
         )
 
         self.init_params_ = self._get_init_params(locals())
@@ -148,7 +171,8 @@ class MultiVAE(BaseModelClass):
                 outputs = self.module.inference(**inference_inputs)
                 z = outputs['z_joint']
                 latent += [z.cpu()]
-            return torch.cat(latent).numpy()
+        
+        adata.obsm['latent'] = torch.cat(latent).numpy()
 
     def train(
         self,
@@ -164,7 +188,6 @@ class MultiVAE(BaseModelClass):
         save_best: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
         n_steps_kl_warmup: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = 50,
         adversarial_mixing: bool = True,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
@@ -203,15 +226,13 @@ class MultiVAE(BaseModelClass):
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
             Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
             to `floor(0.75 * adata.n_obs)`.
-        n_epochs_kl_warmup
-            Number of epochs to scale weight on KL divergences from 0 to 1.
-            Overrides `n_steps_kl_warmup` when both are not `None`.
         plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
+        n_epochs_kl_warmup = max(max_epochs//3, 1)
         update_dict = dict(
             lr=lr,
             weight_decay=weight_decay,
@@ -244,7 +265,7 @@ class MultiVAE(BaseModelClass):
             batch_size=batch_size,
             use_gpu=use_gpu,
         )
-        training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
+        training_plan = MultiVAETrainingPlan(self.module, **plan_kwargs)
         runner = TrainRunner(
             self,
             training_plan=training_plan,
@@ -262,8 +283,11 @@ class MultiVAE(BaseModelClass):
         categorical_covariate_keys = None,
         continuous_covariate_keys = None,
     ):
-        if rna_indices_end:
-            adata.obs['size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()[0]
+        if rna_indices_end is not None:
+            if scipy.sparse.issparse(adata.X):
+                adata.obs.loc[:, 'size_factors'] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
+            else:
+                adata.obs.loc[:, 'size_factors'] = adata[:, :rna_indices_end].X.sum(1).T.tolist()
 
             if continuous_covariate_keys:
                 continuous_covariate_keys.append('size_factors')
@@ -276,15 +300,31 @@ class MultiVAE(BaseModelClass):
             categorical_covariate_keys=categorical_covariate_keys,
         )
 
-    # TODO
-    def plot_losses(
-        self,
-        recon=True,
-        kl=True,
-        integ=True,
-        cycle=False
-    ):
-        pass
+    # TODO add new losses
+    def plot_losses(self, save=None):
+        df = pd.DataFrame(self.history['train_loss_epoch'])
+        for key in self.history.keys():
+            if key != 'train_loss_epoch':
+                df = df.join(self.history[key])
+
+        df['epoch'] = df.index
+
+        plt.figure(figsize=(15, 10))
+
+        loss_names = ['kl_local', 'elbo', 'reconstruction_loss']
+        if self.module.loss_coefs['integ'] != 0:
+            loss_names.append('integ')
+
+        nrows = 2
+
+        for i, name in enumerate(loss_names):
+            plt.subplot(nrows, 2, i+1)
+            plt.plot(df['epoch'], df[name+'_train'], '.-', label=name+'_train')
+            plt.plot(df['epoch'], df[name+'_validation'], '.-', label=name+'_validation')
+            plt.xlabel('epoch')
+            plt.legend()
+        if save is not None:
+            plt.savefig(save, bbox_inches='tight')
 
     @classmethod
     def load_query_data(
@@ -307,6 +347,7 @@ class MultiVAE(BaseModelClass):
 
         # model tweaking
         num_of_cat_to_add = [new_cat - old_cat for old_cat, new_cat in zip(reference_model.adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'], adata.uns['_scvi']['extra_categoricals']['n_cats_per_key'])]
+        
         new_state_dict = model.module.state_dict()
         for key, load_ten in load_state_dict.items(): # load_state_dict = old
             new_ten = new_state_dict[key]
@@ -331,11 +372,12 @@ class MultiVAE(BaseModelClass):
         # freeze everything but the condition_layer in condMLPs
         if freeze:
             for key, par in model.module.named_parameters():
-                if key != 'theta': # freeze all but theta
-                    par.requires_grad = False
+                par.requires_grad = False
             for i, embed in enumerate(model.module.cat_covariate_embeddings):
                 if num_of_cat_to_add[i] > 0: # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
+            if model.module.integrate_on_idx:
+                model.module.theta.requires_grad = True
 
         model.module.eval()
         model.is_trained_ = False

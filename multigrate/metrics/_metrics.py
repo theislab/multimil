@@ -37,11 +37,6 @@ def metrics(
         adata,
         batch_key,
         label_key,
-        isolated_labels_asw_=True,
-        nmi_=True,
-        ari_=True,
-        silhouette_=True,
-        graph_conn_=True,
         **kwargs
     )
 
@@ -56,6 +51,7 @@ def metrics_icb(
         nmi_method='arithmetic',
         nmi_dir=None,
         silhouette_=False,
+        silhouette_batch_=False,
         embed='X_pca',
         si_metric='euclidean',
         isolated_labels_asw_=False,
@@ -65,8 +61,6 @@ def metrics_icb(
 ):
 
     check_adata(adata_int)
-    check_batch(batch_key, adata_int.obs)
-    check_batch(label_key, adata_int.obs)
 
     # clustering
     if nmi_ or ari_:
@@ -74,10 +68,10 @@ def metrics_icb(
             adata_int,
             label_key=label_key,
             cluster_key=cluster_key,
+            use_rep=embed,
             function=nmi,
             plot=False,
-            verbose=False,
-            use_rep=embed,
+            verbose=verbose,
             inplace=True,
             force=True
         )
@@ -118,6 +112,10 @@ def metrics_icb(
             embed=embed,
             metric=si_metric
         )
+    else: 
+        asw_label = np.nan
+    if silhouette_batch_:
+        print('Silhouette batch score...')
         # silhouette coefficient per batch
         asw_batch = silhouette_batch(
             adata_int,
@@ -126,10 +124,9 @@ def metrics_icb(
             embed=embed,
             metric=si_metric,
             return_all=False,
-            verbose=False
+            verbose=verbose
         )
     else:
-        asw_label = np.nan
         asw_batch = np.nan
 
     if isolated_labels_asw_:
@@ -141,7 +138,7 @@ def metrics_icb(
             embed=embed,
             cluster=False,
             iso_threshold=n_isolated,
-            verbose=False
+            verbose=verbose
         ) if silhouette_ else np.nan
     else:
         il_score_asw = np.nan

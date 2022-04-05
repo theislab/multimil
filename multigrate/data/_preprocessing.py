@@ -9,7 +9,7 @@ def organize_multiome_anndatas(
     layers=None,
     modality_lengths=None
 ):
-    # set .X to the desired layer
+    # set .X to the desired lay
     # TOOD: add checks for layers
 
     # needed for scArches operation setup
@@ -17,14 +17,17 @@ def organize_multiome_anndatas(
     datasets_groups = {}
     datasets_obs_names = {}
     datasets_obs = {}
+    modality_var_names = {}
+    
     for mod, (modality_adatas, modality_groups) in enumerate(zip(adatas, groups)):
         for i, (adata, group) in enumerate(zip(modality_adatas, modality_groups)):
-            if adata:
+            if adata is not None:
                 datasets_lengths[i] = len(adata)
                 datasets_groups[i] = group
                 datasets_obs_names[i] = adata.obs_names
                 datasets_obs[i] = adata.obs
-
+                modality_var_names[mod] = adata.var_names
+                
     # TODO: add check that obs_names are same for the same groups
 
     for mod, (modality_adatas, modality_groups) in enumerate(zip(adatas, groups)):
@@ -34,12 +37,13 @@ def organize_multiome_anndatas(
                 adatas[mod][i].obs_names = datasets_obs_names[i]
                 adatas[mod][i].obs = datasets_obs[i]
                 groups[mod][i] = datasets_groups[i]
+                adatas[mod][i].var_names = modality_var_names[mod]
             if layers:
                 if layers[mod][i]:
                     layer = layers[mod][i]
-                    adatas[mod][i].X = adatas[mod][i].layers[layer].A
+                    adatas[mod][i].X = adatas[mod][i].layers[layer].A.copy()
             adatas[mod][i].obs['group'] = datasets_groups[i]
-
+            
     # concat adatas per modality
     mod_adatas = []
     # first in list

@@ -1,3 +1,3 @@
-from ._trainingplans import MILTrainingPlan
+from ._trainingplans import MILTrainingPlan, MultiVAETrainingPlan
 
-__all__ = ["MILTrainingPlan"]
+__all__ = ["MILTrainingPlan", "MultiVAETrainingPlan"]

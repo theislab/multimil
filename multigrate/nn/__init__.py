@@ -1,3 +1,3 @@
-from ._base_components import CondMLP, Decoder
+from ._base_components import MLP, Decoder, GeneralizedSigmoid
 
-__all__ = ["CondMLP", "Decoder"]
+__all__ = ["MLP", "Decoder", "GeneralizedSigmoid"]

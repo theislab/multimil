@@ -39,6 +39,9 @@ class MMD(torch.nn.Module):
            -------
            Returns the computed MMD between x and y.
         """
+
+        if len(x) == 1 or len(y) == 1:
+            return torch.tensor(0.0)
         if self.kernel_type == "gaussian":
             Kxx = self.gaussian_kernel(x, x).mean()
             Kyy = self.gaussian_kernel(y, y).mean()
