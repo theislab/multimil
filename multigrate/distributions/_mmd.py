@@ -1,15 +1,38 @@
 import torch
 
+
 class MMD(torch.nn.Module):
     def __init__(self, kernel_type="gaussian"):
         super().__init__()
         self.kernel_type = kernel_type
         # TODO: add check for gaussian kernel that shapes are same
 
-    def gaussian_kernel(self, x, y, gamma=[
-        1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 5, 10, 15, 20, 25, 30, 35, 100,
-        1e3, 1e4, 1e5, 1e6
-    ]):
+    def gaussian_kernel(
+        self,
+        x,
+        y,
+        gamma=[
+            1e-6,
+            1e-5,
+            1e-4,
+            1e-3,
+            1e-2,
+            1e-1,
+            1,
+            5,
+            10,
+            15,
+            20,
+            25,
+            30,
+            35,
+            100,
+            1e3,
+            1e4,
+            1e5,
+            1e6,
+        ],
+    ):
 
         D = torch.cdist(x, y).pow(2)
         K = torch.zeros_like(D)
@@ -21,23 +44,23 @@ class MMD(torch.nn.Module):
 
     def forward(self, x, y):
         """
-           This MMD function was taken from:
-           Title: scarches
-           Date: 9th Octover 2021
-           Code version: 0.4.0
-           Availability: https://github.com/theislab/scarches/blob/63a7c2b35a01e55fe7e1dd871add459a86cd27fb/scarches/models/trvae/losses.py
+        This MMD function was taken from:
+        Title: scarches
+        Date: 9th Octover 2021
+        Code version: 0.4.0
+        Availability: https://github.com/theislab/scarches/blob/63a7c2b35a01e55fe7e1dd871add459a86cd27fb/scarches/models/trvae/losses.py
 
-           Initializes Maximum Mean Discrepancy(MMD) between source_features and target_features.
-           - Gretton, Arthur, et al. "A Kernel Two-Sample Test". 2012.
-           Parameters
-           ----------
-           x: torch.Tensor
-                Tensor with shape [batch_size, z_dim]
-           y: torch.Tensor
-                Tensor with shape [batch_size, z_dim]
-           Returns
-           -------
-           Returns the computed MMD between x and y.
+        Initializes Maximum Mean Discrepancy(MMD) between source_features and target_features.
+        - Gretton, Arthur, et al. "A Kernel Two-Sample Test". 2012.
+        Parameters
+        ----------
+        x: torch.Tensor
+             Tensor with shape [batch_size, z_dim]
+        y: torch.Tensor
+             Tensor with shape [batch_size, z_dim]
+        Returns
+        -------
+        Returns the computed MMD between x and y.
         """
 
         if len(x) == 1 or len(y) == 1:
