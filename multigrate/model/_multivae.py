@@ -396,6 +396,7 @@ class MultiVAE(BaseModelClass):
         reference_model: BaseModelClass,
         use_gpu: Optional[Union[str, int, bool]] = None,
         freeze: bool = True,
+        ignore_categories=[],  # condition category
     ):
         use_gpu, device = parse_use_gpu_arg(use_gpu)
 
@@ -416,12 +417,16 @@ class MultiVAE(BaseModelClass):
         # model tweaking
         num_of_cat_to_add = [
             new_cat - old_cat
-            for old_cat, new_cat in zip(
-                reference_model.adata.uns["_scvi"]["extra_categoricals"][
-                    "n_cats_per_key"
-                ],
-                adata.uns["_scvi"]["extra_categoricals"]["n_cats_per_key"],
+            for i, (old_cat, new_cat) in enumerate(
+                zip(
+                    reference_model.adata.uns["_scvi"]["extra_categoricals"][
+                        "n_cats_per_key"
+                    ],
+                    adata.uns["_scvi"]["extra_categoricals"]["n_cats_per_key"],
+                )
             )
+            if not adata.uns["_scvi"]["extra_categoricals"]["keys"][i]
+            in ignore_categories
         ]
 
         model.to_device(device)
@@ -449,11 +454,15 @@ class MultiVAE(BaseModelClass):
         if freeze:
             for key, par in model.module.named_parameters():
                 par.requires_grad = False
+                # TODO only works in condiiton is last, because condition is still in num_of_cat_to_add
+                # but not in cat_covariate_embeddings
             for i, embed in enumerate(model.module.cat_covariate_embeddings):
+                print(num_of_cat_to_add)
                 if (
                     num_of_cat_to_add[i] > 0
                 ):  # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
+                    print("here")
             if model.module.integrate_on_idx:
                 model.module.theta.requires_grad = True
 

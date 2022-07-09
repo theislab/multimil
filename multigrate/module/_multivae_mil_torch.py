@@ -361,6 +361,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
         zs = self.cell_level_aggregator(zs)  # num of bags in batch x cond_dim
 
         predictions = []
+
+        # TODO: fix for the case that there are no covatiates
         if self.hierarchical_attn:
             add_covariate = lambda i: self.add_patient_to_classifier or (
                 not self.add_patient_to_classifier and i != self.patient_idx
