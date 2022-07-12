@@ -19,7 +19,7 @@ class Aggregator(nn.Module):
         attn_dim=16,  # D
         patient_batch_size=None,
         scale=False,
-        attention_dropout=True,
+        attention_dropout=False,
         drop_attn=False,
         dropout=0.2,
         n_layers_mlp_attn=1,
@@ -362,14 +362,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         predictions = []
 
-        # TODO: fix for the case that there are no covatiates
         if self.hierarchical_attn:
             add_covariate = lambda i: self.add_patient_to_classifier or (
                 not self.add_patient_to_classifier and i != self.patient_idx
             )
-            if len(self.vae.cat_covariate_embeddings) > 0:
-                cat_embedds = torch.cat(
-                    [
+            cat_embedds = [
                         cat_covariate_embedding(covariate.long())
                         for covariate, cat_covariate_embedding, i in zip(
                             cat_covs.T,
@@ -377,7 +374,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
                             self.cat_cov_idx,
                         )
                         if add_covariate(i)
-                    ],
+                    ]
+            
+            if len(cat_embedds) > 0:  # if the only registered categorical covs are condition and patient
+                cat_embedds = torch.cat(
+                    cat_embedds,
                     dim=-1,
                 )
             else:
@@ -618,13 +619,18 @@ class MultiVAETorch_MIL(BaseModuleClass):
             weights.append(self.cell_level_aggregator[1].attention_U[0].weight)
             weights.append(self.cell_level_aggregator[1].attention_V[0].weight)
 
-        # TODO: fix if other layers
+        # TODO FIX
+        # TODO ADD covatiates
         if self.regularize_vae:
-            weights.append(self.vae.shared_decoder.encoder.fc_layers[0][0].weight)
-            weights.append(self.vae.encoder_0.encoder.fc_layers[0][0].weight)
-            weights.append(self.vae.encoder_1.encoder.fc_layers[0][0].weight)
-            weights.append(self.vae.decoder_0.decoder.encoder.fc_layers[0][0].weight)
-            weights.append(self.vae.decoder_1.decoder.encoder.fc_layers[0][0].weight)
+            #for name, p in self.vae.named_parameters():
+            #    if any(ext in name for ext in ["encoder", "decoder", "covariate"]):
+            #        weights.append(p.weight)
+            # weights.append(self.vae.shared_decoder.encoder.fc_layers[0][0].weight)
+            weights.append(self.vae.encoder_0.mlp.fc_layers[0][0].weight)
+            weights.append(self.vae.encoder_1.mlp.fc_layers[0][0].weight)
+            weights.append(self.vae.decoder_0.decoder.mlp.fc_layers[0][0].weight)
+            weights.append(self.vae.decoder_1.decoder.mlp.fc_layers[0][0].weight)
+            # print(len(weights))
 
         reg_loss = self.orthogonal_regularization(weights)
 

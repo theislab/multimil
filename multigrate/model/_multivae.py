@@ -457,12 +457,10 @@ class MultiVAE(BaseModelClass):
                 # TODO only works in condiiton is last, because condition is still in num_of_cat_to_add
                 # but not in cat_covariate_embeddings
             for i, embed in enumerate(model.module.cat_covariate_embeddings):
-                print(num_of_cat_to_add)
                 if (
                     num_of_cat_to_add[i] > 0
                 ):  # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
-                    print("here")
             if model.module.integrate_on_idx:
                 model.module.theta.requires_grad = True
 

@@ -689,15 +689,6 @@ class MultiVAE_MIL(BaseModelClass):
         use_gpu, device = parse_use_gpu_arg(use_gpu)
         model.to_device(device)
 
-        print("------VAE------")
-        for name, p in new_vae.module.named_parameters():
-            print(name)
-            print(p.requires_grad)
-
-        print("------new model------")
-        for name, p in model.module.named_parameters():
-            print(name)
-            print(p.requires_grad)
         if freeze:
             for name, p in model.module.named_parameters():
                 if "vae" not in name:
