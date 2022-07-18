@@ -165,6 +165,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference
         drop_attn=False,
         mmd="latent",
+        patient_in_vae=True,
     ):
         super().__init__()
 

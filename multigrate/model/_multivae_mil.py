@@ -81,6 +81,7 @@ class MultiVAE_MIL(BaseModelClass):
         cont_cov_type="logsigm",
         drop_attn=False,
         mmd="latent",
+        patient_in_vae=True,
     ):
         super().__init__(adata)
 
@@ -88,6 +89,7 @@ class MultiVAE_MIL(BaseModelClass):
         patient_idx = adata.uns["_scvi"]["extra_categoricals"]["keys"].index(
             patient_label
         )
+        self.patient_in_vae = patient_in_vae
         self.scoring = scoring
         self.adata = adata
         self.hierarchical_attn = hierarchical_attn
@@ -152,9 +154,11 @@ class MultiVAE_MIL(BaseModelClass):
                 elif key in self.ordinal_regression:
                     self.ord_idx.append(i)
                 else:  # the actual categorical covariate
-                    cat_covariate_dims.append(
-                        adata.uns["_scvi"]["extra_categoricals"]["n_cats_per_key"][i]
-                    )
+                    if (key == self.patient_column and self.patient_in_vae) or (key != self.patient_column):
+                        cat_covariate_dims.append(
+                            adata.uns["_scvi"]["extra_categoricals"]["n_cats_per_key"][i]
+                        )
+
 
         for label in ordinal_regression:
             print(
@@ -642,6 +646,10 @@ class MultiVAE_MIL(BaseModelClass):
         for attr, val in attr_dict.items():
             setattr(model, attr, val)
 
+        ignore_categories = []
+        if not reference_model.patient_in_vae:
+            ignore_categories = [reference_model.patient_column]
+
         vae = MultiVAE(
             reference_model.adata,
             modality_lengths=reference_model.module.vae.input_dims,
@@ -666,7 +674,7 @@ class MultiVAE_MIL(BaseModelClass):
             cont_cov_type=reference_model.module.vae.cont_cov_type,
             n_hidden_cont_embed=reference_model.module.vae.n_hidden_cont_embed,
             n_layers_cont_embed=reference_model.module.vae.n_layers_cont_embed,
-            ignore_categories=reference_model.classification
+            ignore_categories=ignore_categories + reference_model.classification
             + reference_model.regression
             + reference_model.ordinal_regression,
         )
@@ -717,6 +725,9 @@ class MultiVAE_MIL(BaseModelClass):
         plot_losses=True,
         save_loss=None,
     ):
+        ignore_categories = []
+        if not self.patient_in_vae:
+            ignore_categories = [self.patient_column]
         vae = MultiVAE(
             self.adata,
             modality_lengths=self.module.vae.input_dims,
@@ -741,7 +752,7 @@ class MultiVAE_MIL(BaseModelClass):
             cont_cov_type=self.module.vae.cont_cov_type,
             n_hidden_cont_embed=self.module.vae.n_hidden_cont_embed,
             n_layers_cont_embed=self.module.vae.n_layers_cont_embed,
-            ignore_categories=self.classification
+            ignore_categories=ignore_categories + self.classification
             + self.regression
             + self.ordinal_regression,
         )
