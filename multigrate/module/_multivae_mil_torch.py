@@ -210,13 +210,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.regularize_cov_attn = regularize_cov_attn
         self.regularize_vae = regularize_vae
 
-        self.cat_cov_idx = torch.tensor(
-            list(
-                set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims)))
-                .difference(set(class_idx))
-                .difference(set(ord_idx))
-            )
-        )
+
+        self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
+
+        if not patient_in_vae:
+            self.cat_cov_idx = self.cat_cov_idx - {patient_idx}
+        self.cat_cov_idx = torch.tensor(list(self.cat_cov_idx))
         self.cont_cov_idx = torch.tensor(
             list(
                 set(range(len(reg_idx) + len(cont_covariate_dims))).difference(
@@ -631,7 +630,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
             weights.append(self.vae.encoder_1.mlp.fc_layers[0][0].weight)
             weights.append(self.vae.decoder_0.decoder.mlp.fc_layers[0][0].weight)
             weights.append(self.vae.decoder_1.decoder.mlp.fc_layers[0][0].weight)
-            # print(len(weights))
 
         reg_loss = self.orthogonal_regularization(weights)
 

@@ -49,7 +49,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_hidden_shared_decoder: int = 32,
         add_patient_to_classifier=False,
         hierarchical_attn=True,
-        add_shared_decoder=True,
+        add_shared_decoder=False,
         z_dim=16,
         h_dim=32,
         losses=[],
@@ -221,6 +221,7 @@ class MultiVAE_MIL(BaseModelClass):
             reg_idx=self.regression_idx,
             drop_attn=drop_attn,
             mmd=mmd,
+            patient_in_vae=patient_in_vae,
         )
 
         self.class_idx = torch.tensor(self.class_idx)
