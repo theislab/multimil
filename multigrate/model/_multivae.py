@@ -358,7 +358,6 @@ class MultiVAE(BaseModelClass):
             categorical_covariate_keys=categorical_covariate_keys,
         )
 
-    # TODO add new losses
     def plot_losses(self, save=None):
         df = pd.DataFrame(self.history["train_loss_epoch"])
         for key in self.history.keys():

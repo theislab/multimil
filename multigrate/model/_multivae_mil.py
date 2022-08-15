@@ -54,7 +54,7 @@ class MultiVAE_MIL(BaseModelClass):
         h_dim=32,
         losses=[],
         dropout=0.2,
-        cond_dim=10,
+        cond_dim=15,
         kernel_type="gaussian",
         loss_coefs=[],
         scoring="gated_attn",
@@ -82,6 +82,7 @@ class MultiVAE_MIL(BaseModelClass):
         drop_attn=False,
         mmd="latent",
         patient_in_vae=True,
+        aggr="attn",
     ):
         super().__init__(adata)
 
@@ -222,6 +223,7 @@ class MultiVAE_MIL(BaseModelClass):
             drop_attn=drop_attn,
             mmd=mmd,
             patient_in_vae=patient_in_vae,
+            aggr=aggr,
         )
 
         self.class_idx = torch.tensor(self.class_idx)

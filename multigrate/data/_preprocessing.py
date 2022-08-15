@@ -2,6 +2,7 @@ import scanpy as sc
 import anndata as ad
 import pandas as pd
 import numpy as np
+import scipy
 
 
 def organize_multiome_anndatas(adatas, groups, layers=None, modality_lengths=None):
@@ -45,10 +46,14 @@ def organize_multiome_anndatas(adatas, groups, layers=None, modality_lengths=Non
                 adatas[mod][i].obs = datasets_obs[i]
                 groups[mod][i] = datasets_groups[i]
                 adatas[mod][i].var_names = modality_var_names[mod]
+                adatas[mod][i] = adatas[mod][i].copy()
             if layers:
                 if layers[mod][i]:
                     layer = layers[mod][i]
-                    adatas[mod][i].X = adatas[mod][i].layers[layer].A.copy()
+                    if scipy.sparse.issparse(adatas[mod][i].layers[layer]):
+                        adatas[mod][i].X = adatas[mod][i].layers[layer].A.copy()
+                    else:
+                        adatas[mod][i].X = adatas[mod][i].layers[layer].copy()
             adatas[mod][i].obs["group"] = datasets_groups[i]
 
     # concat adatas per modality

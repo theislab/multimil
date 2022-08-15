@@ -166,6 +166,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         drop_attn=False,
         mmd="latent",
         patient_in_vae=True,
+        aggr="attn",
     ):
         super().__init__()
 
@@ -209,7 +210,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.regularize_cell_attn = regularize_cell_attn
         self.regularize_cov_attn = regularize_cov_attn
         self.regularize_vae = regularize_vae
-
+        self.aggr = aggr
 
         self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
 
@@ -272,14 +273,15 @@ class MultiVAETorch_MIL(BaseModuleClass):
             )
 
         self.classifiers = torch.nn.ModuleList()
+        class_input_dim = cond_dim if self.aggr == 'attn' else 2 * cond_dim
         for num in num_classes:
             if n_layers_classifier == 1:
-                self.classifiers.append(nn.Linear(cond_dim, num))
+                self.classifiers.append(nn.Linear(class_input_dim, num))
             else:
                 self.classifiers.append(
                     nn.Sequential(
                         MLP(
-                            cond_dim,
+                            class_input_dim,
                             n_hidden_classifier,
                             n_layers=n_layers_classifier - 1,
                             n_hidden=n_hidden_classifier,
@@ -288,7 +290,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                         nn.Linear(n_hidden_classifier, num),
                     )
                 )
-
+        # TODO if we keep the second head, adjust
         self.regressors = torch.nn.ModuleList()
         for _ in range(
             len(self.ord_idx) + len(self.reg_idx)
@@ -344,7 +346,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs["z_joint"]
-
         # MIL part
         batch_size = x.shape[0]
 
@@ -355,11 +356,18 @@ class MultiVAETorch_MIL(BaseModuleClass):
             batch_size % self.patient_batch_size != 0
         ):  # can only happen during inference for last batches for each patient
             idx = []
-
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0)
-        zs = self.cell_level_aggregator(zs)  # num of bags in batch x cond_dim
-
+        zs_attn = self.cell_level_aggregator(zs)  # num of bags in batch x cond_dim
+        if self.aggr == "both":
+            zs = torch.mean(zs, dim=1)
+            # print('shape of attn aggr')
+            # print(zs_attn.shape)
+            # print('shape of mean aggr')
+            # print(zs.shape)
+            zs_attn = torch.cat([zs_attn, zs], dim=-1)
+        # print('shape of z passed forwrd')
+        # print(zs_attn.shape)
         predictions = []
 
         if self.hierarchical_attn:
@@ -399,7 +407,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             cov_embedds = [embed[0] for embed in cov_embedds]
             cov_embedds = torch.stack(cov_embedds, dim=0)
 
-            aggr_bag_level = torch.cat([zs, cov_embedds], dim=-1)
+            aggr_bag_level = torch.cat([zs_attn, cov_embedds], dim=-1)
             aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
             aggr_bag_level = torch.stack(
                 aggr_bag_level, dim=1
@@ -413,8 +421,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 [regressor(aggr_bag_level) for regressor in self.regressors]
             )
         else:
-            predictions.extend([classifier(zs) for classifier in self.classifiers])
-            predictions.extend([regressor(zs) for regressor in self.regressors])
+            predictions.extend([classifier(zs_attn) for classifier in self.classifiers])
+            predictions.extend([regressor(zs_attn) for regressor in self.regressors])
 
         inference_outputs.update(
             {"predictions": predictions}

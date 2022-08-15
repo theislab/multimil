@@ -360,12 +360,15 @@ class MultiVAETorch(BaseModuleClass):
 
         if self.condition_decoders:
             if cat_covs is not None:
-                cat_embedds = [
-                    cat_covariate_embedding(covariate.long())
-                    for cat_covariate_embedding, covariate in zip(
-                        self.cat_covariate_embeddings, cat_covs.T
-                    )
-                ]
+                cat_embedds = []
+                for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T):
+                    cat_embedds.append(cat_covariate_embedding(covariate.long()))
+                # cat_embedds = [
+                #     cat_covariate_embedding(covariate.long())
+                #     for cat_covariate_embedding, covariate in zip(
+                #         self.cat_covariate_embeddings, cat_covs.T
+                #     )
+                # ]
             else:
                 cat_embedds = []
             if len(cat_embedds) > 0:
