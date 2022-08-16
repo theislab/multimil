@@ -353,12 +353,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
             for layer in self.modules():
                 if isinstance(layer, nn.Linear):
                     nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain('leaky_relu'))
-                    print('hi')
         elif initialization == 'kaiming':
             for layer in self.modules():
                 if isinstance(layer, nn.Linear):
+                    # following https://towardsdatascience.com/understand-kaiming-initialization-and-implementation-detail-in-pytorch-f7aa967e9138 (accessed 16.08.22)
                     nn.init.kaiming_normal_(layer.weight, mode='fan_in')
-                    print('hello')
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]

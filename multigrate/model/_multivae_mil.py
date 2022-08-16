@@ -116,6 +116,7 @@ class MultiVAE_MIL(BaseModelClass):
                 raise ValueError(
                 'When using aggr = "attn", cov_aggr has to be set to "concat", but cov_aggr={cov_aggr} was passed.'
             )
+        self.cov_aggr = cov_aggr
 
         # TODO check if all of the three above were registered with setup anndata
         # TODO add check that class is the same within a patient
@@ -519,7 +520,7 @@ class MultiVAE_MIL(BaseModelClass):
                     cell_attn.flatten()
                 )  # in inference always one patient per batch
 
-                if self.hierarchical_attn:
+                if self.hierarchical_attn and self.cov_aggr in ["attn", "both"]:
                     cov_attn = self.module.cov_level_aggregator[-1].A.squeeze(
                         dim=1
                     )  # aggregator is always last after hidden MLP layers
@@ -567,7 +568,7 @@ class MultiVAE_MIL(BaseModelClass):
             cov_level = torch.cat(cov_level_attn).numpy()
 
             adata.obsm["latent"] = latent
-            if self.hierarchical_attn:
+            if self.hierarchical_attn and self.cov_aggr in ["attn", "both"]:
                 adata.obsm["cov_attn"] = cov_level
             adata.obs["cell_attn"] = cell_level
 
