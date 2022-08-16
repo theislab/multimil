@@ -276,6 +276,7 @@ class MultiVAE_MIL(BaseModelClass):
         check_val_every_n_epoch: Optional[int] = None,
         n_steps_kl_warmup: Optional[int] = None,
         plan_kwargs: Optional[dict] = None,
+        early_stopping_monitor: Optional[str] = "accuracy_validation",
         **kwargs,
     ):
         """
@@ -327,7 +328,7 @@ class MultiVAE_MIL(BaseModelClass):
             n_steps_kl_warmup=n_steps_kl_warmup,
             check_val_every_n_epoch=check_val_every_n_epoch,
             early_stopping=early_stopping,
-            early_stopping_monitor="reconstruction_loss_validation",
+            early_stopping_monitor=early_stopping_monitor,
             early_stopping_patience=50,
             optimizer="AdamW",
             scale_adversarial_loss=1,
