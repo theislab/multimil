@@ -50,7 +50,6 @@ class Aggregator(nn.Module):
             )
 
             self.attention_U = nn.Sequential(
-                # orthogonal(nn.Linear(z_dim, self.attn_dim)),
                 nn.Linear(n_input, self.attn_dim),
                 nn.Sigmoid(),
                 nn.Dropout(dropout) if attention_dropout else nn.Identity(),
@@ -167,6 +166,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         mmd="latent",
         patient_in_vae=True,
         aggr="attn",
+        cov_aggr="attn",
     ):
         super().__init__()
 
@@ -211,6 +211,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.regularize_cov_attn = regularize_cov_attn
         self.regularize_vae = regularize_vae
         self.aggr = aggr
+        self.cov_aggr = cov_aggr
 
         self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
 
@@ -251,17 +252,19 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 n_hidden_mlp_attn=n_hidden_mlp_attn,
             ),
         )
-        if hierarchical_attn:
+        if hierarchical_attn and self.cov_aggr in ["attn", "both"]:
+            cov_aggr_input_dim = cond_dim
+
             self.cov_level_aggregator = nn.Sequential(
                 MLP(
-                    cond_dim,
-                    cond_dim,
+                    cov_aggr_input_dim,
+                    cov_aggr_input_dim,
                     n_layers=n_layers_cov_aggregator,
                     n_hidden=n_hidden_cov_aggregator,
                     dropout_rate=dropout,
                 ),
                 Aggregator(
-                    n_input=cond_dim,
+                    n_input=cov_aggr_input_dim,
                     scoring=scoring,
                     attn_dim=attn_dim,
                     attention_dropout=attention_dropout,
@@ -273,7 +276,21 @@ class MultiVAETorch_MIL(BaseModuleClass):
             )
 
         self.classifiers = torch.nn.ModuleList()
-        class_input_dim = cond_dim if self.aggr == 'attn' else 2 * cond_dim
+
+        if not self.hierarchical_attn: # we classify zs directly
+            class_input_dim = cond_dim if self.aggr == 'attn' else 2 * cond_dim
+        else: # classify classify aggregated cov info + molecular info
+            if self.cov_aggr == 'concat':
+                class_input_dim = (len(cat_covariate_dims) + len(cont_covariate_dims)) * cond_dim + z_dim # 1 for molecular attention
+                if self.aggr == 'both':
+                    class_input_dim += z_dim
+                if not self.add_patient_to_classifier:
+                    class_input_dim -= cond_dim
+            elif self.cov_aggr == 'both':
+                class_input_dim = 2 * cond_dim
+            else:
+                class_input_dim = cond_dim # attn or average
+
         for num in num_classes:
             if n_layers_classifier == 1:
                 self.classifiers.append(nn.Linear(class_input_dim, num))
@@ -290,6 +307,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                         nn.Linear(n_hidden_classifier, num),
                     )
                 )
+
         # TODO if we keep the second head, adjust
         self.regressors = torch.nn.ModuleList()
         for _ in range(
@@ -336,6 +354,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs):
+
         # vae part
         if len(self.cont_cov_idx) > 0:
             cont_covs = torch.index_select(
@@ -346,6 +365,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs["z_joint"]
+        
         # MIL part
         batch_size = x.shape[0]
 
@@ -357,17 +377,15 @@ class MultiVAETorch_MIL(BaseModuleClass):
         ):  # can only happen during inference for last batches for each patient
             idx = []
         zs = torch.tensor_split(z_joint, idx, dim=0)
-        zs = torch.stack(zs, dim=0)
-        zs_attn = self.cell_level_aggregator(zs)  # num of bags in batch x cond_dim
+        zs = torch.stack(zs, dim=0) # num of bags x batch_size x z_dim
+        zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
+
         if self.aggr == "both":
             zs = torch.mean(zs, dim=1)
-            # print('shape of attn aggr')
-            # print(zs_attn.shape)
-            # print('shape of mean aggr')
-            # print(zs.shape)
-            zs_attn = torch.cat([zs_attn, zs], dim=-1)
-        # print('shape of z passed forwrd')
-        # print(zs_attn.shape)
+            zs_aggr = torch.cat([zs_attn, zs], dim=-1) # num of bags in batch x (2 * cond_dim) but cond_dim has to be = z_dim #TODO
+        else: # "attn"
+            zs_aggr = zs_attn
+
         predictions = []
 
         if self.hierarchical_attn:
@@ -383,46 +401,56 @@ class MultiVAETorch_MIL(BaseModuleClass):
                         )
                         if add_covariate(i)
                     ]
-            
-            if len(cat_embedds) > 0:  # if the only registered categorical covs are condition and patient
-                cat_embedds = torch.cat(
+
+            if len(cat_embedds) > 0:  
+                cat_embedds = torch.stack(
                     cat_embedds,
-                    dim=-1,
+                    dim=1,
                 )
             else:
-                cat_embedds = torch.Tensor().to(self.device)  # so cat works later
+                cat_embedds = torch.Tensor().to(self.device)  # if the only registered categorical covs are condition and patient, so cat works later
             if self.vae.n_cont_cov > 0:
                 if (
                     cont_covs.shape[-1] != self.vae.n_cont_cov
-                ):  # get rid of size_factors
+                ):  # shouldn't happen as we got rid of size factors before
                     raise RuntimeError("cont_covs.shape[-1] != self.vae.n_cont_cov")
-                    # cont_covs = cont_covs[:, 0:self.vae.n_cont_cov]
-                cont_embedds = self.vae.compute_cont_cov_embeddings_(cont_covs)
+                cont_embedds = self.vae.compute_cont_cov_embeddings_(cont_covs) # batch_size x num_of_cont_covs x cond_dim
             else:
                 cont_embedds = torch.Tensor().to(self.device)
 
-            cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=-1)
+            cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=1) # batch_size x (num_of_cat_covs + num_of_cont_cons) x cond_dim
+        
+            cov_embedds = torch.tensor_split(cov_embedds, idx) # tuple of length equal to num of bags in a batch, each element of shape patient_batch_size x num_of_covs x cond_dim
+            cov_embedds = torch.stack(cov_embedds, dim=0) # num_of_bags_in_batch x patient_batch_size x num_of_covs x cond_dim 
+            # would've used torch.unique here but it's not differentiable
+            # second dim is the patient_batch dim so all the values are the same along this dim -> keep only one
+            cov_embedds = cov_embedds[:, 0, :, :].squeeze(1) # num_of_bags_in_batch x num_of_covs x cond_dim 
 
-            cov_embedds = torch.tensor_split(cov_embedds, idx)
-            cov_embedds = [embed[0] for embed in cov_embedds]
-            cov_embedds = torch.stack(cov_embedds, dim=0)
-
-            aggr_bag_level = torch.cat([zs_attn, cov_embedds], dim=-1)
-            aggr_bag_level = torch.split(aggr_bag_level, self.cond_dim, dim=-1)
-            aggr_bag_level = torch.stack(
-                aggr_bag_level, dim=1
-            )  # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
-            aggr_bag_level = self.cov_level_aggregator(aggr_bag_level)
+            if self.cov_aggr == 'concat':
+                aggr_bag  = torch.split(cov_embedds, 1, dim=1)
+                aggr_bag = torch.cat([zs_aggr.unsqueeze(1), *aggr_bag], dim=-1).squeeze(1)
+            else: # attn, both or mean, here def only have one head for cell aggr
+                aggr_bag_level = torch.cat(
+                    [cov_embedds, zs_aggr.unsqueeze(1)], dim=1
+                )  # num of bags in batch x num of cat covs + num of cont covs + 1 (molecular information) x cond_dim
+                if self.cov_aggr == 'attn':
+                    aggr_bag = self.cov_level_aggregator(aggr_bag_level) # final for attn
+                if self.cov_aggr == 'both':
+                    aggr_bag = self.cov_level_aggregator(aggr_bag_level)
+                    average_head = torch.mean(aggr_bag_level, dim=1)
+                    aggr_bag = torch.cat([average_head, aggr_bag], dim=-1) # final for both
+                if self.cov_aggr == 'mean':
+                    aggr_bag = torch.mean(aggr_bag_level, dim=1) # final for mean
 
             predictions.extend(
-                [classifier(aggr_bag_level) for classifier in self.classifiers]
+                [classifier(aggr_bag) for classifier in self.classifiers]
             )  # each one num of bags in batch x num of classes
             predictions.extend(
-                [regressor(aggr_bag_level) for regressor in self.regressors]
+                [regressor(aggr_bag) for regressor in self.regressors]
             )
         else:
-            predictions.extend([classifier(zs_attn) for classifier in self.classifiers])
-            predictions.extend([regressor(zs_attn) for regressor in self.regressors])
+            predictions.extend([classifier(zs_aggr) for classifier in self.classifiers])
+            predictions.extend([regressor(zs_aggr) for regressor in self.regressors])
 
         inference_outputs.update(
             {"predictions": predictions}

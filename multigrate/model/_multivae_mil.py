@@ -82,7 +82,8 @@ class MultiVAE_MIL(BaseModelClass):
         drop_attn=False,
         mmd="latent",
         patient_in_vae=True,
-        aggr="attn",
+        aggr="attn", # or 'both' = attn + average (two heads)
+        cov_aggr=None, # one of ['attn', 'concat', 'both', 'mean']
     ):
         super().__init__(adata)
 
@@ -104,12 +105,24 @@ class MultiVAE_MIL(BaseModelClass):
         self.regression = regression
         self.ordinal_regression = ordinal_regression
 
+        if cov_aggr is None:
+            if aggr == 'attn':
+                cov_aggr = 'attn'
+            else: # aggr = 'both'
+                cov_aggr = 'concat'
+        else:
+            if aggr == 'both' and cov_aggr != 'concat':
+                raise ValueError(
+                'When using aggr = "attn", cov_aggr has to be set to "concat", but cov_aggr={cov_aggr} was passed.'
+            )
+
         # TODO check if all of the three above were registered with setup anndata
         # TODO add check that class is the same within a patient
         # TODO assert length of things is the same as number of modalities
         # TODO add that n_layers has to be > 0 for all
         # TODO warning if n_layers == 1 then n_hidden is not used for classifier and MLP attention
         # TODO warning if MLP attention is used but n layers and n hidden not given that using default values
+        # TODO if aggr='both' and hierarchical_attn=True then cov_aggr has to be 'concat'
         if scoring == "MLP":
             if not n_layers_mlp_attn:
                 n_layers_mlp_attn = 1
@@ -224,6 +237,7 @@ class MultiVAE_MIL(BaseModelClass):
             mmd=mmd,
             patient_in_vae=patient_in_vae,
             aggr=aggr,
+            cov_aggr=cov_aggr,
         )
 
         self.class_idx = torch.tensor(self.class_idx)

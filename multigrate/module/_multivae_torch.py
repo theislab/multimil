@@ -279,7 +279,7 @@ class MultiVAETorch(BaseModuleClass):
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs, masks=None):
         # split x into modality xs
-        if torch.is_tensor(x):
+        if torch.is_tensor(x): # TODO why do we need this?
             xs = torch.split(
                 x, self.input_dims, dim=-1
             )  # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
@@ -343,17 +343,18 @@ class MultiVAETorch(BaseModuleClass):
     @auto_move_data
     def generative(self, z_joint, cat_covs, cont_covs):
         z = z_joint.unsqueeze(1).repeat(1, self.n_modality, 1)
+        batch_size = z.shape[0]
 
         if self.add_shared_decoder:
             mod_vecs = self.modal_vector(
                 list(range(self.n_modality))
-            )  # shape 1 x n_mod x n_mod
+            )  # 1 x n_mod x n_mod
             mod_vecs = mod_vecs.repeat(
                 z.shape[0], 1, 1
-            )  # shape batch_size x n_mod x n_mod
+            )  # batch_size x n_mod x n_mod
             z = torch.cat(
                 [z, mod_vecs], dim=-1
-            )  # shape batch_size x n_mod x latent_dim+n_mod
+            )  # batch_size x n_mod x latent_dim+n_mod
             z = self.shared_decoder(z)
 
         zs = torch.split(z, 1, dim=1)
@@ -363,30 +364,27 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = []
                 for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T):
                     cat_embedds.append(cat_covariate_embedding(covariate.long()))
-                # cat_embedds = [
-                #     cat_covariate_embedding(covariate.long())
-                #     for cat_covariate_embedding, covariate in zip(
-                #         self.cat_covariate_embeddings, cat_covs.T
-                #     )
-                # ]
             else:
                 cat_embedds = []
             if len(cat_embedds) > 0:
-                cat_embedds = torch.cat(cat_embedds, dim=-1)
+                cat_embedds = torch.cat(cat_embedds, dim=1) # batch size x cond_dim * n_cat_covs
             else:
                 cat_embedds = torch.Tensor().to(self.device)
 
             if self.n_cont_cov > 0:
                 if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
+                    # TODO check if still need this
                     # raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov") # still can happen when query to ref
                     cont_covs = cont_covs[:, 0 : self.n_cont_cov]
                 cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
+                cont_embedds = torch.split(cont_embedds, 1, dim=1)
+                cont_embedds = torch.cat(cont_embedds, dim=-1).squeeze(1) # batch size x cond_dim * n_cont_covs
             else:
                 cont_embedds = torch.Tensor().to(self.device)
 
             zs = [
                 torch.cat([z.squeeze(1), cat_embedds, cont_embedds], dim=-1) for z in zs
-            ]  # concat embedding to each modality x along the feature axis
+            ]  # concat cov embeddings to each z_i x along the feature axis
 
         rs = [self.h_to_x(z, mod) for mod, z in enumerate(zs)]
         return dict(rs=rs)
@@ -611,12 +609,13 @@ class MultiVAETorch(BaseModuleClass):
         if self.cont_cov_type == "mlp":
             embeddings = []
             for cov in range(covs.size(1)):
-                this_cov = covs[:, cov].view(-1, 1)
+                this_cov = covs[:, cov].view(-1, 1) # TODO view??
                 embeddings.append(
                     self.cont_covariate_curves[cov](this_cov).sigmoid()
                 )  # * this_drug.gt(0)) # TODO check what this .gt(0) is
             return torch.cat(embeddings, 1) @ self.cont_covariate_embeddings.weight
         else:
-            return (
-                self.cont_covariate_curves(covs) @ self.cont_covariate_embeddings.weight
-            )
+            sigmoid_covs = self.cont_covariate_curves(covs) # shape batch_size X num_of_cont_covs
+            embed_weights = self.cont_covariate_embeddings.weight # shape num_of_cont_covs x cond_dim
+            batch_size = covs.shape[0]
+            return torch.mul(sigmoid_covs.unsqueeze(-1).repeat(1, 1, self.cond_dim), embed_weights.unsqueeze(0).repeat(batch_size, 1, 1)) # shape batch_size x num_of_cont_covs x cond_dim
