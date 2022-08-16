@@ -24,6 +24,7 @@ class Aggregator(nn.Module):
         dropout=0.2,
         n_layers_mlp_attn=1,
         n_hidden_mlp_attn=16,
+        activation=nn.LeakyReLU,
     ):
         super().__init__()
 
@@ -69,6 +70,7 @@ class Aggregator(nn.Module):
                         n_layers=n_layers_mlp_attn - 1,
                         n_hidden=n_hidden_mlp_attn,
                         dropout_rate=dropout,
+                        activation=activation,
                     ),
                     nn.Linear(n_hidden_mlp_attn, 1),
                 )
@@ -167,8 +169,19 @@ class MultiVAETorch_MIL(BaseModuleClass):
         patient_in_vae=True,
         aggr="attn",
         cov_aggr="attn",
+        activation='leaky_relu',
+        initialization=None,
     ):
         super().__init__()
+
+        if activation == 'leaky_relu':
+            activation = nn.LeakyReLU
+        elif activation == 'tanh':
+            activation = nn.Tanh
+        else:
+            raise NotImplementedError(
+                f'activation should be one of ["leaky_relu", "tanh"], but activation={activation} was passed.'
+            )
 
         self.vae = MultiVAETorch(
             modality_lengths=modality_lengths,
@@ -197,6 +210,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             n_hidden_cont_embed=n_hidden_cont_embed,
             add_shared_decoder=add_shared_decoder,
             mmd=mmd,
+            activation=activation,
         )
 
         self.integrate_on_idx = integrate_on_idx
@@ -238,6 +252,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 n_layers=n_layers_cell_aggregator,
                 n_hidden=n_hidden_cell_aggregator,
                 dropout_rate=dropout,
+                activation=activation,
             ),
             Aggregator(
                 n_input=cond_dim,
@@ -250,6 +265,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 dropout=dropout,
                 n_layers_mlp_attn=n_layers_mlp_attn,
                 n_hidden_mlp_attn=n_hidden_mlp_attn,
+                activation=activation,
             ),
         )
         if hierarchical_attn and self.cov_aggr in ["attn", "both"]:
@@ -262,6 +278,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                     n_layers=n_layers_cov_aggregator,
                     n_hidden=n_hidden_cov_aggregator,
                     dropout_rate=dropout,
+                    activation=activation,
                 ),
                 Aggregator(
                     n_input=cov_aggr_input_dim,
@@ -272,6 +289,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                     dropout=dropout,
                     n_layers_mlp_attn=n_layers_mlp_attn,
                     n_hidden_mlp_attn=n_hidden_mlp_attn,
+                    activation=activation,
                 ),
             )
 
@@ -303,6 +321,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                             n_layers=n_layers_classifier - 1,
                             n_hidden=n_hidden_classifier,
                             dropout_rate=dropout,
+                            activation=activation,
                         ),
                         nn.Linear(n_hidden_classifier, num),
                     )
@@ -324,10 +343,22 @@ class MultiVAETorch_MIL(BaseModuleClass):
                             n_layers=n_layers_regressor - 1,
                             n_hidden=n_hidden_regressor,
                             dropout_rate=dropout,
+                            activation=activation,
                         ),
                         nn.Linear(n_hidden_regressor, 1),
                     )
                 )
+
+        if initialization == 'xavier':
+            for layer in self.modules():
+                if isinstance(layer, nn.Linear):
+                    nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain('leaky_relu'))
+                    print('hi')
+        elif initialization == 'kaiming':
+            for layer in self.modules():
+                if isinstance(layer, nn.Linear):
+                    nn.init.kaiming_normal_(layer.weight, mode='fan_in')
+                    print('hello')
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]

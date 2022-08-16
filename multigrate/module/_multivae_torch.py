@@ -41,6 +41,7 @@ class MultiVAETorch(BaseModuleClass):
         n_hidden_shared_decoder: int = 32,
         add_shared_decoder=True,
         mmd="latent",  # or both or marginal
+        activation=nn.LeakyReLU,
     ):
         super().__init__()
 
@@ -121,6 +122,7 @@ class MultiVAETorch(BaseModuleClass):
                 n_hidden=n_hidden_shared_decoder,
                 dropout_rate=dropout,
                 normalization=normalization,
+                activation=activation,
             )
         # modality encoders
         cond_dim_enc = (
@@ -136,6 +138,7 @@ class MultiVAETorch(BaseModuleClass):
                 n_hidden=n_hidden,
                 dropout_rate=dropout,
                 normalization=normalization,
+                activation=activation,
             )
             for x_dim, n_layers, n_hidden in zip(
                 self.input_dims, n_layers_encoders, n_hidden_encoders
@@ -157,6 +160,7 @@ class MultiVAETorch(BaseModuleClass):
                 n_hidden=n_hidden,
                 dropout_rate=dropout,
                 normalization=normalization,
+                activation=activation,
                 loss=loss,
             )
             for x_dim, loss, n_layers, n_hidden in zip(
@@ -185,6 +189,7 @@ class MultiVAETorch(BaseModuleClass):
                             n_hidden=n_hidden_cont_embed,
                             dropout_rate=dropout,
                             normalization=normalization,
+                            activation=activation,
                         ),
                         nn.Linear(n_input, 1),
                     )

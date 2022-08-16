@@ -84,9 +84,10 @@ class MultiVAE_MIL(BaseModelClass):
         patient_in_vae=True,
         aggr="attn", # or 'both' = attn + average (two heads)
         cov_aggr=None, # one of ['attn', 'concat', 'both', 'mean']
+        activation='leaky_relu', # or tanh
+        initialization=None, # xavier (tanh) or kaiming (leaky_relu)
     ):
         super().__init__(adata)
-
         self.patient_column = patient_label
         patient_idx = adata.uns["_scvi"]["extra_categoricals"]["keys"].index(
             patient_label
@@ -202,6 +203,8 @@ class MultiVAE_MIL(BaseModelClass):
             n_hidden_shared_decoder=n_hidden_shared_decoder,
             n_hidden_cont_embed=n_hidden_cont_embed,
             add_shared_decoder=add_shared_decoder,
+            activation=activation,
+            initialization=initialization,
             # mil specific
             num_classes=num_classes,
             scoring=scoring,
