@@ -299,7 +299,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             class_input_dim = cond_dim if self.aggr == 'attn' else 2 * cond_dim
         else: # classify classify aggregated cov info + molecular info
             if self.cov_aggr == 'concat':
-                class_input_dim = (len(cat_covariate_dims) + len(cont_covariate_dims)) * cond_dim + z_dim # 1 for molecular attention
+                class_input_dim = (len(cat_covariate_dims) + len(cont_covariate_dims) + 1) * cond_dim # 1 for molecular attention
                 if self.aggr == 'both':
                     class_input_dim += z_dim
                 if not self.add_patient_to_classifier:
@@ -409,13 +409,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0) # num of bags x batch_size x z_dim
         zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
-
+    
         if self.aggr == "both":
             zs = torch.mean(zs, dim=1)
             zs_aggr = torch.cat([zs_attn, zs], dim=-1) # num of bags in batch x (2 * cond_dim) but cond_dim has to be = z_dim #TODO
         else: # "attn"
             zs_aggr = zs_attn
-
         predictions = []
 
         if self.hierarchical_attn:
@@ -456,7 +455,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             cov_embedds = cov_embedds[:, 0, :, :] # num_of_bags_in_batch x num_of_covs x cond_dim, 
 
             if self.cov_aggr == 'concat':
-                aggr_bag  = torch.split(cov_embedds, 1, dim=1)
+                aggr_bag  = torch.split(cov_embedds, 1, dim=1) # tuple of length = num_of_covs, each of shape num_of_bags_in_batch x 1 x cond_dim
                 aggr_bag = torch.cat([zs_aggr.unsqueeze(1), *aggr_bag], dim=-1).squeeze(1)
             else: # attn, both or mean, here def only have one head for cell aggr
                 aggr_bag_level = torch.cat(
@@ -477,7 +476,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             predictions.extend(
                 [regressor(aggr_bag) for regressor in self.regressors]
             )
-        else:
+        else: # classify zs aggregated directly
             predictions.extend([classifier(zs_aggr) for classifier in self.classifiers])
             predictions.extend([regressor(zs_aggr) for regressor in self.regressors])
 
