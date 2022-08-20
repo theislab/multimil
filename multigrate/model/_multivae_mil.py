@@ -114,7 +114,7 @@ class MultiVAE_MIL(BaseModelClass):
         else:
             if aggr == 'both' and cov_aggr != 'concat':
                 raise ValueError(
-                'When using aggr = "attn", cov_aggr has to be set to "concat", but cov_aggr={cov_aggr} was passed.'
+                'When using aggr = "both", cov_aggr has to be set to "concat", but cov_aggr={cov_aggr} was passed.'
             )
         self.cov_aggr = cov_aggr
 

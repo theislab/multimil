@@ -449,12 +449,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 cont_embedds = torch.Tensor().to(self.device)
 
             cov_embedds = torch.cat([cat_embedds, cont_embedds], dim=1) # batch_size x (num_of_cat_covs + num_of_cont_cons) x cond_dim
-        
             cov_embedds = torch.tensor_split(cov_embedds, idx) # tuple of length equal to num of bags in a batch, each element of shape patient_batch_size x num_of_covs x cond_dim
             cov_embedds = torch.stack(cov_embedds, dim=0) # num_of_bags_in_batch x patient_batch_size x num_of_covs x cond_dim 
             # would've used torch.unique here but it's not differentiable
             # second dim is the patient_batch dim so all the values are the same along this dim -> keep only one
-            cov_embedds = cov_embedds[:, 0, :, :].squeeze(1) # num_of_bags_in_batch x num_of_covs x cond_dim 
+            cov_embedds = cov_embedds[:, 0, :, :] # num_of_bags_in_batch x num_of_covs x cond_dim, 
 
             if self.cov_aggr == 'concat':
                 aggr_bag  = torch.split(cov_embedds, 1, dim=1)
