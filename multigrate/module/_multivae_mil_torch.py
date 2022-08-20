@@ -15,7 +15,7 @@ class Aggregator(nn.Module):
     def __init__(
         self,
         n_input=None,
-        scoring="sum",
+        scoring="gated_attn",
         attn_dim=16,  # D
         patient_batch_size=None,
         scale=False,
@@ -58,7 +58,7 @@ class Aggregator(nn.Module):
 
             self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
 
-        elif self.scoring == "MLP":
+        elif self.scoring == "mlp":
 
             if n_layers_mlp_attn == 1:
                 self.attention = nn.Linear(n_input, 1)
@@ -77,10 +77,10 @@ class Aggregator(nn.Module):
         self.dropout_attn = nn.Dropout(dropout) if drop_attn else nn.Identity()
 
     def forward(self, x):
-        if self.scoring == "sum":
-            return torch.sum(x, dim=0)  # z_dim
+        # if self.scoring == "sum":
+        #  return torch.sum(x, dim=0)  # z_dim depricated
 
-        elif self.scoring == "attn":
+        if self.scoring == "attn":
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
             self.A = self.attention(x)  # Nx1
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
@@ -96,10 +96,13 @@ class Aggregator(nn.Module):
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
             self.A = F.softmax(self.A, dim=-1)  # softmax over N
 
-        elif self.scoring == "MLP":
+        elif self.scoring == "mlp":
             self.A = self.attention(x)  # N
             self.A = torch.transpose(self.A, -1, -2)
             self.A = F.softmax(self.A, dim=-1)
+
+        else:
+            raise NotImplementedError(f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].')
 
         if self.scale:
             self.A = self.A * self.A.shape[-1] / self.patient_batch_size
