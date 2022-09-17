@@ -9,17 +9,19 @@ from typing import List, Optional, Union
 import anndata
 import copy
 import itertools
+import warnings
+
 
 class StratifiedSampler(torch.utils.data.sampler.Sampler):
     def __init__(
         self,
         indices: np.ndarray,
-        patient_labels: np.ndarray,
+        group_labels: np.ndarray,
         batch_size: int,
         min_size_per_class: int,
         shuffle: bool = True,
         drop_last: Union[bool, int] = True,
-        shuffle_classes: bool = True
+        shuffle_classes: bool = True,
     ):
         if drop_last > batch_size:
             raise ValueError(
@@ -30,35 +32,38 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
         if batch_size % min_size_per_class != 0:
             raise ValueError(
                 "min_size_per_class has to be a divisor of batch_size."
-                + "min_size_per_class is {} but batch_size is {}.".format(min_size_per_class, batch_size)
+                + "min_size_per_class is {} but batch_size is {}.".format(
+                    min_size_per_class, batch_size
+                )
             )
 
         self.indices = indices
-        self.patient_labels = patient_labels
+        self.group_labels = group_labels
         self.n_obs = len(indices)
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.shuffle_classes = shuffle_classes
-        self.min_size_per_class = min_size_per_class 
+        self.min_size_per_class = min_size_per_class
         self.drop_last = drop_last
 
         from math import ceil
 
-        classes = set(self.patient_labels)
+        classes = list(dict.fromkeys(self.group_labels))
 
         tmp = 0
         for cl in classes:
-            idx = np.where(self.patient_labels == cl)[0]
+            idx = np.where(self.group_labels == cl)[0]
             cl_idx = self.indices[idx]
             n_obs = len(cl_idx)
-
             last_batch_len = n_obs % self.min_size_per_class
             if (self.drop_last is True) or (last_batch_len < self.drop_last):
                 drop_last_n = last_batch_len
             elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
                 drop_last_n = 0
             else:
-                raise ValueError("Invalid input for drop_last param. Must be bool or int.")
+                raise ValueError(
+                    "Invalid input for drop_last param. Must be bool or int."
+                )
 
             if drop_last_n != 0:
                 tmp += n_obs // self.min_size_per_class
@@ -68,16 +73,15 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
         classes_per_batch = int(self.batch_size / self.min_size_per_class)
         self.length = ceil(tmp / classes_per_batch)
 
-
     def __iter__(self):
 
         classes_per_batch = int(self.batch_size / self.min_size_per_class)
 
-        classes = set(self.patient_labels)
+        classes = list(dict.fromkeys(self.group_labels))
         data_iter = []
 
         for cl in classes:
-            idx = np.where(self.patient_labels == cl)[0]
+            idx = np.where(self.group_labels == cl)[0]
             cl_idx = self.indices[idx]
             n_obs = len(cl_idx)
 
@@ -92,16 +96,19 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
             elif (self.drop_last is False) or (last_batch_len >= self.drop_last):
                 drop_last_n = 0
             else:
-                raise ValueError("Invalid input for drop_last param. Must be bool or int.")
+                raise ValueError(
+                    "Invalid input for drop_last param. Must be bool or int."
+                )
 
             if drop_last_n != 0:
-                idx = idx[: -drop_last_n]
+                idx = idx[:-drop_last_n]
 
             data_iter.extend(
-            [
-                cl_idx[idx[i : i + self.min_size_per_class]]
-                for i in range(0, len(idx), self.min_size_per_class)
-            ])
+                [
+                    cl_idx[idx[i : i + self.min_size_per_class]]
+                    for i in range(0, len(idx), self.min_size_per_class)
+                ]
+            )
 
         if self.shuffle_classes:
             idx = torch.randperm(len(data_iter)).tolist()
@@ -109,9 +116,11 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
 
         final_data_iter = []
 
-        end = len(data_iter) - len(data_iter)%classes_per_batch
+        end = len(data_iter) - len(data_iter) % classes_per_batch
         for i in range(0, end, classes_per_batch):
-            batch_idx = list(itertools.chain.from_iterable(data_iter[i : i+classes_per_batch]))
+            batch_idx = list(
+                itertools.chain.from_iterable(data_iter[i : i + classes_per_batch])
+            )
             final_data_iter.append(batch_idx)
 
         # deal with the last manually
@@ -124,7 +133,8 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return self.length
 
-class BagAnnDataLoader(DataLoader):
+
+class GroupAnnDataLoader(DataLoader):
     """
     DataLoader for loading tensors from AnnData objects.
     Parameters
@@ -148,7 +158,7 @@ class BagAnnDataLoader(DataLoader):
     def __init__(
         self,
         adata: anndata.AnnData,
-        patient_column: str,
+        group_column: str,
         shuffle=True,
         shuffle_classes=True,
         indices=None,
@@ -173,16 +183,16 @@ class BagAnnDataLoader(DataLoader):
                         )
                     )
 
-        if patient_column not in adata.uns['_scvi']['extra_categoricals']['keys']:
+        if group_column not in adata.uns["_scvi"]["extra_categoricals"]["keys"]:
             raise ValueError(
                 "{} required for model but not included into categorical covariates when setup_anndata was run".format(
-                    patient_column
+                    group_column
                 )
             )
 
         self.dataset = AnnTorchDataset(adata, getitem_tensors=data_and_attributes)
 
-        if not min_size_per_class:
+        if min_size_per_class is None:
             min_size_per_class = batch_size // 2
 
         sampler_kwargs = {
@@ -190,7 +200,7 @@ class BagAnnDataLoader(DataLoader):
             "shuffle": shuffle,
             "drop_last": drop_last,
             "min_size_per_class": min_size_per_class,
-            "shuffle_classes": shuffle_classes
+            "shuffle_classes": shuffle_classes,
         }
 
         if indices is None:
@@ -202,7 +212,9 @@ class BagAnnDataLoader(DataLoader):
             indices = np.asarray(indices)
             sampler_kwargs["indices"] = indices
 
-        sampler_kwargs["patient_labels"] = np.array(adata[indices].obsm['_scvi_extra_categoricals'][patient_column])
+        sampler_kwargs["group_labels"] = np.array(
+            adata[indices].obsm["_scvi_extra_categoricals"][group_column]
+        )
 
         self.indices = indices
         self.sampler_kwargs = sampler_kwargs
