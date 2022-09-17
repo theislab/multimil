@@ -38,7 +38,7 @@ def organize_multiome_anndatas(adatas, groups, layers=None, modality_lengths=Non
 
     for mod, (modality_adatas, modality_groups) in enumerate(zip(adatas, groups)):
         for i, (adata, group) in enumerate(zip(modality_adatas, modality_groups)):
-            if not isinstance(adata, ad.AnnData) and adata == None:
+            if not isinstance(adata, ad.AnnData) and adata is None:
                 adatas[mod][i] = ad.AnnData(
                     np.zeros((datasets_lengths[i], modality_lengths[mod]))
                 )
@@ -47,8 +47,8 @@ def organize_multiome_anndatas(adatas, groups, layers=None, modality_lengths=Non
                 groups[mod][i] = datasets_groups[i]
                 adatas[mod][i].var_names = modality_var_names[mod]
                 adatas[mod][i] = adatas[mod][i].copy()
-            if layers:
-                if layers[mod][i]:
+            if layers is not None:
+                if layers[mod][i] is not None:
                     layer = layers[mod][i]
                     if scipy.sparse.issparse(adatas[mod][i].layers[layer]):
                         adatas[mod][i].X = adatas[mod][i].layers[layer].A.copy()
@@ -82,6 +82,7 @@ def organize_multiome_anndatas(adatas, groups, layers=None, modality_lengths=Non
         batches[0] = batches[0].fillna(batches[i])
 
     multiome_anndata.obs = mod_adatas[0].obs
-    multiome_anndata.obs["group"] = batches[0].astype("category")
+    multiome_anndata.obs["group"] = batches[0]
+    multiome_anndata.obs["group"] = multiome_anndata.obs["group"].astype("category")
 
     return multiome_anndata

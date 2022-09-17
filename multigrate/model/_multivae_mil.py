@@ -281,6 +281,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_steps_kl_warmup: Optional[int] = None,
         plan_kwargs: Optional[dict] = None,
         early_stopping_monitor: Optional[str] = "accuracy_validation",
+        early_stopping_mode: Optional[str] = "max",
         **kwargs,
     ):
         """
@@ -334,6 +335,7 @@ class MultiVAE_MIL(BaseModelClass):
             early_stopping=early_stopping,
             early_stopping_monitor=early_stopping_monitor,
             early_stopping_patience=50,
+            early_stopping_mode=early_stopping_mode,
             optimizer="AdamW",
             scale_adversarial_loss=1,
         )
@@ -346,7 +348,7 @@ class MultiVAE_MIL(BaseModelClass):
             if "callbacks" not in kwargs.keys():
                 kwargs["callbacks"] = []
             kwargs["callbacks"].append(
-                SaveBestState(monitor="reconstruction_loss_validation")
+                SaveBestState(monitor="accuracy_validation",  mode="max")
             )
         data_splitter = GroupDataSplitter(
             self.adata,

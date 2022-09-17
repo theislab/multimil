@@ -297,29 +297,28 @@ class MultiVAETorch(BaseModuleClass):
 
         # if we want to condition encoders, i.e. concat covariates to the input
         if self.condition_encoders:
-            # check if need to concat categorical covariates
             if cat_covs is not None:
-                cat_embedds = [
-                    cat_covariate_embedding(covariate.long())
-                    for cat_covariate_embedding, covariate in zip(
-                        self.cat_covariate_embeddings, cat_covs.T
-                    )
-                ]
+                cat_embedds = []
+                for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T):
+                    cat_embedds.append(cat_covariate_embedding(covariate.long()))
             else:
                 cat_embedds = []
-
             if len(cat_embedds) > 0:
-                cat_embedds = torch.cat(cat_embedds, dim=-1)
+                cat_embedds = torch.cat(cat_embedds, dim=1) # batch size x cond_dim * n_cat_covs
             else:
                 cat_embedds = torch.Tensor().to(self.device)
-            # check if need to concat continuous covariates
+
             if self.n_cont_cov > 0:
                 if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
+                    # TODO check if still need this
+                    # raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov") # still can happen when query to ref
                     cont_covs = cont_covs[:, 0 : self.n_cont_cov]
                 cont_embedds = self.compute_cont_cov_embeddings_(cont_covs)
+                cont_embedds = torch.split(cont_embedds, 1, dim=1)
+                cont_embedds = torch.cat(cont_embedds, dim=-1).squeeze(1) # batch size x cond_dim * n_cont_covs
             else:
                 cont_embedds = torch.Tensor().to(self.device)
-            # concatenate input with categorical and continuous covariates
+
             xs = [
                 torch.cat([x, cat_embedds, cont_embedds], dim=-1) for x in xs
             ]  # concat embedding to each modality x along the feature axis
