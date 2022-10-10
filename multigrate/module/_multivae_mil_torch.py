@@ -174,6 +174,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cov_aggr="attn",
         activation='leaky_relu',
         initialization=None,
+        class_weights_dict=None,
     ):
         super().__init__()
 
@@ -361,6 +362,14 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 if isinstance(layer, nn.Linear):
                     # following https://towardsdatascience.com/understand-kaiming-initialization-and-implementation-detail-in-pytorch-f7aa967e9138 (accessed 16.08.22)
                     nn.init.kaiming_normal_(layer.weight, mode='fan_in')
+
+        if class_weights_dict is not None:
+            class_weights = torch.zeros(num_classes[0]) # hard coded that only one classification task TODO fix
+            for key, value in class_weights_dict.items():
+                class_weights[key] = value
+            self.class_weights = class_weights
+        else:
+            self.class_weights = None
 
     def _get_inference_input(self, tensors):
         x = tensors[_CONSTANTS.X_KEY]
@@ -655,8 +664,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         classification_loss = torch.tensor(0.0).to(self.device)
         accuracies = []
         for i in range(len(self.class_idx)):
+            self.class_weights = self.class_weights.to(self.device)
             classification_loss += F.cross_entropy(
-                predictions[i], classification[:, i].long()
+                predictions[i], classification[:, i].long(), weight=self.class_weights
             )  # assume same in the batch
             accuracies.append(
                 torch.sum(

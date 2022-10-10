@@ -479,7 +479,6 @@ class MultiVAETorch(BaseModuleClass):
                 self.loss_coefs,
             )
         )
-
         loss = torch.mean(
             self.loss_coefs["recon"] * recon_loss
             + self.loss_coefs["kl"] * kl_loss

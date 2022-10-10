@@ -86,6 +86,7 @@ class MultiVAE_MIL(BaseModelClass):
         cov_aggr=None, # one of ['attn', 'concat', 'both', 'mean']
         activation='leaky_relu', # or tanh
         initialization=None, # xavier (tanh) or kaiming (leaky_relu)
+        weighted_class_loss=False, 
     ):
         super().__init__(adata)
         self.patient_column = patient_label
@@ -181,6 +182,15 @@ class MultiVAE_MIL(BaseModelClass):
                 f'The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with "ordinal_regression_order" parameter.'
             )
 
+         # create dict with a weight for each class
+        class_weights_dict = None
+        if weighted_class_loss is True:
+            class_weights_dict = dict(adata.obsm['_scvi_extra_categoricals'][self.classification[0]].value_counts())
+            denominator = 0.0
+            for _, n_obs_in_class in class_weights_dict.items():
+                denominator += (1.0 / n_obs_in_class)
+            class_weights_dict = {name: (1 / value ) / denominator for name, value in class_weights_dict.items()}
+
         self.module = MultiVAETorch_MIL(
             modality_lengths=modality_lengths,
             condition_encoders=condition_encoders,
@@ -242,6 +252,7 @@ class MultiVAE_MIL(BaseModelClass):
             patient_in_vae=patient_in_vae,
             aggr=aggr,
             cov_aggr=cov_aggr,
+            class_weights_dict=class_weights_dict,
         )
 
         self.class_idx = torch.tensor(self.class_idx)
