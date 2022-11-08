@@ -821,11 +821,6 @@ class MultiVAE_MIL(BaseModelClass):
         model = _initialize_model(cls, adata, attr_dict)
         adata_manager = model.get_anndata_manager(adata, required=True)
 
-        # print(adata_manager.registry)
-
-        # scvi_setup_dict = attr_dict.pop("scvi_setup_dict_")
-        # transfer_anndata_setup(scvi_setup_dict, adata, extend_categories=True)
-
         ignore_categories = []
         if not reference_model.patient_in_vae:
             ignore_categories = [reference_model.patient_column]
@@ -833,7 +828,7 @@ class MultiVAE_MIL(BaseModelClass):
         ref_adata = reference_model.adata.copy()
         setup_args = reference_model.adata_manager.registry["setup_args"].copy()
         setup_args.pop('ordinal_regression_order')
-        print(setup_args)
+
         mtg.model.MultiVAE.setup_anndata(ref_adata, **setup_args)
 
         vae = MultiVAE(
