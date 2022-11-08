@@ -1,12 +1,3 @@
-scikit-learn
-statsmodels
-numba
-tables
-python-igraph
-notebook
-leidenalg
-louvain
-torch
 scanpy
-scvi-tools==0.14.0
-torchmetrics==0.6.0 # fixes this https://github.com/NVIDIA/DeepLearningExamples/issues/1113
+scvi-tools
+matplotlib
