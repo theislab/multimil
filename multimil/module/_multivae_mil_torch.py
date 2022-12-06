@@ -170,6 +170,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         activation='leaky_relu',
         initialization=None,
         class_weights=None,
+        anneal_class_loss=False,
     ):
         super().__init__()
 
@@ -221,6 +222,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.aggr = aggr
         self.cov_aggr = cov_aggr
         self.class_weights = class_weights
+        self.anneal_class_loss = anneal_class_loss
 
         self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
 
@@ -668,11 +670,13 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
         reg_loss = self.orthogonal_regularization(weights)
 
+        class_loss_anneal_coef = kl_weight if self.anneal_class_loss else 1.0
+
         loss = torch.mean(
             self.vae.loss_coefs["recon"] * recon_loss
             + self.vae.loss_coefs["kl"] * kl_loss
             + self.vae.loss_coefs["integ"] * integ_loss
-            + self.class_loss_coef * classification_loss
+            + self.class_loss_coef * classification_loss * class_loss_anneal_coef
             + self.regression_loss_coef * regression_loss
             + self.reg_coef * reg_loss
         )

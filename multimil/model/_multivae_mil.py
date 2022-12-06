@@ -84,6 +84,7 @@ class MultiVAE_MIL(BaseModelClass):
         activation='leaky_relu', # or tanh
         initialization=None, # xavier (tanh) or kaiming (leaky_relu)
         weighted_class_loss=False, 
+        anneal_class_loss=False,
     ):
         super().__init__(adata)
 
@@ -261,6 +262,7 @@ class MultiVAE_MIL(BaseModelClass):
             aggr=aggr,
             cov_aggr=cov_aggr,
             class_weights=class_weights,
+            anneal_class_loss=anneal_class_loss,
         )
 
         self.class_idx = torch.tensor(self.class_idx)
