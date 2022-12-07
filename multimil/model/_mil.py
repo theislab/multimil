@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 
 from multigrate.model import MultiVAE
 from multigrate.dataloaders import GroupDataSplitter, GroupAnnDataLoader
-from ..module import MultiVAETorch_MIL
+from ..module import MILClassifierTorch
 from ..utils import create_df
 from typing import List, Optional, Union, Dict
 from math import ceil
@@ -30,7 +30,7 @@ from copy import deepcopy
 logger = logging.getLogger(__name__)
 
 
-class MultiVAE_MIL(BaseModelClass):
+class MILClassifier(BaseModelClass):
     def __init__(
         self,
         adata,
@@ -50,7 +50,7 @@ class MultiVAE_MIL(BaseModelClass):
         add_patient_to_classifier=False,
         hierarchical_attn=True,
         z_dim=16,
-        losses=[],
+        losses=None,
         dropout=0.2,
         cond_dim=15,
         kernel_type="gaussian",
@@ -88,6 +88,9 @@ class MultiVAE_MIL(BaseModelClass):
     ):
         super().__init__(adata)
 
+        modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
+        if losses is None:
+            losses = ["mse"]*len(modality_lengths)
         if ("nb" in losses or "zinb" in losses) and REGISTRY_KEYS.SIZE_FACTOR_KEY not in self.adata_manager.data_registry:
             raise ValueError(f"Have to register {REGISTRY_KEYS.SIZE_FACTOR_KEY} when using 'nb' or 'zinb' loss.")
 
@@ -105,7 +108,7 @@ class MultiVAE_MIL(BaseModelClass):
         self.adata = adata
         self.hierarchical_attn = hierarchical_attn
        
-        modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
+       
 
         if len(classification) + len(regression) + len(ordinal_regression) == 0:
             raise ValueError(
@@ -205,7 +208,7 @@ class MultiVAE_MIL(BaseModelClass):
                     denominator += (1.0 / n_obs_in_class)
                 class_weights.append({name: (1 / value ) / denominator for name, value in class_weights_dict.items()})
 
-        self.module = MultiVAETorch_MIL(
+        self.module = MILClassifierTorch(
             modality_lengths=modality_lengths,
             condition_encoders=condition_encoders,
             condition_decoders=condition_decoders,
@@ -719,8 +722,6 @@ class MultiVAE_MIL(BaseModelClass):
         df["epoch"] = df.index
 
         loss_names = ["kl_local", "elbo", "reconstruction_loss"]
-        for i in range(self.module.vae.n_modality):
-            loss_names.append(f'modality_{i}_reconstruction_loss')
 
         if self.module.vae.loss_coefs["integ"] != 0:
             loss_names.append("integ_loss")
