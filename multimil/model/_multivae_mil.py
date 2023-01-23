@@ -859,13 +859,12 @@ class MultiVAE_MIL(BaseModelClass):
         model.to_device(device)
 
         # if there are no prediction labels in the query
-        if use_prediction_labels is False:
-            if freeze is True:
-                for name, p in model.module.named_parameters():
-                    if "vae" not in name:
-                        p.requires_grad = False
+        if freeze is True:
+            for name, p in model.module.named_parameters():
+                if "vae" not in name:
+                    p.requires_grad = False
         # if there are prediction labels in the query
-        else:
+        if use_prediction_labels is True:
             new_state_dict = model.module.state_dict()
             for key, load_ten in load_state_dict.items():  # load_state_dict = old
                 if 'vae' in key: # already updated
@@ -887,15 +886,10 @@ class MultiVAE_MIL(BaseModelClass):
                     load_state_dict[key] = fixed_ten
 
             model.module.load_state_dict(load_state_dict)
-                
-            # freeze everything but the last layer
-            if freeze is True:
-                for name, p in model.module.named_parameters():
-                    if "vae" not in name:
-                        p.requires_grad = False
+
                 # unfreeze last classifier layer
-                model.module.classifiers[-1].weight.requires_grad = True
-                model.module.classifiers[-1].bias.requires_grad = True
+            model.module.classifiers[-1].weight.requires_grad = True
+            model.module.classifiers[-1].bias.requires_grad = True
 
         model.module.eval()
         model.is_trained_ = False
@@ -981,3 +975,4 @@ class MultiVAE_MIL(BaseModelClass):
 
         self.module.vae = vae.module
         self.is_trained_ = True
+
