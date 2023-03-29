@@ -754,6 +754,7 @@ class MultiVAE_MIL(BaseModelClass):
     def load_query_data(
         cls,
         adata: AnnData,
+        use_prediction_labels: bool,
         reference_model: BaseModelClass,
         use_gpu: Optional[Union[str, int, bool]] = None,
         freeze: bool = True,
@@ -764,6 +765,9 @@ class MultiVAE_MIL(BaseModelClass):
             AnnData organized in the same way as data used to train model.
             It is not necessary to run setup_anndata,
             as AnnData is validated against the ``registry``.
+        :param use_prediction_labels:
+            Whether to use prediction labels to fine-tune both parts of the model 
+            or not, in which case only the VAE gets fine-tuned.
         :param reference_model:
             Already instantiated model of the same class
         :param use_gpu:
@@ -799,6 +803,7 @@ class MultiVAE_MIL(BaseModelClass):
         )
 
         model = _initialize_model(cls, adata, attr_dict)
+
         adata_manager = model.get_anndata_manager(adata, required=True)
 
         ignore_categories = []
@@ -848,19 +853,47 @@ class MultiVAE_MIL(BaseModelClass):
             + reference_model.ordinal_regression,
         )
 
-        model.module = reference_model.module
+        # model.module = reference_model.module
         model.module.vae = new_vae.module
 
         model.to_device(device)
 
-        if freeze:
+        # if there are no prediction labels in the query
+        if freeze is True:
             for name, p in model.module.named_parameters():
                 if "vae" not in name:
                     p.requires_grad = False
+        # if there are prediction labels in the query
+        if use_prediction_labels is True:
+            new_state_dict = model.module.state_dict()
+            for key, load_ten in load_state_dict.items():  # load_state_dict = old
+                if 'vae' in key: # already updated
+                    load_state_dict[key] = new_state_dict[key]
+                else: # MIL part
+                    new_ten = new_state_dict[key]
+                    if new_ten.size() == load_ten.size():
+                        continue
+                    # new categoricals changed size
+                    else:
+                        old_shape = new_ten.shape
+                        new_shape = load_ten.shape
+                        if old_shape[0] == new_shape[0]:
+                            dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
+                            fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
+                        else:
+                            dim_diff = new_ten.size()[0] - load_ten.size()[0]
+                            fixed_ten = torch.cat([load_ten, new_ten[-dim_diff:, ...]], dim=0)
+                    load_state_dict[key] = fixed_ten
+
+            model.module.load_state_dict(load_state_dict)
+
+                # unfreeze last classifier layer
+            model.module.classifiers[-1].weight.requires_grad = True
+            model.module.classifiers[-1].bias.requires_grad = True
 
         model.module.eval()
         model.is_trained_ = False
-
+       
         return model
 
     def finetune_query(
@@ -942,3 +975,4 @@ class MultiVAE_MIL(BaseModelClass):
 
         self.module.vae = vae.module
         self.is_trained_ = True
+
