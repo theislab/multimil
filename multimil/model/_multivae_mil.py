@@ -303,8 +303,10 @@ class MultiVAE_MIL(BaseModelClass):
         n_steps_kl_warmup: Optional[int] = None,
         adversarial_mixing: bool = False,
         plan_kwargs: Optional[dict] = None,
-        early_stopping_monitor: Optional[str] = "accuracy_validation",
-        early_stopping_mode: Optional[str] = "max",
+        # early_stopping_monitor: Optional[str] = "accuracy_validation",
+        # early_stopping_mode: Optional[str] = "max",
+        early_stopping_monitor: Optional[str] = "class_loss_validation",
+        early_stopping_mode: Optional[str] = "min",
         **kwargs,
     ):
         """
@@ -573,7 +575,7 @@ class MultiVAE_MIL(BaseModelClass):
             outputs = self.module.inference(**inference_inputs)
             z = outputs["z_joint"]
             pred = outputs["predictions"]
-            cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
+            cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1) # TODO check if n_layer > 1
             size = cell_attn.shape[-1]
             cell_attn = (
                 cell_attn.flatten()
@@ -853,7 +855,8 @@ class MultiVAE_MIL(BaseModelClass):
             + reference_model.ordinal_regression,
         )
 
-        # model.module = reference_model.module
+        if use_prediction_labels is False:
+            model.module = reference_model.module # copy mil part over as it is
         model.module.vae = new_vae.module
 
         model.to_device(device)
@@ -887,9 +890,10 @@ class MultiVAE_MIL(BaseModelClass):
 
             model.module.load_state_dict(load_state_dict)
 
-                # unfreeze last classifier layer
-            model.module.classifiers[-1].weight.requires_grad = True
-            model.module.classifiers[-1].bias.requires_grad = True
+            # unfreeze last classifier layer
+            # TODO only works if n_layers_classifiers >= 2
+            model.module.classifiers[-1][-1].weight.requires_grad = True
+            model.module.classifiers[-1][-1].bias.requires_grad = True
 
         model.module.eval()
         model.is_trained_ = False
@@ -915,15 +919,20 @@ class MultiVAE_MIL(BaseModelClass):
         plan_kwargs: Optional[dict] = None,
         plot_losses=True,
         save_loss=None,
+        loss_coefs=None,
         **kwargs,
     ):
         ignore_categories = []
         if not self.patient_in_vae:
             ignore_categories = [self.patient_column]
+        loss_coefs_vae = self.module.vae.loss_coefs
+        if loss_coefs is not None:
+            loss_coefs_vae.update(loss_coefs)
+        
         vae = MultiVAE(
             self.adata,
             losses=self.module.vae.losses,
-            loss_coefs=self.module.vae.loss_coefs,
+            loss_coefs=loss_coefs_vae,
             integrate_on=self.module.vae.integrate_on_idx,
             condition_encoders=self.module.vae.condition_encoders,
             condition_decoders=self.module.vae.condition_decoders,
