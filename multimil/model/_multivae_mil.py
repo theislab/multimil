@@ -1,5 +1,4 @@
 import torch
-import scvi
 import scipy
 import logging
 import pandas as pd
@@ -14,9 +13,9 @@ from ..utils import create_df
 from typing import List, Optional, Union, Dict
 from math import ceil
 from scvi.model.base import BaseModelClass
-from scvi.module.base import auto_move_data
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.train._callbacks import SaveBestState
+from pytorch_lightning.callbacks import ModelCheckpoint
 from scvi.train import TrainRunner, AdversarialTrainingPlan
 from sklearn.metrics import classification_report
 from scvi import REGISTRY_KEYS
@@ -48,7 +47,7 @@ class MultiVAE_MIL(BaseModelClass):
         n_hidden_encoders=None,
         n_hidden_decoders=None,
         add_patient_to_classifier=False,
-        hierarchical_attn=True,
+        hierarchical_attn=False,
         z_dim=16,
         losses=[],
         dropout=0.2,
@@ -112,6 +111,7 @@ class MultiVAE_MIL(BaseModelClass):
                 'At least one of "classification", "regression", "ordinal_regression" has to be specified.'
             )
 
+        # TODO check that these are lists, and not str for example
         self.classification = classification
         self.regression = regression
         self.ordinal_regression = ordinal_regression
@@ -303,6 +303,8 @@ class MultiVAE_MIL(BaseModelClass):
         n_steps_kl_warmup: Optional[int] = None,
         adversarial_mixing: bool = False,
         plan_kwargs: Optional[dict] = None,
+        save_checkpoint_every_n_epochs: Optional[int] = None,
+        path_to_checkpoints: Optional[str] = None,
         early_stopping_monitor: Optional[str] = "accuracy_validation",
         early_stopping_mode: Optional[str] = "max",
         **kwargs,
@@ -369,6 +371,18 @@ class MultiVAE_MIL(BaseModelClass):
                 kwargs["callbacks"] = []
             kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor,  mode=early_stopping_mode))
 
+        if save_checkpoint_every_n_epochs is not None:
+            if path_to_checkpoints is not None:
+                kwargs["callbacks"].append(ModelCheckpoint(
+                    dirpath = path_to_checkpoints,
+                    save_top_k = -1,
+                    monitor = 'epoch',
+                    every_n_epochs = save_checkpoint_every_n_epochs,
+                    verbose = True,
+                ))
+            else:
+                raise ValueError(f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}.")
+
         if self.patient_column is not None:
             data_splitter = GroupDataSplitter(
                 self.adata_manager,
@@ -408,6 +422,7 @@ class MultiVAE_MIL(BaseModelClass):
             early_stopping_monitor=early_stopping_monitor,
             early_stopping_mode=early_stopping_mode,
             early_stopping_patience=50,
+            enable_checkpointing=True,
             **kwargs,
         )
         return runner()
@@ -483,6 +498,7 @@ class MultiVAE_MIL(BaseModelClass):
             anndata_fields.append(fields.NumericalObsField(
                 REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key
             ))
+
         if rna_indices_end is not None:
             if scipy.sparse.issparse(adata.X):
                 adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
