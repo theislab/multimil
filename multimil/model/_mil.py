@@ -26,6 +26,7 @@ from anndata import AnnData
 from scvi.model._utils import parse_use_gpu_arg
 from scvi.model.base._utils import _initialize_model
 from copy import deepcopy
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -48,19 +49,19 @@ class MILClassifier(BaseModelClass):
         n_hidden_encoders=None,
         n_hidden_decoders=None,
         add_patient_to_classifier=False,
-        hierarchical_attn=True,
+        hierarchical_attn=False,
         z_dim=16,
         losses=None,
         dropout=0.2,
-        cond_dim=15,
+        cond_dim=16,
         kernel_type="gaussian",
         loss_coefs=[],
         scoring="gated_attn",
         attn_dim=16,
         n_layers_cell_aggregator: int = 1,
         n_layers_cov_aggregator: int = 1,
-        n_layers_classifier: int = 1,
-        n_layers_regressor: int = 1,
+        n_layers_classifier: int = 2,
+        n_layers_regressor: int = 2,
         n_layers_mlp_attn: int = 1,
         n_layers_cont_embed: int = 1,
         n_hidden_cell_aggregator: int = 128,
@@ -308,6 +309,8 @@ class MILClassifier(BaseModelClass):
         plan_kwargs: Optional[dict] = None,
         early_stopping_monitor: Optional[str] = "accuracy_validation",
         early_stopping_mode: Optional[str] = "max",
+        save_checkpoint_every_n_epochs: Optional[int] = None,
+        path_to_checkpoints: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -372,6 +375,18 @@ class MILClassifier(BaseModelClass):
                 kwargs["callbacks"] = []
             kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor,  mode=early_stopping_mode))
 
+        if save_checkpoint_every_n_epochs is not None:
+            if path_to_checkpoints is not None:
+                kwargs["callbacks"].append(ModelCheckpoint(
+                    dirpath = path_to_checkpoints,
+                    save_top_k = -1,
+                    monitor = 'epoch',
+                    every_n_epochs = save_checkpoint_every_n_epochs,
+                    verbose = True,
+                ))
+            else:
+                raise ValueError(f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}.")
+
         if self.patient_column is not None:
             data_splitter = GroupDataSplitter(
                 self.adata_manager,
@@ -411,6 +426,7 @@ class MILClassifier(BaseModelClass):
             early_stopping_monitor=early_stopping_monitor,
             early_stopping_mode=early_stopping_mode,
             early_stopping_patience=50,
+            enable_checkpointing=True,
             **kwargs,
         )
         return runner()

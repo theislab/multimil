@@ -58,7 +58,7 @@ class MultiVAE_MIL(BaseModelClass):
         attn_dim=16,
         n_layers_cell_aggregator: int = 1,
         n_layers_cov_aggregator: int = 1,
-        n_layers_classifier: int = 1,
+        n_layers_classifier: int = 2,
         n_layers_regressor: int = 1,
         n_layers_mlp_attn: int = 1,
         n_layers_cont_embed: int = 1,
@@ -81,7 +81,7 @@ class MultiVAE_MIL(BaseModelClass):
         aggr="attn", # or 'both' = attn + average (two heads)
         cov_aggr=None, # one of ['attn', 'concat', 'both', 'mean']
         activation='leaky_relu', # or tanh
-        initialization=None, # xavier (tanh) or kaiming (leaky_relu)
+        initialization='kaiming', # xavier (tanh) or kaiming (leaky_relu)
         weighted_class_loss=False, 
         anneal_class_loss=False,
     ):
@@ -931,6 +931,8 @@ class MultiVAE_MIL(BaseModelClass):
         plan_kwargs: Optional[dict] = None,
         plot_losses=True,
         save_loss=None,
+        save_checkpoint_every_n_epochs: Optional[int] = None,
+        path_to_checkpoints: Optional[str] = None,
         **kwargs,
     ):
         ignore_categories = []
@@ -984,6 +986,8 @@ class MultiVAE_MIL(BaseModelClass):
             n_steps_kl_warmup=n_steps_kl_warmup,
             adversarial_mixing=adversarial_mixing,
             plan_kwargs=plan_kwargs,
+            save_checkpoint_every_n_epochs=save_checkpoint_every_n_epochs,
+            path_to_checkpoints=path_to_checkpoints,
             **kwargs,
         )
         if plot_losses:
