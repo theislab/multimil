@@ -531,9 +531,13 @@ class MILClassifier(BaseModelClass):
             bag_reg_pred,
             bag_ord_true,
             bag_ord_pred,
-        ) = ({}, {}, {}, {}, {}, {})
+            bag_idx,
+        ) = ({}, {}, {}, {}, {}, {}, {})
 
-        for tensors in scdl:
+        batch_start_idx = 0
+        batch_end_idx = 0
+
+        for j, tensors in enumerate(scdl):
 
             cont_key = REGISTRY_KEYS.CONT_COVS_KEY
             cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
@@ -542,6 +546,7 @@ class MILClassifier(BaseModelClass):
             cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
             batch_size = cat_covs.shape[0]
+            batch_end_idx += batch_size
 
             idx = list(
                 range(
@@ -621,6 +626,12 @@ class MILClassifier(BaseModelClass):
 
             latent += [z.cpu()]
             cell_level_attn += [cell_attn.cpu()]
+            print('batch start idx:')
+            print(batch_start_idx)
+            print('batch end idx:')
+            print(batch_end_idx)
+            bag_idx[j] = list(adata.obs_names)[batch_start_idx:batch_end_idx]
+            batch_start_idx += batch_size
 
         if len(cov_level_attn) == 0:
             cov_level_attn = [torch.Tensor()]
@@ -633,6 +644,7 @@ class MILClassifier(BaseModelClass):
         if self.hierarchical_attn and self.cov_aggr in ["attn", "both"]:
             adata.obsm["cov_attn"] = cov_level
         adata.obs["cell_attn"] = cell_level
+        adata.uns["bag_info"] = bag_idx
 
         for i in range(len(self.class_idx)):
             name = self.classification[i]
