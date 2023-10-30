@@ -642,10 +642,6 @@ class MILClassifier(BaseModelClass):
 
             latent += [z.cpu()]
             cell_level_attn += [cell_attn.cpu()]
-            print('batch start idx:')
-            print(batch_start_idx)
-            print('batch end idx:')
-            print(batch_end_idx)
             bag_idx[j] = list(adata.obs_names)[batch_start_idx:batch_end_idx]
             batch_start_idx += batch_size
 
