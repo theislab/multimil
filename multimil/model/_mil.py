@@ -642,9 +642,10 @@ class MILClassifier(BaseModelClass):
 
             latent += [z.cpu()]
             cell_level_attn += [cell_attn.cpu()]
-            bag_idx[j] = list(adata.obs_names)[batch_start_idx:batch_end_idx]
+            bag_idx[f'bag_{j}'] = list(adata.obs_names)[batch_start_idx:batch_end_idx]
             batch_start_idx += batch_size
-
+        
+        print(bag_idx)
         if len(cov_level_attn) == 0:
             cov_level_attn = [torch.Tensor()]
 
