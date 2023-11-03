@@ -79,7 +79,7 @@ class MILClassifier(BaseModelClass):
         cont_cov_type="logsigm",
         drop_attn=False,
         mmd="latent",
-        patient_in_vae=True,
+        patient_in_vae=False,
         aggr="attn", # or 'both' = attn + average (two heads)
         cov_aggr=None, # one of ['attn', 'concat', 'both', 'mean']
         activation='leaky_relu', # or tanh
@@ -538,7 +538,7 @@ class MILClassifier(BaseModelClass):
             drop_last=False,
         )
 
-        latent, cell_level_attn, cov_level_attn = [], [], []
+        latent, cell_level_attn, cov_level_attn, bags = [], [], [], []
         class_pred, ord_pred, reg_pred = {}, {}, {}
         (
             bag_class_true,
@@ -547,13 +547,14 @@ class MILClassifier(BaseModelClass):
             bag_reg_pred,
             bag_ord_true,
             bag_ord_pred,
-            bag_idx,
-        ) = ({}, {}, {}, {}, {}, {}, {})
+        ) = ({}, {}, {}, {}, {}, {})
 
         batch_start_idx = 0
         batch_end_idx = 0
 
-        for j, tensors in enumerate(scdl):
+        bag_counter = 0
+        s = 0
+        for tensors in scdl:
 
             cont_key = REGISTRY_KEYS.CONT_COVS_KEY
             cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
@@ -561,21 +562,23 @@ class MILClassifier(BaseModelClass):
             cat_key = REGISTRY_KEYS.CAT_COVS_KEY
             cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
-            batch_size = cat_covs.shape[0]
-            batch_end_idx += batch_size
+            actual_batch_size = cat_covs.shape[0]
+            batch_end_idx += actual_batch_size
 
             idx = list(
                 range(
                     self.module.patient_batch_size,
-                    batch_size,
+                    actual_batch_size,
                     self.module.patient_batch_size,
                 )
             )  # or depending on model.train() and model.eval() ???
+            # these batches can be any size between 1 and batch_size, this is intended
+            # as if we split them into 128, 128, 2 e.g., then stacking and forward pass would not work
             if (
-                batch_size % self.module.patient_batch_size != 0
+                actual_batch_size % self.module.patient_batch_size != 0
             ):  # can only happen during inference for last batches for each patient
                 idx = []
-
+            
             if len(self.regression_idx) > 0:
                 regression = torch.index_select(cont_covs, 1, self.regression_idx)
                 regression = regression.view(
@@ -596,7 +599,18 @@ class MILClassifier(BaseModelClass):
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
             z = outputs["z_joint"]
-            pred = outputs["predictions"]
+            pred = outputs["predictions"] # list of len = number of prediction heads, i.e. usually 1
+
+            num_of_bags_in_batch = pred[0].shape[0]
+            
+            if len(idx) == 0:
+                bags += [[bag_counter] * actual_batch_size]
+                s += actual_batch_size
+                bag_counter += 1
+            else:
+                bags += [[bag_counter + i]*self.module.patient_batch_size for i in range(num_of_bags_in_batch)]
+                bag_counter += num_of_bags_in_batch
+                s += self.module.patient_batch_size * num_of_bags_in_batch
             cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
             size = cell_attn.shape[-1]
             cell_attn = (
@@ -642,8 +656,7 @@ class MILClassifier(BaseModelClass):
 
             latent += [z.cpu()]
             cell_level_attn += [cell_attn.cpu()]
-            bag_idx[f'bag_{j}'] = list(adata.obs_names)[batch_start_idx:batch_end_idx]
-            batch_start_idx += batch_size
+            batch_start_idx += actual_batch_size
         
         if len(cov_level_attn) == 0:
             cov_level_attn = [torch.Tensor()]
@@ -652,11 +665,13 @@ class MILClassifier(BaseModelClass):
         cell_level = torch.cat(cell_level_attn).numpy()
         cov_level = torch.cat(cov_level_attn).numpy()
 
+
         adata.obsm["latent"] = latent
         if self.hierarchical_attn and self.cov_aggr in ["attn", "both"]:
             adata.obsm["cov_attn"] = cov_level
         adata.obs["cell_attn"] = cell_level
-        adata.uns["bag_info"] = bag_idx
+        flat_bags = [value for sublist in bags for value in sublist]
+        adata.obs["bags"] = flat_bags
 
         for i in range(len(self.class_idx)):
             name = self.classification[i]
