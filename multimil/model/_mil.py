@@ -187,6 +187,9 @@ class MILClassifier(BaseModelClass):
                     )
                     self.class_idx.append(i)
                 elif cat_cov_name in self.ordinal_regression:
+                    num_classification_classes.append(
+                        num_cat
+                    )
                     self.ord_idx.append(i)
                 else:  # the actual categorical covariate
                     if (cat_cov_name == self.patient_column and self.patient_in_vae) or (cat_cov_name != self.patient_column):
@@ -770,6 +773,9 @@ class MILClassifier(BaseModelClass):
         
         if self.module.regression_loss_coef != 0 and len(self.module.reg_idx) > 0:
             loss_names.append("regression_loss")
+
+        if self.module.regression_loss_coef != 0 and len(self.module.ord_idx) > 0:
+            loss_names.extend(["regression_loss", "accuracy"])
 
         if self.module.reg_coef != 0 and (self.module.regularize_cov_attn or self.module.regularize_cell_attn):
             loss_names.append("reg_loss")
