@@ -70,7 +70,7 @@ class Aggregator(nn.Module):
                         n_layers=n_layers_mlp_attn - 1,
                         n_hidden=n_hidden_mlp_attn,
                         dropout_rate=dropout,
-                        activation=seactivation,
+                        activation=activation,
                     ),
                     nn.Linear(n_hidden_mlp_attn, 1),
                 )
