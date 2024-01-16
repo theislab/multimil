@@ -570,8 +570,8 @@ class MILClassifierTorch(BaseModuleClass):
             "predictions"
         ]  # list, first from classifiers, then from regressors
         
-        classification_loss = torch.tensor(0.0).to(self.device)
         accuracies = []
+        classification_loss = torch.tensor(0.0).to(self.device)
         for i in range(len(self.class_idx)):
             if self.class_weights is not None:
                 self.class_weights = self.class_weights.to(self.device)
@@ -604,6 +604,7 @@ class MILClassifierTorch(BaseModuleClass):
                 predictions[len(self.class_idx) + len(self.ord_idx) + i].squeeze(),
                 regression[:, i],
             )
+            
         accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
         
         # what to regularize:

@@ -6,6 +6,7 @@ import pandas as pd
 import anndata as ad
 import numpy as np
 import multigrate as mtg
+import warnings
 from matplotlib import pyplot as plt
 
 from multigrate.model import MultiVAE
@@ -147,14 +148,18 @@ class MILClassifier(BaseModelClass):
                 n_hidden_mlp_attn = 16
 
         self.regression_idx = []
-
         cont_covariate_dims = []
+
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
-            cont_covariate_dims = [
-                1
-                for key in cont_covs['columns']
-                if key not in self.regression
-            ]
+            for key in cont_covs['columns']:
+                if key in self.regression:
+                    self.regression_idx.append(
+                        list(cont_covs['columns']).index(key)
+                    )
+                elif key not in self.classification:
+                    cont_covariate_dims.append(
+                        1
+                    )
 
         num_groups = 1
         integrate_on_idx = None
@@ -357,6 +362,11 @@ class MILClassifier(BaseModelClass):
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
+        if len(self.regression) > 0:
+            if early_stopping_monitor == "accuracy_validation":
+                warnings.warn("Setting early_stopping_monitor to 'regression_loss_validation' and early_stopping_mode to 'min' as regression is used.")
+                early_stopping_monitor = "regression_loss_validation"
+                early_stopping_mode = "min"
         if n_epochs_kl_warmup is None:
             n_epochs_kl_warmup = max(max_epochs // 3, 1)
         update_dict = {
