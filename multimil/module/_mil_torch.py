@@ -158,6 +158,7 @@ class MILClassifierTorch(BaseModuleClass):
         patient_batch_size=128,
         regularize_cell_attn=False,
         regularize_cov_attn=False,
+        regularize_classifier=None,
         attention_dropout=True,
         class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference
         ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference
@@ -219,6 +220,7 @@ class MILClassifierTorch(BaseModuleClass):
         self.patient_batch_size = patient_batch_size
         self.regularize_cell_attn = regularize_cell_attn
         self.regularize_cov_attn = regularize_cov_attn
+        self.regularize_classifier = regularize_classifier
         self.aggr = aggr
         self.cov_aggr = cov_aggr
         self.class_weights = class_weights
@@ -607,26 +609,40 @@ class MILClassifierTorch(BaseModuleClass):
             
         accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
         
-        # what to regularize:
-        weights = []
-        if self.regularize_cov_attn:
-            weights.append(self.cov_level_aggregator[1].attention_U[0].weight)
-            weights.append(self.cov_level_aggregator[1].attention_V[0].weight)
-        if self.regularize_cell_attn:
-            weights.append(self.cell_level_aggregator[1].attention_U[0].weight)
-            weights.append(self.cell_level_aggregator[1].attention_V[0].weight)
+        # # what to regularize:
+        # weights = []
+        # if self.regularize_cov_attn:
+        #     weights.append(self.cov_level_aggregator[1].attention_U[0].weight)
+        #     weights.append(self.cov_level_aggregator[1].attention_V[0].weight)
+        # if self.regularize_cell_attn:
+        #     weights.append(self.cell_level_aggregator[1].attention_U[0].weight)
+        #     weights.append(self.cell_level_aggregator[1].attention_V[0].weight)
 
+        regularization_loss = torch.tensor(0.0).to(self.device)
+        if self.regularize_classifier == 'l1':
+            for regressor in self.regressors:
+                regularization_loss += torch.linalg.norm(regressor[0].mlp.fc_layers[0][0], 1)
+            for classifier in self.classifiers:
+                regularization_loss += torch.linalg.norm(classifier[0].mlp.fc_layers[0][0], 1)
+        elif self.regularize_classifier == 'l2':
+            for regressor in self.regressors:
+                regularization_loss += torch.linalg.norm(regressor[0].mlp.fc_layers[0][0], 2)
+            for classifier in self.classifiers:
+                regularization_loss += torch.linalg.norm(classifier[0].mlp.fc_layers[0][0], 2)
+                
         class_loss_anneal_coef = kl_weight if self.anneal_class_loss else 1.0
 
         loss = torch.mean(
             self.class_loss_coef * classification_loss * class_loss_anneal_coef
             + self.regression_loss_coef * regression_loss
+            + self.reg_coef * regularization_loss
         )
 
         extra_metrics = {
             "class_loss": classification_loss,
             "accuracy": accuracy,
             "regression_loss": regression_loss,
+            "regularization_loss": regularization_loss,
             }
 
         recon_loss = torch.zeros(batch_size)

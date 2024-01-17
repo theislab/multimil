@@ -78,6 +78,7 @@ class MILClassifier(BaseModelClass):
         reg_coef=1.0,  # regularization
         regularize_cell_attn=False,
         regularize_cov_attn=False,
+        regularize_classifier=None, # one of ['l1', 'l2', None]
         cont_cov_type="logsigm",
         drop_attn=False,
         mmd="latent",
@@ -265,6 +266,7 @@ class MILClassifier(BaseModelClass):
             patient_batch_size=patient_batch_size,
             regularize_cell_attn=regularize_cell_attn,
             regularize_cov_attn=regularize_cov_attn,
+            regularize_classifier=regularize_classifier,
             attention_dropout=attention_dropout,
             class_idx=self.class_idx,
             ord_idx=self.ord_idx,
@@ -791,7 +793,7 @@ class MILClassifier(BaseModelClass):
         if self.module.regression_loss_coef != 0 and len(self.module.ord_idx) > 0:
             loss_names.extend(["regression_loss", "accuracy"])
 
-        if self.module.reg_coef != 0 and (self.module.regularize_cov_attn or self.module.regularize_cell_attn):
+        if self.module.reg_coef != 0 and (self.module.regularize_cov_attn or self.module.regularize_cell_attn or (self.module.regularize_classifier is not None)):
             loss_names.append("reg_loss")
 
         nrows = ceil(len(loss_names) / 2)
