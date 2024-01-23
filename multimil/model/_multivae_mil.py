@@ -2,6 +2,7 @@ import torch
 import scipy
 import logging
 import pandas as pd
+import numpy as np
 import anndata as ad
 import multigrate as mtg
 from matplotlib import pyplot as plt
@@ -183,6 +184,9 @@ class MultiVAE_MIL(BaseModelClass):
                     )
                     self.class_idx.append(i)
                 elif cat_cov_name in self.ordinal_regression:
+                    num_classification_classes.append(
+                        num_cat
+                    )
                     self.ord_idx.append(i)
                 else:  # the actual categorical covariate
                     if (cat_cov_name == self.patient_column and self.patient_in_vae) or (cat_cov_name != self.patient_column):
@@ -665,17 +669,20 @@ class MultiVAE_MIL(BaseModelClass):
             df_bag = create_df(bag_class_pred[i], classes)
             adata.uns[f"bag_classification_predictions_{name}"] = df_bag
             adata.uns[f"bag_predicted_{name}"] = df_bag.to_numpy().argmax(axis=1)
-        # TODO fix ordinal regression and regression for multiple labels
-        if len(self.ord_idx) > 0:
-            adata.obsm["ordinal_predictions"] = create_df(
-                ord_pred, self.ordinal_regression, index=adata.obs_names
-            )
-            adata.uns["bag_ordinal_true"] = create_df(
-                bag_ord_true, self.ordinal_regression
-            )
-            adata.uns["bag_ordinal_predictions"] = create_df(
-                bag_ord_pred, self.ordinal_regression
-            )
+        for i in range(len(self.ord_idx)):
+            name = self.ordinal_regression[i]
+            classes = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
+            df = create_df(ord_pred[i], columns=['pred_regression_value'], index=adata.obs_names)
+            adata.obsm[f"ord_regression_predictions_{name}"] = df
+            adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(classes) - 1.0)
+            adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype(int).astype("category")
+            adata.obs[f"predicted_{name}"] = adata.obs[
+                f"predicted_{name}"
+            ].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
+            adata.uns[f"bag_ord_regression_true_{name}"] = create_df(bag_ord_true, self.ordinal_regression)
+            df_bag = create_df(bag_ord_pred[i], ['predicted_regression_value'])
+            adata.uns[f"bag_ord_regression_predictions_{name}"] = df_bag
+            adata.uns[f"bag_predicted_{name}"] = np.clip(np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(classes) - 1.0)
         if len(self.regression_idx) > 0:
             adata.obsm["regression_predictions"] = create_df(
                 reg_pred, self.regression, index=adata.obs_names
@@ -746,6 +753,9 @@ class MultiVAE_MIL(BaseModelClass):
         
         if self.module.regression_loss_coef != 0 and len(self.module.reg_idx) > 0:
             loss_names.append("regression_loss")
+        
+        if self.module.regression_loss_coef != 0 and len(self.module.ord_idx) > 0:
+            loss_names.extend(["regression_loss", "accuracy"])
 
         if self.module.reg_coef != 0 and (self.module.regularize_cov_attn or self.module.regularize_cell_attn):
             loss_names.append("reg_loss")

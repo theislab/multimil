@@ -223,6 +223,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         self.cov_aggr = cov_aggr
         self.class_weights = class_weights
         self.anneal_class_loss = anneal_class_loss
+        self.num_classification_classes = num_classification_classes
 
         self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
 
@@ -306,23 +307,24 @@ class MultiVAETorch_MIL(BaseModuleClass):
             else:
                 class_input_dim = cond_dim # attn or average
 
-        for num in num_classification_classes:
-            if n_layers_classifier == 1:
-                self.classifiers.append(nn.Linear(class_input_dim, num))
-            else:
-                self.classifiers.append(
-                    nn.Sequential(
-                        MLP(
-                            class_input_dim,
-                            n_hidden_classifier,
-                            n_layers=n_layers_classifier - 1,
-                            n_hidden=n_hidden_classifier,
-                            dropout_rate=dropout,
-                            activation=self.activation,
-                        ),
-                        nn.Linear(n_hidden_classifier, num),
+        if len(self.class_idx) > 0:
+            for num in self.num_classification_classes:
+                if n_layers_classifier == 1:
+                    self.classifiers.append(nn.Linear(class_input_dim, num))
+                else:
+                    self.classifiers.append(
+                        nn.Sequential(
+                            MLP(
+                                class_input_dim,
+                                n_hidden_classifier,
+                                n_layers=n_layers_classifier - 1,
+                                n_hidden=n_hidden_classifier,
+                                dropout_rate=dropout,
+                                activation=self.activation,
+                            ),
+                            nn.Linear(n_hidden_classifier, num),
+                        )
                     )
-                )
 
         # TODO if we keep the second head, adjust
         self.regressors = torch.nn.ModuleList()
@@ -646,18 +648,28 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 )
                 / classification[:, i].shape[0]
             )
-        accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
 
         regression_loss = torch.tensor(0.0).to(self.device)
         for i in range(len(self.ord_idx)):
             regression_loss += F.mse_loss(
                 predictions[len(self.class_idx) + i].squeeze(), ordinal_regression[:, i]
             )
+            accuracies.append(
+                torch.sum(
+                    torch.eq(
+                        torch.clamp(torch.round(predictions[len(self.class_idx) + i].squeeze()), min=0.0, max=self.num_classification_classes[i] - 1.0),
+                        ordinal_regression[:, i],
+                    )
+                )
+                / ordinal_regression[:, i].shape[0]
+            )
         for i in range(len(self.reg_idx)):
             regression_loss += F.mse_loss(
                 predictions[len(self.class_idx) + len(self.ord_idx) + i].squeeze(),
                 regression[:, i],
             )
+
+        accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
 
         # what to regularize:
         weights = []
