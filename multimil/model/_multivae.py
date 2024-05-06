@@ -71,7 +71,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         cond_dim: int = 10,
         kernel_type: Literal["gaussian", None] = "gaussian",
         loss_coefs: Dict[int, float] = None,
-        integrate_on_idx: Optional[List[int]] = None,
         cont_cov_type: Literal["logsim", "sigm", None] = "logsigm",
         n_layers_cont_embed: int = 1,
         n_layers_encoders: Optional[List[int]] = None,

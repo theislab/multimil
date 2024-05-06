@@ -29,7 +29,7 @@ from copy import deepcopy
 logger = logging.getLogger(__name__)
 
 
-class MultiVAE_MIL(BaseModelClass):
+class MultiVAE_MIL(MultiVAE):
     def __init__(
         self,
         adata,
@@ -85,10 +85,29 @@ class MultiVAE_MIL(BaseModelClass):
         weighted_class_loss=False, 
         anneal_class_loss=False,
     ):
-        super().__init__(adata)
-
-        if ("nb" in losses or "zinb" in losses) and REGISTRY_KEYS.SIZE_FACTOR_KEY not in self.adata_manager.data_registry:
-            raise ValueError(f"Have to register {REGISTRY_KEYS.SIZE_FACTOR_KEY} when using 'nb' or 'zinb' loss.")
+        super().__init__(
+            adata=adata,
+            integrate_on=integrate_on,
+            condition_encoders=condition_encoders,
+            condition_decoders=condition_decoders,
+            normalization=normalization,
+            z_dim=z_dim,
+            losses=losses,
+            dropout=dropout,
+            cond_dim=cond_dim,
+            kernel_type=kernel_type,
+            loss_coefs=loss_coefs,
+            cont_cov_type=cont_cov_type,
+            n_layers_cont_embed=n_layers_cont_embed,
+            n_layers_encoders=n_layers_encoders,
+            n_layers_decoders=n_layers_decoders,
+            n_hidden_cont_embed=n_hidden_cont_embed,
+            n_hidden_encoders=n_hidden_encoders,
+            n_hidden_decoders=n_hidden_decoders,
+            mmd=mmd,
+            activation=activation,
+            initialization=initialization,
+        )
 
         self.patient_column = patient_label
 
@@ -101,7 +120,6 @@ class MultiVAE_MIL(BaseModelClass):
 
         self.patient_in_vae = patient_in_vae
         self.scoring = scoring
-        self.adata = adata
         self.hierarchical_attn = hierarchical_attn
        
         modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
@@ -741,10 +759,10 @@ class MultiVAE_MIL(BaseModelClass):
         df["epoch"] = df.index
 
         loss_names = ["kl_local", "elbo", "reconstruction_loss"]
-        for i in range(self.module.vae.n_modality):
+        for i in range(self.module.n_modality):
             loss_names.append(f'modality_{i}_reconstruction_loss')
 
-        if self.module.vae.loss_coefs["integ"] != 0:
+        if self.module.loss_coefs["integ"] != 0:
             loss_names.append("integ_loss")
 
         if self.module.class_loss_coef != 0 and len(self.module.class_idx) > 0:

@@ -11,7 +11,7 @@ from ..module import MultiVAETorch
 from ..nn import MLP, Aggregator
 
 
-class MultiVAETorch_MIL(BaseModuleClass):
+class MultiVAETorch_MIL(MultiVAETorch, BaseModuleClass):
     def __init__(
         self,
         modality_lengths,
@@ -71,18 +71,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_weights=None,
         anneal_class_loss=False,
     ):
-        super().__init__()
-
-        if activation == 'leaky_relu':
-            self.activation = nn.LeakyReLU
-        elif activation == 'tanh':
-            self.activation = nn.Tanh
-        else:
-            raise NotImplementedError(
-                f'activation should be one of ["leaky_relu", "tanh"], but activation={activation} was passed.'
-            )
-
-        self.vae = MultiVAETorch(
+        super().__init__(
             modality_lengths=modality_lengths,
             condition_encoders=condition_encoders,
             condition_decoders=condition_decoders,
@@ -108,7 +97,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
             activation=activation,
         )
 
-        self.integrate_on_idx = integrate_on_idx
         self.class_loss_coef = class_loss_coef
         self.regression_loss_coef = regression_loss_coef
         self.reg_coef = reg_coef
@@ -247,39 +235,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
                     )
                 )
 
-        if initialization == 'xavier':
-            for layer in self.modules():
-                if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain('leaky_relu'))
-        elif initialization == 'kaiming':
-            for layer in self.modules():
-                if isinstance(layer, nn.Linear):
-                    # following https://towardsdatascience.com/understand-kaiming-initialization-and-implementation-detail-in-pytorch-f7aa967e9138 (accessed 16.08.22)
-                    nn.init.kaiming_normal_(layer.weight, mode='fan_in')
-
-    def _get_inference_input(self, tensors):
-        x = tensors[REGISTRY_KEYS.X_KEY]
-
-        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-        input_dict = {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
-        return input_dict
-
-    def _get_generative_input(self, tensors, inference_outputs):
-        z_joint = inference_outputs["z_joint"]
-
-        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-        return {"z_joint": z_joint, "cat_covs": cat_covs, "cont_covs": cont_covs}
-
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs):
 
@@ -291,7 +246,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         if len(self.cat_cov_idx) > 0:
             cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx.to(self.device))
 
-        inference_outputs = self.vae.inference(x, cat_covs, cont_covs)
+        inference_outputs = super().inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs["z_joint"]
         
         # MIL part
@@ -323,7 +278,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                         cat_covariate_embedding(covariate.long())
                         for covariate, cat_covariate_embedding, i in zip(
                             cat_covs.T,
-                            self.vae.cat_covariate_embeddings,
+                            self.cat_covariate_embeddings,
                             self.cat_cov_idx,
                         )
                         if add_covariate(i)
@@ -336,12 +291,12 @@ class MultiVAETorch_MIL(BaseModuleClass):
                 )
             else:
                 cat_embedds = torch.Tensor().to(self.device)  # if the only registered categorical covs are condition and patient, so cat works later
-            if self.vae.n_cont_cov > 0:
+            if self.n_cont_cov > 0:
                 if (
-                    cont_covs.shape[-1] != self.vae.n_cont_cov
+                    cont_covs.shape[-1] != self.n_cont_cov
                 ):  # shouldn't happen as we got rid of size factors before
-                    raise RuntimeError("cont_covs.shape[-1] != self.vae.n_cont_cov")
-                cont_embedds = self.vae.compute_cont_cov_embeddings_(cont_covs) # batch_size x num_of_cont_covs x cond_dim
+                    raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov")
+                cont_embedds = self.compute_cont_cov_embeddings_(cont_covs) # batch_size x num_of_cont_covs x cond_dim
             else:
                 cont_embedds = torch.Tensor().to(self.device)
 
@@ -391,7 +346,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             )
         if len(self.cat_cov_idx) > 0:
             cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx.to(self.device))
-        return self.vae.generative(z_joint, cat_covs, cont_covs)
+        return super().generative(z_joint, cat_covs, cont_covs)
 
     def orthogonal_regularization(self, weights, axis=0):
         loss = torch.tensor(0.0).to(self.device)
@@ -411,6 +366,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
     def loss(
         self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
     ):
+
         x = tensors[REGISTRY_KEYS.X_KEY]
 
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
@@ -472,36 +428,36 @@ class MultiVAETorch_MIL(BaseModuleClass):
         z_marginal = inference_outputs["z_marginal"]
 
         xs = torch.split(
-            x, self.vae.input_dims, dim=-1
+            x, self.input_dims, dim=-1
         )  # list of tensors of len = n_mod, each tensor is of shape batch_size x mod_input_dim
         masks = [x.sum(dim=1) > 0 for x in xs]
 
         kl_loss = kl_weight * kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
-        if self.vae.loss_coefs["integ"] != 0:
+        if self.loss_coefs["integ"] != 0:
             raise ValueError("Integration with MMD is not supported at the moment. Please set `loss_coefs['integ']` to 0.")
         integ_loss = torch.tensor(0.0)
         #if self.vae.loss_coefs["integ"] == 0
         #else self.vae.calc_integ_loss(z_joint, integrate_on)
 
-        recon_loss, modality_recon_losses = self.vae._calc_recon_loss(
+        recon_loss, modality_recon_losses = self._calc_recon_loss(
             xs,
             rs,
-            self.vae.losses,
+            self.losses,
             integrate_on,
             size_factor,
-            self.vae.loss_coefs,
+            self.loss_coefs,
             masks,
         )
 
-        if self.vae.loss_coefs["integ"] == 0:
+        if self.loss_coefs["integ"] == 0:
             integ_loss = torch.tensor(0.0).to(self.device)
         else:
             integ_loss = torch.tensor(0.0).to(self.device)
-            if self.vae.mmd == "latent" or self.vae.mmd == "both":
-                integ_loss += self.vae._calc_integ_loss(z_joint, integrate_on).to(
+            if self.mmd == "latent" or self.mmd == "both":
+                integ_loss += self._calc_integ_loss(z_joint, integrate_on).to(
                     self.device
                 )
-            if self.vae.mmd == "marginal" or self.vae.mmd == "both":
+            if self.mmd == "marginal" or self.mmd == "both":
                 for i in range(len(masks)):
                     for j in range(i + 1, len(masks)):
                         idx_where_to_calc_mmd = torch.eq(
@@ -521,7 +477,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                                 ]
                             ).to(self.device)
 
-                            integ_loss += self.vae._calc_integ_loss(
+                            integ_loss += self._calc_integ_loss(
                                 marginals, modalities
                             ).to(self.device)
 
@@ -529,7 +485,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
                     marginal_i = z_marginal[:, i, :]
                     marginal_i = marginal_i[masks[i]]
                     group_marginal = integrate_on[masks[i]]
-                    integ_loss += self.vae._calc_integ_loss(
+                    integ_loss += self._calc_integ_loss(
                         marginal_i, group_marginal
                     ).to(self.device)
 
@@ -584,9 +540,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_loss_anneal_coef = kl_weight if self.anneal_class_loss else 1.0
 
         loss = torch.mean(
-            self.vae.loss_coefs["recon"] * recon_loss
-            + self.vae.loss_coefs["kl"] * kl_loss
-            + self.vae.loss_coefs["integ"] * integ_loss
+            self.loss_coefs["recon"] * recon_loss
+            + self.loss_coefs["kl"] * kl_loss
+            + self.loss_coefs["integ"] * integ_loss
             + self.class_loss_coef * classification_loss * class_loss_anneal_coef
             + self.regression_loss_coef * regression_loss
             + self.reg_coef * reg_loss
@@ -608,7 +564,3 @@ class MultiVAETorch_MIL(BaseModuleClass):
             kl_local=kl_loss,
             extra_metrics=extra_metrics,
         )
-
-    @torch.inference_mode()
-    def sample(self, tensors, n_samples=1):
-        return self.vae.sample(tensors, n_samples)
