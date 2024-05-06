@@ -7,8 +7,8 @@ from scvi import REGISTRY_KEYS
 
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
-from multigrate.module import MultiVAETorch
-from multigrate.nn import MLP
+from ..module import MultiVAETorch
+from ..nn import MLP
 
 
 class Aggregator(nn.Module):

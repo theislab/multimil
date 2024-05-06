@@ -1,19 +1,7 @@
-from . import model, module
+from importlib.metadata import version
 
-__all__ = [
-    "model",
-    "module",
-]
+from . import data, distributions, model, module, nn
 
-__author__ = ", ".join(
-    [
-        "Anastasia Litinetskaya",
-        "Mohammad Lotfollahi",
-    ]
-)
+__all__ = ["data", "distributions", "model", "module", "nn"]
 
-__email__ = ", ".join(
-    [
-        "anastasia.litinetskaya@tum.de",
-    ]
-)
+# __version__ = version("multigrate")

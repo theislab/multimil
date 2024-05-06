@@ -4,11 +4,10 @@ import logging
 import pandas as pd
 import numpy as np
 import anndata as ad
-import multigrate as mtg
 from matplotlib import pyplot as plt
 
-from multigrate.model import MultiVAE
-from multigrate.dataloaders import GroupDataSplitter, GroupAnnDataLoader
+from ..model import MultiVAE
+from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
 from ..module import MultiVAETorch_MIL
 from ..utils import create_df
 from typing import List, Optional, Union, Dict
@@ -840,7 +839,7 @@ class MultiVAE_MIL(BaseModelClass):
         setup_args = reference_model.adata_manager.registry["setup_args"].copy()
         setup_args.pop('ordinal_regression_order')
 
-        mtg.model.MultiVAE.setup_anndata(ref_adata, **setup_args)
+        MultiVAE.setup_anndata(ref_adata, **setup_args)
 
         vae = MultiVAE(
             ref_adata,
