@@ -43,8 +43,8 @@ def organize_multiome_anndatas(
                         stacklevel=2,
                     )
                 # check that all adatas in the same modality have the same number of features
-                if (mod_length := modality_lengths.get(mod, None)) is None:
-                    modality_lengths[mod] = adata.shape[1]
+                if (mod_length := modality_lengths.get(f'{mod}', None)) is None:
+                    modality_lengths[f'{mod}'] = adata.shape[1]
                 else:
                     if adata.shape[1] != mod_length:
                         raise ValueError(
@@ -76,7 +76,7 @@ def organize_multiome_anndatas(
     for mod, modality_adatas in enumerate(adatas):
         for i, adata in enumerate(modality_adatas):
             if not isinstance(adata, ad.AnnData) and adata is None:
-                X_zeros = np.zeros((datasets_lengths[i], modality_lengths[mod]))
+                X_zeros = np.zeros((datasets_lengths[i], modality_lengths[f'{mod}']))
                 adatas[mod][i] = ad.AnnData(X_zeros, dtype=X_zeros.dtype)
                 adatas[mod][i].obs_names = datasets_obs_names[i]
                 adatas[mod][i].var_names = modality_var_names[mod]
