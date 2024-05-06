@@ -3,6 +3,7 @@ from typing import Literal, Optional
 import torch
 from scvi.nn import FCLayers
 from torch import nn
+from torch.nn import functional as F
 
 
 class MLP(nn.Module):
@@ -140,3 +141,106 @@ class GeneralizedSigmoid(nn.Module):
             return (x * self.beta + self.bias).sigmoid()
         else:
             return x
+        
+
+class Aggregator(nn.Module):
+    # TODO add docstring
+    def __init__(
+        self,
+        n_input=None,
+        scoring="gated_attn",
+        attn_dim=16,  # D
+        patient_batch_size=None,
+        scale=False,
+        attention_dropout=False,
+        drop_attn=False,
+        dropout=0.2,
+        n_layers_mlp_attn=1,
+        n_hidden_mlp_attn=16,
+        activation=nn.LeakyReLU,
+    ):
+        super().__init__()
+
+        self.scoring = scoring
+        self.patient_batch_size = patient_batch_size
+        self.scale = scale
+
+        if self.scoring == "attn":
+            self.attn_dim = (
+                attn_dim  # attn dim from https://arxiv.org/pdf/1802.04712.pdf
+            )
+            self.attention = nn.Sequential(
+                nn.Linear(n_input, self.attn_dim),
+                nn.Tanh(),
+                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
+                nn.Linear(self.attn_dim, 1, bias=False),
+            )
+        elif self.scoring == "gated_attn":
+            self.attn_dim = attn_dim
+            self.attention_V = nn.Sequential(
+                nn.Linear(n_input, self.attn_dim),
+                nn.Tanh(),
+                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
+            )
+
+            self.attention_U = nn.Sequential(
+                nn.Linear(n_input, self.attn_dim),
+                nn.Sigmoid(),
+                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
+            )
+
+            self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
+
+        elif self.scoring == "mlp":
+
+            if n_layers_mlp_attn == 1:
+                self.attention = nn.Linear(n_input, 1)
+            else:
+                self.attention = nn.Sequential(
+                    MLP(
+                        n_input,
+                        n_hidden_mlp_attn,
+                        n_layers=n_layers_mlp_attn - 1,
+                        n_hidden=n_hidden_mlp_attn,
+                        dropout_rate=dropout,
+                        activation=activation,
+                    ),
+                    nn.Linear(n_hidden_mlp_attn, 1),
+                )
+        self.dropout_attn = nn.Dropout(dropout) if drop_attn else nn.Identity()
+
+    def forward(self, x):
+        # if self.scoring == "sum":
+        #  return torch.sum(x, dim=0)  # z_dim depricated
+
+        if self.scoring == "attn":
+            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+            self.A = self.attention(x)  # Nx1
+            self.A = torch.transpose(self.A, -1, -2)  # 1xN
+            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+
+        elif self.scoring == "gated_attn":
+            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+            A_V = self.attention_V(x)  # NxD
+            A_U = self.attention_U(x)  # NxD
+            self.A = self.attention_weights(
+                A_V * A_U
+            )  # element wise multiplication # Nx1
+            self.A = torch.transpose(self.A, -1, -2)  # 1xN
+            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+
+        elif self.scoring == "mlp":
+            self.A = self.attention(x)  # N
+            self.A = torch.transpose(self.A, -1, -2)
+            self.A = F.softmax(self.A, dim=-1)
+
+        else:
+            raise NotImplementedError(f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].')
+
+        if self.scale:
+            self.A = self.A * self.A.shape[-1] / self.patient_batch_size
+
+        self.A = self.dropout_attn(self.A)
+
+        return torch.bmm(self.A, x).squeeze(dim=1)  # z_dim
+

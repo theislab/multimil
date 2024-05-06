@@ -405,7 +405,7 @@ class MultiVAETorch(BaseModuleClass):
         mu_joint, logvar_joint = self._product_of_experts(mu, logvar, masks)
         z_joint = self._reparameterize(mu_joint, logvar_joint)
         # drop mus and logvars according to masks for kl calculation
-        # TODO here or in loss calculation? check multiVI
+        # TODO here or in loss calculation? check 
         # return mus+mus_joint
         return {"z_joint": z_joint, "mu": mu_joint, "logvar": logvar_joint, "z_marginal": z_marginal}
 
@@ -620,6 +620,7 @@ class MultiVAETorch(BaseModuleClass):
                     loss += MMD(kernel_type=self.kernel_type)(zs[i], zs[j])
         return loss
 
+    # TODO check if used
     def _compute_cont_cov_embeddings_(self, covs):
         """Compute sum of drug embeddings, each of them multiplied by its dose-response curve.
 
