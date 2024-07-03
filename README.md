@@ -27,3 +27,5 @@ git cd multimil
 pip install .
 ```
 
+## Reproducibility
+Code and notebooks to reproduce the results from the paper are available at https://github.com/theislab/multimil_reproducibility.
