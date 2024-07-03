@@ -1,4 +1,12 @@
-# Multigrate: multi-omic data integration and transformation for signle-cell genomics
+# Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases
+
+---
+**NOTE**
+
+This repository is WIP. Code updates, documentation and tutorials are coming in the next few weeks.
+
+---
+
 
 ## Getting started
 1. Set up a Conda environment:
