@@ -663,7 +663,7 @@ class MultiVAE_MIL(MultiVAE):
         cell_level = torch.cat(cell_level_attn).numpy()
         cov_level = torch.cat(cov_level_attn).numpy()
 
-        adata.obsm["latent"] = latent
+        adata.obsm["X_multiMIL"] = latent
         if self.hierarchical_attn and self.cov_aggr in ["attn", "both"]:
             adata.obsm["cov_attn"] = cov_level
         adata.obs["cell_attn"] = cell_level

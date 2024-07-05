@@ -189,7 +189,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             return torch.cat(imputed).squeeze().numpy()
 
     @torch.inference_mode()
-    def get_latent_representation(self, adata=None, batch_size=256):
+    def get_model_output(self, adata=None, batch_size=256):
         """Return the latent representation."""
         if not self.is_trained_:
             raise RuntimeError("Please train the model first.")
@@ -205,7 +205,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             z = outputs["z_joint"]
             latent += [z.cpu()]
 
-        adata.obsm["latent"] = torch.cat(latent).numpy()
+        adata.obsm["X_multiMIL"] = torch.cat(latent).numpy()
 
     def train(
         self,
