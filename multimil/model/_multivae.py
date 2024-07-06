@@ -85,7 +85,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     ):
         super().__init__(adata)
 
-        self.adata = adata
+       # self.adata = adata
         self.group_column = integrate_on
 
         # TODO: add options for number of hidden layers, hidden layers dim and output activation functions
@@ -101,8 +101,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         ) and REGISTRY_KEYS.SIZE_FACTOR_KEY not in self.adata_manager.data_registry:
             raise ValueError(f"Have to register {REGISTRY_KEYS.SIZE_FACTOR_KEY} when using 'nb' or 'zinb' loss.")
 
-        num_groups = 1
-        integrate_on_idx = None
+        self.num_groups = 1
+        self.integrate_on_idx = None
         if integrate_on is not None:
             if integrate_on not in self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
                 raise ValueError(
@@ -117,29 +117,29 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                     )
                 )
             else:
-                num_groups = len(
+                self.num_groups = len(
                     self.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)["mappings"][integrate_on]
                 )
-                integrate_on_idx = self.adata_manager.registry["setup_args"]["categorical_covariate_keys"].index(
+                self.integrate_on_idx = self.adata_manager.registry["setup_args"]["categorical_covariate_keys"].index(
                     integrate_on
                 )
 
-        modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
+        self.modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
 
-        cont_covariate_dims = []
+        self.cont_covariate_dims = []
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
-            cont_covariate_dims = [1 for key in cont_covs["columns"] if key not in ignore_categories]
+            self.cont_covariate_dims = [1 for key in cont_covs["columns"] if key not in ignore_categories]
 
-        cat_covariate_dims = []
+        self.cat_covariate_dims = []
         if len(cat_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)) > 0:
-            cat_covariate_dims = [
+            self.cat_covariate_dims = [
                 num_cat
                 for i, num_cat in enumerate(cat_covs.n_cats_per_key)
                 if cat_covs["field_keys"][i] not in ignore_categories
             ]
 
         self.module = MultiVAETorch(
-            modality_lengths=modality_lengths,
+            modality_lengths=self.modality_lengths,
             condition_encoders=condition_encoders,
             condition_decoders=condition_decoders,
             normalization=normalization,
@@ -149,10 +149,10 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             cond_dim=cond_dim,
             kernel_type=kernel_type,
             loss_coefs=loss_coefs,
-            num_groups=num_groups,
-            integrate_on_idx=integrate_on_idx,
-            cat_covariate_dims=cat_covariate_dims,
-            cont_covariate_dims=cont_covariate_dims,
+            num_groups=self.num_groups,
+            integrate_on_idx=self.integrate_on_idx,
+            cat_covariate_dims=self.cat_covariate_dims,
+            cont_covariate_dims=self.cont_covariate_dims,
             n_layers_encoders=n_layers_encoders,
             n_layers_decoders=n_layers_decoders,
             n_hidden_encoders=n_hidden_encoders,
@@ -378,16 +378,18 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             raise ValueError(
                 "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
             )
+        # TODO change to when both are None, use all input features to calculate the size factors, add warning 
+        if size_factor_key is None and rna_indices_end is None:
+            raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
-        batch_field = fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key)
         anndata_fields = [
             fields.LayerField(
                 REGISTRY_KEYS.X_KEY,
                 layer=None,
             ),
-            batch_field,
+            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
             fields.CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
             fields.NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]

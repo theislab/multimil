@@ -150,7 +150,7 @@ class Aggregator(nn.Module):
         n_input=None,
         scoring="gated_attn",
         attn_dim=16,  # D
-        patient_batch_size=None,
+        sample_batch_size=None,
         scale=False,
         attention_dropout=False,
         drop_attn=False,
@@ -162,7 +162,7 @@ class Aggregator(nn.Module):
         super().__init__()
 
         self.scoring = scoring
-        self.patient_batch_size = patient_batch_size
+        self.patient_batch_size = sample_batch_size
         self.scale = scale
 
         if self.scoring == "attn":

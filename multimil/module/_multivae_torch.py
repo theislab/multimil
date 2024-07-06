@@ -114,8 +114,6 @@ class MultiVAETorch(BaseModuleClass):
         self.n_cont_cov = len(cont_covariate_dims)
         self.cont_cov_type = cont_cov_type
         self.mmd = mmd
-
-        # needed to query to reference
         self.normalization = normalization
         self.z_dim = z_dim
         self.dropout = dropout
@@ -177,7 +175,6 @@ class MultiVAETorch(BaseModuleClass):
         for i, loss in enumerate(losses):
             if loss in ["nb", "zinb"]:
                 self.theta = torch.nn.Parameter(torch.randn(self.input_dims[i], num_groups))
-                # self.register_parameter(name='theta', param=self.theta)
                 break
 
         # modality encoders
@@ -194,10 +191,10 @@ class MultiVAETorch(BaseModuleClass):
             )
             for x_dim, n_layers, n_hidden in zip(self.input_dims, self.n_layers_encoders, self.n_hidden_encoders)
         ]
+
         # modality decoders
         cond_dim_dec = cond_dim * (len(cat_covariate_dims) + len(cont_covariate_dims)) if self.condition_decoders else 0
         dec_input = z_dim
-
         self.decoders = [
             Decoder(
                 n_input=dec_input + cond_dim_dec,
@@ -243,7 +240,6 @@ class MultiVAETorch(BaseModuleClass):
         else:
             self.cont_covariate_curves = GeneralizedSigmoid(
                 dim=self.n_cont_cov,
-                # device=self.device,
                 nonlin=self.cont_cov_type,
             )
 
@@ -382,7 +378,7 @@ class MultiVAETorch(BaseModuleClass):
             if self.n_cont_cov > 0:
                 if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
                     cont_covs = cont_covs[:, 0 : self.n_cont_cov]
-                cont_embedds = self._compute_cont_cov_embeddings_(cont_covs)
+                cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
             # concatenate input with categorical and continuous covariates
@@ -444,7 +440,7 @@ class MultiVAETorch(BaseModuleClass):
                 if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
                     # raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov") # still can happen when query to ref
                     cont_covs = cont_covs[:, 0 : self.n_cont_cov]
-                cont_embedds = self._compute_cont_cov_embeddings_(cont_covs)
+                cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
             else:
                 cont_embedds = torch.Tensor().to(self.device)
 
@@ -455,30 +451,7 @@ class MultiVAETorch(BaseModuleClass):
         rs = [self._h_to_x(z, mod) for mod, z in enumerate(zs)]
         return {"rs": rs}
 
-    def loss(
-        self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
-    ) -> Tuple[
-        torch.FloatTensor,
-        Dict[str, torch.FloatTensor],
-        torch.FloatTensor,
-        torch.FloatTensor,
-        torch.FloatTensor,
-        torch.FloatTensor,
-        Dict[str, torch.FloatTensor],
-    ]:
-        """Calculate the (modality) reconstruction loss, Kullback divergences and integration loss.
-
-        :param tensors:
-            Tensor of values with shape ``(batch_size, n_input_features)``
-        :param inference_outputs:
-            Dictionary with the inference output
-        :param generative_outputs:
-            Dictionary with the generative output
-        :param kl_weight:
-            Weight of the KL loss
-        :returns:
-            Reconstruction loss, Kullback divergences, integration loss and modality reconstruction losses.
-        """
+    def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
         x = tensors[REGISTRY_KEYS.X_KEY]
         if self.integrate_on_idx is not None:
             integrate_on = tensors.get(REGISTRY_KEYS.CAT_COVS_KEY)[:, self.integrate_on_idx]
@@ -547,6 +520,36 @@ class MultiVAETorch(BaseModuleClass):
         extra_metrics = {"integ_loss": integ_loss}
         extra_metrics.update(modality_recon_losses)
 
+        return loss, recon_loss, kl_loss, extra_metrics
+
+    def loss(
+        self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
+    ) -> Tuple[
+        torch.FloatTensor,
+        Dict[str, torch.FloatTensor],
+        torch.FloatTensor,
+        torch.FloatTensor,
+        torch.FloatTensor,
+        torch.FloatTensor,
+        Dict[str, torch.FloatTensor],
+    ]:
+        """Calculate the (modality) reconstruction loss, Kullback divergences and integration loss.
+
+        :param tensors:
+            Tensor of values with shape ``(batch_size, n_input_features)``
+        :param inference_outputs:
+            Dictionary with the inference output
+        :param generative_outputs:
+            Dictionary with the generative output
+        :param kl_weight:
+            Weight of the KL loss
+        :returns:
+            Reconstruction loss, Kullback divergences, integration loss and modality reconstruction losses.
+        """
+        loss, recon_loss, kl_loss, extra_metrics = self._calculate_loss(
+            tensors, inference_outputs, generative_outputs, kl_weight
+        )
+
         return LossOutput(
             loss=loss,
             reconstruction_loss=recon_loss,
@@ -567,7 +570,6 @@ class MultiVAETorch(BaseModuleClass):
                 inference_kwargs=inference_kwargs,
                 compute_loss=False,
             )
-        # TODO need to move to cpu?
         return generative_outputs["rs"]
 
     def _calc_recon_loss(self, xs, rs, losses, group, size_factor, loss_coefs, masks):
@@ -620,9 +622,8 @@ class MultiVAETorch(BaseModuleClass):
                     loss += MMD(kernel_type=self.kernel_type)(zs[i], zs[j])
         return loss
 
-    # TODO check if used
-    def _compute_cont_cov_embeddings_(self, covs):
-        """Compute sum of drug embeddings, each of them multiplied by its dose-response curve.
+    def _compute_cont_cov_embeddings(self, covs):
+        """Compute embeddings for continuous covariates.
 
         Adapted from
         Title: CPA (c) Facebook, Inc.
