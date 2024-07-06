@@ -13,7 +13,7 @@ from ..module import MultiVAETorch_MIL
 from ..utils import create_df
 from typing import List, Optional, Union, Dict
 from math import ceil
-from scvi.model.base import BaseModelClass
+from scvi.model.base import BaseModelClass, ArchesMixin
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.train._callbacks import SaveBestState
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -28,7 +28,7 @@ from scvi.model.base._utils import _initialize_model
 logger = logging.getLogger(__name__)
 
 
-class MultiVAE_MIL(BaseModelClass):
+class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def __init__(
         self,
         adata,
@@ -77,13 +77,21 @@ class MultiVAE_MIL(BaseModelClass):
         anneal_class_loss=False,
     ):
         super().__init__(adata)
-        # TODO figure out what's happening with patient_in_vae
+        # TODO figure out what's happening with sample_in_vae
 
-        # TODO check if need/can set self.multivae.adata = None
+        ignore_categories = []
+        if sample_in_vae is False:
+            ignore_categories.append(sample_key)
+        for key in classification + ordinal_regression + regression:
+                ignore_categories.append(key)
+
+        setup_args = self.adata_manager.registry["setup_args"]
+        setup_args.pop('ordinal_regression_order')
         MultiVAE.setup_anndata(
             adata,
-            rna_indices_end=adata.shape[1], # just a hack so this doesn't throw an error
+            **setup_args,
         )
+        # TODO check if need/can set self.multivae.adata = None
 
         # TODO check if need to add ignore_categories here
         self.multivae = MultiVAE(
@@ -108,15 +116,20 @@ class MultiVAE_MIL(BaseModelClass):
             mmd=mmd,
             activation=activation,
             initialization=initialization,
+            ignore_categories=ignore_categories,
         )
 
-        # TODO check if need/can set self.mil.adata = None
+        setup_args = self.adata_manager.registry["setup_args"]
+        setup_args.pop('batch_key')
+        setup_args.pop('size_factor_key')
+        setup_args.pop('rna_indices_end')
+
         MILClassifier.setup_anndata(
             adata=adata,
-            categorical_covariate_keys=[sample_key] + classification + ordinal_regression,
-            continuous_covariate_keys=regression,
-            ordinal_regression_order=None,
+            **setup_args,
         )
+        # TODO check if need/can set self.mil.adata = None
+
         # TODO i think i need to add ignore categories here, so it doesn't throw a warning that the covs will be ignored
         self.mil = MILClassifier(
             adata=adata,
@@ -195,7 +208,7 @@ class MultiVAE_MIL(BaseModelClass):
             n_hidden_mlp_attn=n_hidden_mlp_attn,
             class_loss_coef=class_loss_coef,
             regression_loss_coef=regression_loss_coef,
-            sample_idx=self.mil.sample_idx,
+            sample_idx=self.mil.sample_idx, # TODO I think we don't need it any more
             sample_batch_size=sample_batch_size,
             attention_dropout=attention_dropout,
             class_idx=self.mil.class_idx,

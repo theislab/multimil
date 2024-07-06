@@ -120,8 +120,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
         # TODO check if this is correct and the correct indices are being passes to the corresponding modules
         self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
 
-        if not sample_in_vae:
-            self.cat_cov_idx = self.cat_cov_idx - {sample_idx}
         self.cat_cov_idx = torch.tensor(list(self.cat_cov_idx))
         self.cont_cov_idx = torch.tensor(
             list(

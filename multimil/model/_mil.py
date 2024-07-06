@@ -11,7 +11,7 @@ from ..module import MILClassifierTorch
 from ..utils import create_df
 from typing import List, Optional, Union, Dict
 from math import ceil
-from scvi.model.base import BaseModelClass
+from scvi.model.base import BaseModelClass, ArchesMixin
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.train._callbacks import SaveBestState
 from scvi.train import TrainRunner, AdversarialTrainingPlan
@@ -25,8 +25,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 logger = logging.getLogger(__name__)
 
-
-class MILClassifier(BaseModelClass):
+class MILClassifier(BaseModelClass, ArchesMixin):
     def __init__(
         self,
         adata,
@@ -334,6 +333,7 @@ class MILClassifier(BaseModelClass):
             Dictionary with regression classes as keys and order of classes as values
         """
 
+        # TODO make sure not to assume categorical columns for ordinal regression -> change to np.unique if needed
         if ordinal_regression_order is not None:
             if not set(ordinal_regression_order.keys()).issubset(
                 categorical_covariate_keys
@@ -610,6 +610,7 @@ class MILClassifier(BaseModelClass):
         :param freeze:
             Whether to freeze the encoders and decoders and only train the new weights
         """
+        # TODO check that all previous categories to predict are present in the new data, classification and ordinal regression
         _, _, device = parse_use_gpu_arg(use_gpu)
 
         attr_dict, var_names, load_state_dict = _get_loaded_data(

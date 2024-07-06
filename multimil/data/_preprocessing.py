@@ -23,7 +23,9 @@ def organize_multiome_anndatas(
         List of Lists of the same lengths as `adatas` specifying which `.layer` to use for each AnnData. Default is None which means using `.X`.
 
     """
-    # TOOD: add checks for layers
+    # TODO: add checks for layers
+    # TODO: add check that len of modalities is the same as len of losses, etc
+
 
     # needed for scArches operation setup
     datasets_lengths = {}
