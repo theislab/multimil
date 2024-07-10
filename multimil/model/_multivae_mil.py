@@ -77,7 +77,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         anneal_class_loss=False,
     ):
         super().__init__(adata)
-        # TODO figure out what's happening with sample_in_vae
+        # TODO check if sample_in_vae works as intended
 
         # add prediction covariates to ignore_covariates_vae
         ignore_covariates_vae = []
@@ -85,14 +85,14 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             ignore_covariates_vae.append(sample_key)
         for key in classification + ordinal_regression + regression:
                 ignore_covariates_vae.append(key)
+        
+        setup_args = self.adata_manager.registry["setup_args"].copy()
 
-        setup_args = self.adata_manager.registry["setup_args"]
         setup_args.pop('ordinal_regression_order')
         MultiVAE.setup_anndata(
             adata,
             **setup_args,
         )
-        # TODO check if need/can set self.multivae.adata = None
 
         self.multivae = MultiVAE(
             adata=adata,
@@ -131,7 +131,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
                 if cat_name not in regression:
                     ignore_covariates_mil.append(cat_name)
 
-        setup_args = self.adata_manager.registry["setup_args"]
+        setup_args = self.adata_manager.registry["setup_args"].copy()
         setup_args.pop('batch_key')
         setup_args.pop('size_factor_key')
         setup_args.pop('rna_indices_end')
@@ -173,7 +173,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             ignore_covariates=ignore_covariates_mil,
         )
 
-        # clear up the memory
+        # clear up memory
         self.multivae.module = None
         self.mil.module = None
 
@@ -655,8 +655,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         if save is not None:
             plt.savefig(save, bbox_inches="tight")
 
-
-    # not updated yet TODO
     # adjusted from scvi-tools
     # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/model/base/_archesmixin.py#L30
     # accessed on 7 November 2022
@@ -664,7 +662,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def load_query_data(
         cls,
         adata: AnnData,
-        # use_prediction_labels: bool,
         reference_model: BaseModelClass,
         use_gpu: Optional[Union[str, int, bool]] = None,
         freeze: bool = True,
@@ -689,7 +686,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         """
         _, _, device = parse_use_gpu_arg(use_gpu)
 
-        attr_dict, var_names, load_state_dict = _get_loaded_data(
+        attr_dict, _, _ = _get_loaded_data(
             reference_model, device=device
         )
 
@@ -705,9 +702,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
                 "Cannot load the original setup."
             )
 
-        # TODO need to make sure that the og registry is saved and not the one after the mil model init
-        print(registry[_SETUP_ARGS_KEY])
-
         cls.setup_anndata(
             adata,
             source_registry=registry,
@@ -718,92 +712,43 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
         model = _initialize_model(cls, adata, attr_dict)
 
-        # adata_manager = model.get_anndata_manager(adata, required=True)
-
-        ignore_covariates = []
-        if not reference_model.patient_in_vae:
-            ignore_covariates = [reference_model.patient_column]
-
+        # set up vae model with load_query_data
         ref_adata = reference_model.adata.copy()
         setup_args = reference_model.adata_manager.registry["setup_args"].copy()
         setup_args.pop('ordinal_regression_order')
 
         MultiVAE.setup_anndata(ref_adata, **setup_args)
 
-        vae = MultiVAE(
-            ref_adata,
-            losses=reference_model.module.vae.losses,
-            loss_coefs=reference_model.module.vae.loss_coefs,
-            integrate_on=reference_model.module.vae.integrate_on_idx,
-            condition_encoders=reference_model.module.vae.condition_encoders,
-            condition_decoders=reference_model.module.vae.condition_decoders,
-            normalization=reference_model.module.vae.normalization,
-            z_dim=reference_model.module.vae.z_dim,
-            dropout=reference_model.module.vae.dropout,
-            cond_dim=reference_model.module.vae.cond_dim,
-            kernel_type=reference_model.module.vae.kernel_type,
-            n_layers_encoders=reference_model.module.vae.n_layers_encoders,
-            n_layers_decoders=reference_model.module.vae.n_layers_decoders,
-            n_hidden_encoders=reference_model.module.vae.n_hidden_encoders,
-            n_hidden_decoders=reference_model.module.vae.n_hidden_decoders,
-            cont_cov_type=reference_model.module.vae.cont_cov_type,
-            n_hidden_cont_embed=reference_model.module.vae.n_hidden_cont_embed,
-            n_layers_cont_embed=reference_model.module.vae.n_layers_cont_embed,
-            ignore_covariates=ignore_covariates + reference_model.classification
-            + reference_model.regression
-            + reference_model.ordinal_regression,
-        )
+        ignore_covariates = []
+        if reference_model.sample_in_vae is False:
+            ignore_covariates.append(reference_model.sample_key)
 
-        vae.module.load_state_dict(reference_model.module.vae.state_dict())
-        vae.to_device(device)
-
+        # needed for the load_query_data to work
+        reference_model.multivae.module = reference_model.module.vae_module.to(device)
         new_vae = MultiVAE.load_query_data(
             adata,
-            reference_model=vae,
+            reference_model=reference_model.multivae,
             use_gpu=use_gpu,
             freeze=freeze,
-            ignore_covariates=reference_model.classification
-            + reference_model.regression
-            + reference_model.ordinal_regression,
+            ignore_covariates=ignore_covariates
+                + reference_model.mil.classification
+                + reference_model.mil.regression
+                + reference_model.mil.ordinal_regression,
         )
 
-        # model.module = reference_model.module
-        model.module.vae = new_vae.module
+        # clear up memory
+        reference_model.multivae.module = None
+
+        # set modules in the new model
+        model.module.vae_module = new_vae.module
+        model.module.mil_module = reference_model.module.mil_module
 
         model.to_device(device)
 
-        # if there are no prediction labels in the query
         if freeze is True:
             for name, p in model.module.named_parameters():
-                if "vae" not in name:
+                if "mil" in name:
                     p.requires_grad = False
-        # if there are prediction labels in the query
-        # if use_prediction_labels is True:
-        #     new_state_dict = model.module.state_dict()
-        #     for key, load_ten in load_state_dict.items():  # load_state_dict = old
-        #         if 'vae' in key: # already updated
-        #             load_state_dict[key] = new_state_dict[key]
-        #         else: # MIL part
-        #             new_ten = new_state_dict[key]
-        #             if new_ten.size() == load_ten.size():
-        #                 continue
-        #             # new categoricals changed size
-        #             else:
-        #                 old_shape = new_ten.shape
-        #                 new_shape = load_ten.shape
-        #                 if old_shape[0] == new_shape[0]:
-        #                     dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
-        #                     fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
-        #                 else:
-        #                     dim_diff = new_ten.size()[0] - load_ten.size()[0]
-        #                     fixed_ten = torch.cat([load_ten, new_ten[-dim_diff:, ...]], dim=0)
-        #             load_state_dict[key] = fixed_ten
-
-        #     model.module.load_state_dict(load_state_dict)
-
-        #         # unfreeze last classifier layer
-        #     model.module.classifiers[-1].weight.requires_grad = True
-        #     model.module.classifiers[-1].bias.requires_grad = True
 
         model.module.eval()
         model.is_trained_ = False

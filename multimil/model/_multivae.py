@@ -378,6 +378,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         :param continuous_covariate_keys:
             Keys in `adata.obs` that correspond to continuous data
         """
+        # TODO check that organize_multiome_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
+
         if size_factor_key is not None and rna_indices_end is not None:
             raise ValueError(
                 "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
