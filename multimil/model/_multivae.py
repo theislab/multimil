@@ -142,6 +142,9 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                     self.cat_covs_idx.append(i)
                     self.cat_covariate_dims.append(num_cat)
 
+        self.cat_covs_idx = torch.tensor(self.cat_covs_idx)
+        self.cont_covs_idx = torch.tensor(self.cont_covs_idx)
+
         self.module = MultiVAETorch(
             modality_lengths=self.modality_lengths,
             condition_encoders=condition_encoders,
@@ -155,6 +158,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             loss_coefs=loss_coefs,
             num_groups=self.num_groups,
             integrate_on_idx=self.integrate_on_idx,
+            cat_covs_idx=self.cat_covs_idx,
+            cont_covs_idx=self.cont_covs_idx,
             cat_covariate_dims=self.cat_covariate_dims,
             cont_covariate_dims=self.cont_covariate_dims,
             n_layers_encoders=n_layers_encoders,
@@ -493,6 +498,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         model = _initialize_model(cls, adata, attr_dict)
         adata_manager = model.get_anndata_manager(adata, required=True)
 
+        # TODO add an exception if need to add new categories but condition_encoders is False
         # model tweaking
         num_of_cat_to_add = [
             new_cat - old_cat

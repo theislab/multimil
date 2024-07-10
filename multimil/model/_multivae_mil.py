@@ -178,7 +178,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         self.mil.module = None
 
         self.sample_in_vae = sample_in_vae
-       
+
         self.module = MultiVAETorch_MIL(
             # vae
             modality_lengths=self.multivae.modality_lengths,
@@ -203,8 +203,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             n_hidden_cont_embed=n_hidden_cont_embed,
             cat_covariate_dims=self.multivae.cat_covariate_dims,
             cont_covariate_dims=self.multivae.cont_covariate_dims,
-            cat_cov_idx=self.multivae.cat_covs_idx,
-            cont_cov_idx=self.multivae.cont_covs_idx,
+            cat_covs_idx=self.multivae.cat_covs_idx,
+            cont_covs_idx=self.multivae.cont_covs_idx,
             cont_cov_type=cont_cov_type,
             mmd=mmd,
             # mil
@@ -743,8 +743,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         model.module.vae_module = new_vae.module
         model.module.mil_module = reference_model.module.mil_module
 
-        model.to_device(device)
-
         if freeze is True:
             for name, p in model.module.named_parameters():
                 if "mil" in name:
@@ -753,4 +751,66 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         model.module.eval()
         model.is_trained_ = False
        
+        model.to_device(device)
+
         return model
+
+    def train_vae(
+        self,
+        max_epochs: int = 200,
+        lr: float = 1e-4,
+        use_gpu: Optional[Union[str, int, bool]] = None,
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        batch_size: int = 256,
+        weight_decay: float = 0,
+        eps: float = 1e-08,
+        early_stopping: bool = True,
+        save_best: bool = True,
+        check_val_every_n_epoch: Optional[int] = None,
+        n_epochs_kl_warmup: Optional[int] = None,
+        n_steps_kl_warmup: Optional[int] = None,
+        adversarial_mixing: bool = False,
+        plan_kwargs: Optional[dict] = None,
+        plot_losses=True,
+        save_loss=None,
+        save_checkpoint_every_n_epochs: Optional[int] = None,
+        path_to_checkpoints: Optional[str] = None,
+        **kwargs,
+    ):
+        vae = self.multivae
+        vae.module = self.module.vae_module
+
+        _, _, device = parse_use_gpu_arg(use_gpu)
+
+        vae.train(
+            max_epochs=max_epochs,
+            lr=lr,
+            use_gpu=use_gpu,
+            train_size=train_size,
+            validation_size=validation_size,
+            batch_size=batch_size,
+            weight_decay=weight_decay,
+            eps=eps,
+            early_stopping=early_stopping,
+            save_best=save_best,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            n_epochs_kl_warmup=n_epochs_kl_warmup,
+            n_steps_kl_warmup=n_steps_kl_warmup,
+            adversarial_mixing=adversarial_mixing,
+            plan_kwargs=plan_kwargs,
+            save_checkpoint_every_n_epochs=save_checkpoint_every_n_epochs,
+            path_to_checkpoints=path_to_checkpoints,
+            **kwargs,
+        )
+
+        if plot_losses is True:
+            vae.plot_losses(save=save_loss)
+
+        self.module.vae_module = vae.module
+        self.multivae.module = None
+        self.is_trained_ = True
+        
+        # otherwise mil module stays on cpu, but vae module is on gpu -> error in inference
+        self.to_device(device)
+        
