@@ -31,6 +31,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
         attn_dim=16,
         cat_covariate_dims=[],
         cont_covariate_dims=[],
+        cat_cov_idx=[],
+        cont_cov_idx=[],
         cont_cov_type="logsigm",
         n_layers_cell_aggregator=1,
         n_layers_classifier=1,
@@ -117,17 +119,8 @@ class MultiVAETorch_MIL(BaseModuleClass):
             attn_dim=attn_dim,
         )
         
-        # TODO check if this is correct and the correct indices are being passes to the corresponding modules
-        self.cat_cov_idx = set(range(len(class_idx) + len(ord_idx) + len(cat_covariate_dims))).difference(set(class_idx)).difference(set(ord_idx))
-
-        self.cat_cov_idx = torch.tensor(list(self.cat_cov_idx))
-        self.cont_cov_idx = torch.tensor(
-            list(
-                set(range(len(reg_idx) + len(cont_covariate_dims))).difference(
-                    set(reg_idx)
-                )
-            )
-        )
+        self.cat_cov_idx = torch.tensor(cat_cov_idx)
+        self.cont_cov_idx = torch.tensor(cont_cov_idx)
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -163,6 +156,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         if len(self.cat_cov_idx) > 0:
             cat_covs = torch.index_select(cat_covs, 1, self.cat_cov_idx.to(self.device))
 
+        # TODO get rid of cat covs and cont covs from here and from signature
         inference_outputs = self.vae_module.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs["z_joint"]
         

@@ -52,11 +52,11 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         regression_loss_coef=1.0,
         drop_attn=False,
         aggr="attn", # or 'both' = attn + average (two heads)
-        cov_aggr=None, # one of ['attn', 'concat', 'both', 'mean']
         activation='leaky_relu', # or tanh
         initialization=None, # xavier (tanh) or kaiming (leaky_relu)
         weighted_class_loss=False, 
         anneal_class_loss=False,
+        ignore_covariates=None,
     ):
         super().__init__(adata)
 
@@ -90,19 +90,19 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 n_layers_mlp_attn = 1
             if not n_hidden_mlp_attn:
                 n_hidden_mlp_attn = 16
-
+        
         self.regression_idx = []
-
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
             for key in cont_covs['columns']:
                 if key in self.regression:
                     self.regression_idx.append(
                         list(cont_covs['columns']).index(key)
                     )
-                elif key not in self.classification:
-                    warnings.warn(
-                        f"Registered continuous covariate '{key}' is not in regression covariates so will be ignored."
-                    )
+                else: # only can happen when using multivae_mil
+                    if ignore_covariates is not None and key not in ignore_covariates:
+                        warnings.warn(
+                            f"Registered continuous covariate '{key}' is not in regression covariates so will be ignored."
+                        )
        
         # classification and ordinal regression together here as ordinal regression values need to be registered as categorical covariates
         self.class_idx, self.ord_idx = [], []
@@ -120,17 +120,18 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                         num_cat
                     )
                     self.ord_idx.append(i)
-                else:  # the actual categorical covariate
-                    if cat_cov_name != self.sample_key:
+                else:  # the actual categorical covariate, only can happen when using multivae_mil
+                    if ignore_covariates is not None and cat_cov_name not in ignore_covariates and cat_cov_name != self.sample_key:
                         warnings.warn(
                             f"Registered categorical covariate '{cat_cov_name}' is not in classification or ordinal regression covariates and is not the sample covariate so will be ignored."
                         )
-
+                        
         for label in ordinal_regression:
             print(
                 f'The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with the `ordinal_regression_order` parameter.'
             )
 
+        # TODO probably remove
         # create a list with a dict per classification label with weights per class for that label
         self.class_weights = None
         if weighted_class_loss is True:
@@ -140,6 +141,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 for _, n_obs_in_class in self.class_weights_dict.items():
                     denominator += (1.0 / n_obs_in_class)
                 self.class_weights.append({name: (1 / value ) / denominator for name, value in self.class_weights_dict.items()})
+
+        self.class_idx = torch.tensor(self.class_idx)
+        self.ord_idx = torch.tensor(self.ord_idx)
+        self.regression_idx = torch.tensor(self.regression_idx)
 
         self.module = MILClassifierTorch(
             z_dim=z_dim,
@@ -171,10 +176,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             class_weights=self.class_weights,
             anneal_class_loss=anneal_class_loss,
         )
-
-        self.class_idx = torch.tensor(self.class_idx)
-        self.ord_idx = torch.tensor(self.ord_idx)
-        self.regression_idx = torch.tensor(self.regression_idx)
 
         self.init_params_ = self._get_init_params(locals())
 
@@ -610,7 +611,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         :param freeze:
             Whether to freeze the encoders and decoders and only train the new weights
         """
-        # TODO check that all previous categories to predict are present in the new data, classification and ordinal regression
+
+        # TODO I think currently this function works only if the prediction cov is present in the .obs of the query
+        # need to allow it to be missing
+
         _, _, device = parse_use_gpu_arg(use_gpu)
 
         attr_dict, var_names, load_state_dict = _get_loaded_data(

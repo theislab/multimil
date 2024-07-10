@@ -30,9 +30,9 @@ class MILClassifierTorch(BaseModuleClass):
         regression_loss_coef=1.0,
         sample_batch_size=128,
         attention_dropout=True,
-        class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference
-        ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference
-        reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference
+        class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference; this is a torch tensor
+        ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference; this is a torch tensor
+        reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference; this is a torch tensor
         drop_attn=False,
         aggr="attn",
         activation='leaky_relu',
@@ -59,10 +59,9 @@ class MILClassifierTorch(BaseModuleClass):
         self.class_weights = class_weights
         self.anneal_class_loss = anneal_class_loss
         self.num_classification_classes = num_classification_classes
-
-        self.class_idx = torch.tensor(class_idx)
-        self.ord_idx = torch.tensor(ord_idx)
-        self.reg_idx = torch.tensor(reg_idx)
+        self.class_idx = class_idx
+        self.ord_idx = ord_idx
+        self.reg_idx = reg_idx
 
         self.cell_level_aggregator = nn.Sequential(
             MLP(
@@ -88,15 +87,15 @@ class MILClassifierTorch(BaseModuleClass):
                 activation=self.activation,
             ),
         )
-   
-        self.classifiers = torch.nn.ModuleList()
-
-        # TODO check/remove other aggr types
-        # TODO 2 * z_dim is for `both`, remove 
-        # classify zs directly
-        class_input_dim = z_dim if self.aggr == 'attn' else 2 * z_dim 
 
         if len(self.class_idx) > 0:
+            self.classifiers = torch.nn.ModuleList()
+
+            # TODO check/remove other aggr types
+            # TODO 2 * z_dim is for `both`, remove 
+            # classify zs directly
+            class_input_dim = z_dim if self.aggr == 'attn' else 2 * z_dim 
+
             for num in self.num_classification_classes:
                 if n_layers_classifier == 1:
                     self.classifiers.append(nn.Linear(class_input_dim, num))
@@ -115,26 +114,27 @@ class MILClassifierTorch(BaseModuleClass):
                         )
                     )
 
-        self.regressors = torch.nn.ModuleList()
-        for _ in range(
-            len(self.ord_idx) + len(self.reg_idx)
-        ):  # one head per standard regression and one per ordinal regression
-            if n_layers_regressor == 1:
-                self.regressors.append(nn.Linear(z_dim, 1))
-            else:
-                self.regressors.append(
-                    nn.Sequential(
-                        MLP(
-                            z_dim,
-                            n_hidden_regressor,
-                            n_layers=n_layers_regressor - 1,
-                            n_hidden=n_hidden_regressor,
-                            dropout_rate=dropout,
-                            activation=self.activation,
-                        ),
-                        nn.Linear(n_hidden_regressor, 1),
+        if len(self.ord_idx) + len(self.reg_idx) > 0:
+            self.regressors = torch.nn.ModuleList()
+            for _ in range(
+                len(self.ord_idx) + len(self.reg_idx)
+            ):  # one head per standard regression and one per ordinal regression
+                if n_layers_regressor == 1:
+                    self.regressors.append(nn.Linear(z_dim, 1))
+                else:
+                    self.regressors.append(
+                        nn.Sequential(
+                            MLP(
+                                z_dim,
+                                n_hidden_regressor,
+                                n_layers=n_layers_regressor - 1,
+                                n_hidden=n_hidden_regressor,
+                                dropout_rate=dropout,
+                                activation=self.activation,
+                            ),
+                            nn.Linear(n_hidden_regressor, 1),
+                        )
                     )
-                )
 
         if initialization == 'xavier':
             for layer in self.modules():
@@ -194,8 +194,11 @@ class MILClassifierTorch(BaseModuleClass):
         else: # "attn"
             zs_aggr = zs_attn
         predictions = []
-        predictions.extend([classifier(zs_aggr) for classifier in self.classifiers])
-        predictions.extend([regressor(zs_aggr) for regressor in self.regressors])
+
+        if len(self.class_idx) > 0:
+            predictions.extend([classifier(zs_aggr) for classifier in self.classifiers])
+        if len(self.ord_idx) + len(self.reg_idx) > 0:
+            predictions.extend([regressor(zs_aggr) for regressor in self.regressors])
 
         inference_outputs.update(
             {"predictions": predictions}
@@ -217,18 +220,22 @@ class MILClassifierTorch(BaseModuleClass):
 
         # MIL classification loss
         batch_size = x.shape[0]
+        # keep indices of the start positions of samples in the batch (but not the first)
         idx = list(
             range(self.sample_batch_size, batch_size, self.sample_batch_size)
-        )  # or depending on model.train() and model.eval() ???
+        ) 
         if (
             batch_size % self.sample_batch_size != 0
         ):  # can only happen during inference for last batches for each sample
             idx = []
 
-        # TODO in a function
+        # TODO put these into functions
         if len(self.reg_idx) > 0:
-            regression = torch.index_select(cont_covs, 1, self.reg_idx.to(self.device))
-            regression = regression.view(len(idx) + 1, -1, len(self.reg_idx))[:, 0, :]
+            regression = torch.index_select(cont_covs, 1, self.reg_idx.to(self.device)) # batch_size x number of regression tasks
+            # select the first element of each sample in the batch because we predict on sample level
+            regression = regression.view(len(idx) + 1, -1, len(self.reg_idx)) # num_samples_in_batch x sample_batch_size x number of regression tasks
+            # take the first element of each sample in the batch as the values are the same for the sample_batch
+            regression = regression[:, 0, :] # num_samples_in_batch x number of regression tasks
        
         if len(self.ord_idx) > 0:
             ordinal_regression = torch.index_select(
@@ -267,7 +274,7 @@ class MILClassifierTorch(BaseModuleClass):
         regression_loss = torch.tensor(0.0).to(self.device)
         for i in range(len(self.ord_idx)):
             regression_loss += F.mse_loss(
-                predictions[len(self.class_idx) + i].squeeze(), ordinal_regression[:, i]
+                predictions[len(self.class_idx) + i].squeeze(-1), ordinal_regression[:, i]
             )
             accuracies.append(
                 torch.sum(
@@ -278,9 +285,10 @@ class MILClassifierTorch(BaseModuleClass):
                 )
                 / ordinal_regression[:, i].shape[0]
             )
+
         for i in range(len(self.reg_idx)):
             regression_loss += F.mse_loss(
-                predictions[len(self.class_idx) + len(self.ord_idx) + i].squeeze(),
+                predictions[len(self.class_idx) + len(self.ord_idx) + i].squeeze(-1),
                 regression[:, i],
             )
             
@@ -297,7 +305,7 @@ class MILClassifierTorch(BaseModuleClass):
             "class_loss": classification_loss,
             "accuracy": accuracy,
             "regression_loss": regression_loss,
-            }
+        }
 
         recon_loss = torch.zeros(batch_size)
         kl_loss = torch.zeros(batch_size)

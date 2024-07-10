@@ -78,10 +78,10 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         n_hidden_cont_embed: int = 32,
         n_hidden_encoders: Optional[List[int]] = None,
         n_hidden_decoders: Optional[List[int]] = None,
-        ignore_categories: Optional[List[str]] = None,
         mmd: Literal["latent", "marginal", "both"] = "latent",
         activation: Optional[str] = "leaky_relu",
         initialization: Optional[str] = None,
+        ignore_covariates: Optional[List[str]] = None,
     ):
         super().__init__(adata)
 
@@ -93,8 +93,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             raise ValueError('Normalization has to be one of ["layer", "batch", None]')
         # TODO: do some assertions for other parameters
 
-        if ignore_categories is None:
-            ignore_categories = []
+        if ignore_covariates is None:
+            ignore_covariates = []
 
         if (
             "nb" in losses or "zinb" in losses
@@ -110,10 +110,10 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                         integrate_on, self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]
                     )
                 )
-            elif integrate_on in ignore_categories:
+            elif integrate_on in ignore_covariates:
                 raise ValueError(
-                    "Specified integrate_on = {!r} is in ignore_categories = {}.".format(
-                        integrate_on, ignore_categories
+                    "Specified integrate_on = {!r} is in ignore_covariates = {}.".format(
+                        integrate_on, ignore_covariates
                     )
                 )
             else:
@@ -126,17 +126,21 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
         self.modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
 
+        self.cont_covs_idx = []
         self.cont_covariate_dims = []
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
-            self.cont_covariate_dims = [1 for key in cont_covs["columns"] if key not in ignore_categories]
+            for i, key in enumerate(cont_covs["columns"]):
+                if key not in ignore_covariates:
+                    self.cont_covs_idx.append(i)
+                    self.cont_covariate_dims.append(1)
 
+        self.cat_covs_idx = []
         self.cat_covariate_dims = []
         if len(cat_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)) > 0:
-            self.cat_covariate_dims = [
-                num_cat
-                for i, num_cat in enumerate(cat_covs.n_cats_per_key)
-                if cat_covs["field_keys"][i] not in ignore_categories
-            ]
+            for i, num_cat in enumerate(cat_covs.n_cats_per_key):
+                if cat_covs["field_keys"][i] not in ignore_covariates:
+                    self.cat_covs_idx.append(i)
+                    self.cat_covariate_dims.append(num_cat)
 
         self.module = MultiVAETorch(
             modality_lengths=self.modality_lengths,
@@ -446,7 +450,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         reference_model: BaseModelClass,
         use_gpu: Optional[Union[str, int, bool]] = None,
         freeze: bool = True,
-        ignore_categories: Optional[List[str]] = None,
+        ignore_covariates: Optional[List[str]] = None,
     ):
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -464,7 +468,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         """
         _, _, device = parse_use_gpu_arg(use_gpu)
 
-        attr_dict, var_names, load_state_dict = _get_loaded_data(reference_model, device=device)
+        attr_dict, _, load_state_dict = _get_loaded_data(reference_model, device=device)
 
         registry = attr_dict.pop("registry_")
         if _MODEL_NAME_KEY in registry and registry[_MODEL_NAME_KEY] != cls.__name__:
@@ -473,8 +477,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         if _SETUP_ARGS_KEY not in registry:
             raise ValueError("Saved model does not contain original setup inputs. " "Cannot load the original setup.")
 
-        if ignore_categories is None:
-            ignore_categories = []
+        if ignore_covariates is None:
+            ignore_covariates = []
 
         cls.setup_anndata(
             adata,
@@ -496,7 +500,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                     adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY).n_cats_per_key,
                 )
             )
-            if adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)["field_keys"][i] not in ignore_categories
+            if adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)["field_keys"][i] not in ignore_covariates
         ]
 
         model.to_device(device)
@@ -520,14 +524,14 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
         model.module.load_state_dict(load_state_dict)
 
-        # freeze everything but the condition_layer in condMLPs
-        if freeze:
+        # freeze everything but the embeddings that have new categories
+        if freeze is True:
             for _, par in model.module.named_parameters():
                 par.requires_grad = False
             for i, embed in enumerate(model.module.cat_covariate_embeddings):
                 if num_of_cat_to_add[i] > 0:  # unfreeze the ones where categories were added
                     embed.weight.requires_grad = True
-            if model.module.integrate_on_idx:
+            if model.module.integrate_on_idx is not None:
                 model.module.theta.requires_grad = True
 
         model.module.eval()

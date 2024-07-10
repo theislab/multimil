@@ -215,33 +215,33 @@ class MultiVAETorch(BaseModuleClass):
         self.logvars = [nn.Linear(z_dim, z_dim) for _ in self.input_dims]
 
         self.cat_covariate_embeddings = [nn.Embedding(dim, cond_dim) for dim in cat_covariate_dims]
-        self.cont_covariate_embeddings = nn.Embedding(self.n_cont_cov, cond_dim)
-
-        if self.cont_cov_type == "mlp":
-            self.cont_covariate_curves = torch.nn.ModuleList()
-            for _ in range(self.n_cont_cov):
-                n_input = n_hidden_cont_embed if self.n_layers_cont_embed > 1 else 1
-                self.cont_covariate_curves.append(
-                    nn.Sequential(
-                        MLP(
-                            n_input=1,
-                            n_output=n_hidden_cont_embed,
-                            n_layers=self.n_layers_cont_embed - 1,
-                            n_hidden=n_hidden_cont_embed,
-                            dropout_rate=dropout,
-                            normalization=normalization,
-                            activation=self.activation,
-                        ),
-                        nn.Linear(n_input, 1),
+        if self.n_cont_cov > 0:
+            self.cont_covariate_embeddings = nn.Embedding(self.n_cont_cov, cond_dim)
+            if self.cont_cov_type == "mlp":
+                self.cont_covariate_curves = torch.nn.ModuleList()
+                for _ in range(self.n_cont_cov):
+                    n_input = n_hidden_cont_embed if self.n_layers_cont_embed > 1 else 1
+                    self.cont_covariate_curves.append(
+                        nn.Sequential(
+                            MLP(
+                                n_input=1,
+                                n_output=n_hidden_cont_embed,
+                                n_layers=self.n_layers_cont_embed - 1,
+                                n_hidden=n_hidden_cont_embed,
+                                dropout_rate=dropout,
+                                normalization=normalization,
+                                activation=self.activation,
+                            ),
+                            nn.Linear(n_input, 1),
+                        )
+                        if self.n_layers_cont_embed > 1
+                        else nn.Linear(n_input, 1)
                     )
-                    if self.n_layers_cont_embed > 1
-                    else nn.Linear(n_input, 1)
+            else:
+                self.cont_covariate_curves = GeneralizedSigmoid(
+                    dim=self.n_cont_cov,
+                    nonlin=self.cont_cov_type,
                 )
-        else:
-            self.cont_covariate_curves = GeneralizedSigmoid(
-                dim=self.n_cont_cov,
-                nonlin=self.cont_cov_type,
-            )
 
         # register sub-modules
         for i, (enc, dec, mu, logvar) in enumerate(zip(self.encoders, self.decoders, self.mus, self.logvars)):
@@ -437,8 +437,7 @@ class MultiVAETorch(BaseModuleClass):
                 cat_embedds = torch.Tensor().to(self.device)
 
             if self.n_cont_cov > 0:
-                if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
-                    # raise RuntimeError("cont_covs.shape[-1] != self.n_cont_cov") # still can happen when query to ref
+                if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors TODO check if still needed
                     cont_covs = cont_covs[:, 0 : self.n_cont_cov]
                 cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
             else:

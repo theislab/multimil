@@ -79,11 +79,12 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         super().__init__(adata)
         # TODO figure out what's happening with sample_in_vae
 
-        ignore_categories = []
+        # add prediction covariates to ignore_covariates_vae
+        ignore_covariates_vae = []
         if sample_in_vae is False:
-            ignore_categories.append(sample_key)
+            ignore_covariates_vae.append(sample_key)
         for key in classification + ordinal_regression + regression:
-                ignore_categories.append(key)
+                ignore_covariates_vae.append(key)
 
         setup_args = self.adata_manager.registry["setup_args"]
         setup_args.pop('ordinal_regression_order')
@@ -93,7 +94,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         )
         # TODO check if need/can set self.multivae.adata = None
 
-        # TODO check if need to add ignore_categories here
         self.multivae = MultiVAE(
             adata=adata,
             integrate_on=integrate_on,
@@ -116,8 +116,20 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             mmd=mmd,
             activation=activation,
             initialization=initialization,
-            ignore_categories=ignore_categories,
+            ignore_covariates=ignore_covariates_vae,
         )
+
+        # add all actual categorical covariates to ignore_covariates_mil
+        ignore_covariates_mil = []
+        if self.adata_manager.registry["setup_args"]["categorical_covariate_keys"] is not None:
+            for cat_name in self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
+                if cat_name not in classification + ordinal_regression + [sample_key]:
+                    ignore_covariates_mil.append(cat_name)
+        # add all actual continuous covariates to ignore_covariates_mil
+        if self.adata_manager.registry["setup_args"]["continuous_covariate_keys"] is not None:
+            for cat_name in self.adata_manager.registry["setup_args"]["continuous_covariate_keys"]:
+                if cat_name not in regression:
+                    ignore_covariates_mil.append(cat_name)
 
         setup_args = self.adata_manager.registry["setup_args"]
         setup_args.pop('batch_key')
@@ -128,9 +140,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             adata=adata,
             **setup_args,
         )
-        # TODO check if need/can set self.mil.adata = None
 
-        # TODO i think i need to add ignore categories here, so it doesn't throw a warning that the covs will be ignored
         self.mil = MILClassifier(
             adata=adata,
             sample_key=sample_key,
@@ -160,6 +170,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             initialization=initialization,
             weighted_class_loss=weighted_class_loss,
             anneal_class_loss=anneal_class_loss,
+            ignore_covariates=ignore_covariates_mil,
         )
 
         # clear up the memory
@@ -192,6 +203,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             n_hidden_cont_embed=n_hidden_cont_embed,
             cat_covariate_dims=self.multivae.cat_covariate_dims,
             cont_covariate_dims=self.multivae.cont_covariate_dims,
+            cat_cov_idx=self.multivae.cat_covs_idx,
+            cont_cov_idx=self.multivae.cont_covs_idx,
             cont_cov_type=cont_cov_type,
             mmd=mmd,
             # mil
@@ -651,10 +664,11 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def load_query_data(
         cls,
         adata: AnnData,
-        use_prediction_labels: bool,
+        # use_prediction_labels: bool,
         reference_model: BaseModelClass,
         use_gpu: Optional[Union[str, int, bool]] = None,
         freeze: bool = True,
+        ignore_covariates: Optional[List[str]] = None,
     ):
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -691,6 +705,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
                 "Cannot load the original setup."
             )
 
+        # TODO need to make sure that the og registry is saved and not the one after the mil model init
+        print(registry[_SETUP_ARGS_KEY])
+
         cls.setup_anndata(
             adata,
             source_registry=registry,
@@ -703,9 +720,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
         # adata_manager = model.get_anndata_manager(adata, required=True)
 
-        ignore_categories = []
+        ignore_covariates = []
         if not reference_model.patient_in_vae:
-            ignore_categories = [reference_model.patient_column]
+            ignore_covariates = [reference_model.patient_column]
 
         ref_adata = reference_model.adata.copy()
         setup_args = reference_model.adata_manager.registry["setup_args"].copy()
@@ -732,7 +749,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             cont_cov_type=reference_model.module.vae.cont_cov_type,
             n_hidden_cont_embed=reference_model.module.vae.n_hidden_cont_embed,
             n_layers_cont_embed=reference_model.module.vae.n_layers_cont_embed,
-            ignore_categories=ignore_categories + reference_model.classification
+            ignore_covariates=ignore_covariates + reference_model.classification
             + reference_model.regression
             + reference_model.ordinal_regression,
         )
@@ -745,7 +762,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             reference_model=vae,
             use_gpu=use_gpu,
             freeze=freeze,
-            ignore_categories=reference_model.classification
+            ignore_covariates=reference_model.classification
             + reference_model.regression
             + reference_model.ordinal_regression,
         )
@@ -761,32 +778,32 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
                 if "vae" not in name:
                     p.requires_grad = False
         # if there are prediction labels in the query
-        if use_prediction_labels is True:
-            new_state_dict = model.module.state_dict()
-            for key, load_ten in load_state_dict.items():  # load_state_dict = old
-                if 'vae' in key: # already updated
-                    load_state_dict[key] = new_state_dict[key]
-                else: # MIL part
-                    new_ten = new_state_dict[key]
-                    if new_ten.size() == load_ten.size():
-                        continue
-                    # new categoricals changed size
-                    else:
-                        old_shape = new_ten.shape
-                        new_shape = load_ten.shape
-                        if old_shape[0] == new_shape[0]:
-                            dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
-                            fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
-                        else:
-                            dim_diff = new_ten.size()[0] - load_ten.size()[0]
-                            fixed_ten = torch.cat([load_ten, new_ten[-dim_diff:, ...]], dim=0)
-                    load_state_dict[key] = fixed_ten
+        # if use_prediction_labels is True:
+        #     new_state_dict = model.module.state_dict()
+        #     for key, load_ten in load_state_dict.items():  # load_state_dict = old
+        #         if 'vae' in key: # already updated
+        #             load_state_dict[key] = new_state_dict[key]
+        #         else: # MIL part
+        #             new_ten = new_state_dict[key]
+        #             if new_ten.size() == load_ten.size():
+        #                 continue
+        #             # new categoricals changed size
+        #             else:
+        #                 old_shape = new_ten.shape
+        #                 new_shape = load_ten.shape
+        #                 if old_shape[0] == new_shape[0]:
+        #                     dim_diff = new_ten.size()[-1] - load_ten.size()[-1]
+        #                     fixed_ten = torch.cat([load_ten, new_ten[..., -dim_diff:]], dim=-1)
+        #                 else:
+        #                     dim_diff = new_ten.size()[0] - load_ten.size()[0]
+        #                     fixed_ten = torch.cat([load_ten, new_ten[-dim_diff:, ...]], dim=0)
+        #             load_state_dict[key] = fixed_ten
 
-            model.module.load_state_dict(load_state_dict)
+        #     model.module.load_state_dict(load_state_dict)
 
-                # unfreeze last classifier layer
-            model.module.classifiers[-1].weight.requires_grad = True
-            model.module.classifiers[-1].bias.requires_grad = True
+        #         # unfreeze last classifier layer
+        #     model.module.classifiers[-1].weight.requires_grad = True
+        #     model.module.classifiers[-1].bias.requires_grad = True
 
         model.module.eval()
         model.is_trained_ = False
