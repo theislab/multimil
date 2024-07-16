@@ -148,29 +148,14 @@ class MILClassifierTorch(BaseModuleClass):
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
-
-        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-        input_dict = {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
-        return input_dict
+        return  {"x": x}
 
     def _get_generative_input(self, tensors, inference_outputs):
         z_joint = inference_outputs["z_joint"]
-
-        cont_key = REGISTRY_KEYS.CONT_COVS_KEY
-        cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
-
-        cat_key = REGISTRY_KEYS.CAT_COVS_KEY
-        cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-        return {"z_joint": z_joint, "cat_covs": cat_covs, "cont_covs": cont_covs}
+        return {"z_joint": z_joint}
 
     @auto_move_data
-    def inference(self, x, cat_covs, cont_covs):
+    def inference(self, x):
         z_joint = x
         inference_outputs = {"z_joint": z_joint}
 
@@ -206,7 +191,7 @@ class MILClassifierTorch(BaseModuleClass):
         return inference_outputs  # z_joint, mu, logvar, predictions
 
     @auto_move_data
-    def generative(self, z_joint, cat_covs, cont_covs):
+    def generative(self, z_joint):
         return z_joint
 
     def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):

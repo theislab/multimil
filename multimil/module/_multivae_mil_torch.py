@@ -120,9 +120,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
             scoring=scoring,
             attn_dim=attn_dim,
         )
-        
-        # self.cat_covs_idx = torch.tensor(cat_covs_idx)
-        # self.cont_covs_idx = torch.tensor(cont_covs_idx)
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -133,8 +130,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
-        input_dict = {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
-        return input_dict
+        return {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
 
     def _get_generative_input(self, tensors, inference_outputs):
         z_joint = inference_outputs["z_joint"]
@@ -149,34 +145,17 @@ class MultiVAETorch_MIL(BaseModuleClass):
 
     @auto_move_data
     def inference(self, x, cat_covs, cont_covs):
-
-
-        # TODO move index select to inside vae_module inference, same for generative
         # VAE part
-        # if len(self.cont_covs_idx) > 0:
-        #     cont_covs = torch.index_select(
-        #         cont_covs, 1, self.cont_covs_idx.to(self.device)
-        #     )
-        # if len(self.cat_covs_idx) > 0:
-        #     cat_covs = torch.index_select(cat_covs, 1, self.cat_covs_idx.to(self.device))
-
         inference_outputs = self.vae_module.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs["z_joint"]
         
         # MIL part
-        # TODO check if can remove cat_covs and cont_covs from here and from signature 
-        mil_inference_outputs = self.mil_module.inference(z_joint, cat_covs, cont_covs)
+        mil_inference_outputs = self.mil_module.inference(z_joint)
         inference_outputs.update(mil_inference_outputs)
         return inference_outputs  # z_joint, mu, logvar, z_marginal, predictions
 
     @auto_move_data
     def generative(self, z_joint, cat_covs, cont_covs):
-        # if len(self.cont_covs_idx) > 0:
-        #     cont_covs = torch.index_select(
-        #         cont_covs, 1, self.cont_covs_idx.to(self.device)
-        #     )
-        # if len(self.cat_covs_idx) > 0:
-        #     cat_covs = torch.index_select(cat_covs, 1, self.cat_covs_idx.to(self.device))
         return self.vae_module.generative(z_joint, cat_covs, cont_covs)
 
     def loss(

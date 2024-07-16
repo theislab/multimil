@@ -316,8 +316,7 @@ class MultiVAETorch(BaseModuleClass):
         cat_key = REGISTRY_KEYS.CAT_COVS_KEY
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
-        input_dict = {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
-        return input_dict
+        return {"x": x, "cat_covs": cat_covs, "cont_covs": cont_covs}
 
     def _get_generative_input(self, tensors, inference_outputs):
         z_joint = inference_outputs["z_joint"]
