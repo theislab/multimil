@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 
 from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
 from ..module import MILClassifierTorch
-from ..utils import create_df
+from ..utils import create_df, setup_ordinal_regression
 from typing import List, Optional, Union, Dict
 from math import ceil
 from scvi.model.base import BaseModelClass, ArchesMixin
@@ -334,25 +334,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             Dictionary with regression classes as keys and order of classes as values
         """
 
-        # TODO make sure not to assume categorical columns for ordinal regression -> change to np.unique if needed
-        if ordinal_regression_order is not None:
-            if not set(ordinal_regression_order.keys()).issubset(
-                categorical_covariate_keys
-            ):
-                raise ValueError(
-                    f"All keys {ordinal_regression_order.keys()} has to be registered as categorical covariates too, but categorical_covariate_keys = {categorical_covariate_keys}"
-                )
-            for key in ordinal_regression_order.keys():
-                adata.obs[key] = adata.obs[key].astype("category")
-                if set(adata.obs[key].cat.categories) != set(
-                    ordinal_regression_order[key]
-                ):
-                    raise ValueError(
-                        f"Categories of adata.obs[{key}]={adata.obs[key].cat.categories} are not the same as categories specified = {ordinal_regression_order[key]}"
-                    )
-                adata.obs[key] = adata.obs[key].cat.reorder_categories(
-                    ordinal_regression_order[key]
-                )
+        setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
         setup_method_args = cls._get_setup_method_args(**locals())
 

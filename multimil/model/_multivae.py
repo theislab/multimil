@@ -4,7 +4,7 @@ from typing import Dict, List, Literal, Optional, Union
 
 import anndata as ad
 import pandas as pd
-import scipy
+
 import torch
 from matplotlib import pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -21,6 +21,7 @@ from scvi.train._callbacks import SaveBestState
 
 from ..dataloaders import GroupDataSplitter
 from ..module import MultiVAETorch
+from ..utils import calculate_size_factor
 
 logger = logging.getLogger(__name__)
 
@@ -383,15 +384,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         :param continuous_covariate_keys:
             Keys in `adata.obs` that correspond to continuous data
         """
-        # TODO check that organize_multiome_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
-
-        if size_factor_key is not None and rna_indices_end is not None:
-            raise ValueError(
-                "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
-            )
-        # TODO change to when both are None, use all input features to calculate the size factors, add warning 
-        if size_factor_key is None and rna_indices_end is None:
-            raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
@@ -404,16 +396,9 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             fields.CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
             fields.NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]
+        size_factor_key = calculate_size_factor(adata, size_factor_key, rna_indices_end)
+        anndata_fields.append(fields.NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key))
 
-        # only one can be not None
-        if size_factor_key is not None:
-            anndata_fields.append(fields.NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key))
-        if rna_indices_end is not None:
-            if scipy.sparse.issparse(adata.X):
-                adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
-            else:
-                adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.sum(1).T.tolist()
-            anndata_fields.append(fields.NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, "size_factors"))
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)

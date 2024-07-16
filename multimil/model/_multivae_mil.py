@@ -10,7 +10,7 @@ import warnings
 from ..model import MultiVAE, MILClassifier
 from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
 from ..module import MultiVAETorch_MIL
-from ..utils import create_df
+from ..utils import create_df, calculate_size_factor, setup_ordinal_regression
 from typing import List, Optional, Union, Dict
 from math import ceil
 from scvi.model.base import BaseModelClass, ArchesMixin
@@ -393,31 +393,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             Dictionary with regression classes as keys and order of classes as values
         """
 
-        # TODO duplicate code here and in _multivae.py, move to function
-        if ordinal_regression_order is not None:
-            if not set(ordinal_regression_order.keys()).issubset(
-                categorical_covariate_keys
-            ):
-                raise ValueError(
-                    f"All keys {ordinal_regression_order.keys()} has to be registered as categorical covariates too, but categorical_covariate_keys = {categorical_covariate_keys}"
-                )
-            for key in ordinal_regression_order.keys():
-                adata.obs[key] = adata.obs[key].astype("category")
-                if set(adata.obs[key].cat.categories) != set(
-                    ordinal_regression_order[key]
-                ):
-                    raise ValueError(
-                        f"Categories of adata.obs[{key}]={adata.obs[key].cat.categories} are not the same as categories specified = {ordinal_regression_order[key]}"
-                    )
-                adata.obs[key] = adata.obs[key].cat.reorder_categories(
-                    ordinal_regression_order[key]
-                )
-
-        if size_factor_key is not None and rna_indices_end is not None:
-            raise ValueError("Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`.")
-        # TODO change to when both are None, use all input features to calculate the size factors, add warning 
-        if size_factor_key is None and rna_indices_end is None:
-            raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
+        setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
@@ -431,21 +407,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
                 REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
             ),
         ]
+        size_factor_key = calculate_size_factor(adata, size_factor_key, rna_indices_end)
+        anndata_fields.append(fields.NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key))
 
-        # only one can be not None
-        if size_factor_key is not None:
-            anndata_fields.append(fields.NumericalObsField(
-                REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key
-            ))
-
-        if rna_indices_end is not None:
-            if scipy.sparse.issparse(adata.X):
-                adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
-            else:
-                adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.sum(1).T.tolist()
-            anndata_fields.append(fields.NumericalObsField(
-                REGISTRY_KEYS.SIZE_FACTOR_KEY, "size_factors"
-            ))
         adata_manager = AnnDataManager(
             fields=anndata_fields, setup_method_args=setup_method_args
         )
