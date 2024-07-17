@@ -656,3 +656,11 @@ class MultiVAETorch(BaseModuleClass):
             return torch.cat(embeddings, 1) @ self.cont_covariate_embeddings.weight
         else:
             return self.cont_covariate_curves(covs) @ self.cont_covariate_embeddings.weight
+        
+    def select_losses_to_plot(self):
+        loss_names = ["kl_local", "elbo", "reconstruction_loss"]
+        for i in range(self.n_modality):
+            loss_names.append(f"modality_{i}_reconstruction_loss")
+        if self.loss_coefs["integ"] != 0:
+            loss_names.append("integ_loss")
+        return loss_names

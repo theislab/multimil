@@ -1,12 +1,10 @@
 import logging
-from math import ceil
 from typing import Dict, List, Literal, Optional, Union
 
 import anndata as ad
 import pandas as pd
 
 import torch
-from matplotlib import pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
 from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
@@ -21,7 +19,7 @@ from scvi.train._callbacks import SaveBestState
 
 from ..dataloaders import GroupDataSplitter
 from ..module import MultiVAETorch
-from ..utils import calculate_size_factor
+from ..utils import calculate_size_factor, plt_plot_losses
 
 logger = logging.getLogger(__name__)
 
@@ -404,33 +402,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         cls.register_manager(adata_manager)
 
     def plot_losses(self, save=None):
-        """Plot losses."""
-        df = pd.DataFrame(self.history["train_loss_epoch"])
-        for key in self.history.keys():
-            if key != "train_loss_epoch":
-                df = df.join(self.history[key])
-
-        df["epoch"] = df.index
-
-        loss_names = ["kl_local", "elbo", "reconstruction_loss"]
-        for i in range(self.module.n_modality):
-            loss_names.append(f"modality_{i}_reconstruction_loss")
-
-        if self.module.loss_coefs["integ"] != 0:
-            loss_names.append("integ_loss")
-
-        nrows = ceil(len(loss_names) / 2)
-
-        plt.figure(figsize=(15, 5 * nrows))
-
-        for i, name in enumerate(loss_names):
-            plt.subplot(nrows, 2, i + 1)
-            plt.plot(df["epoch"], df[name + "_train"], ".-", label=name + "_train")
-            plt.plot(df["epoch"], df[name + "_validation"], ".-", label=name + "_validation")
-            plt.xlabel("epoch")
-            plt.legend()
-        if save is not None:
-            plt.savefig(save, bbox_inches="tight")
+        loss_names = self.module.select_losses_to_plot()
+        plt_plot_losses(self.history, loss_names, save)
 
     # adjusted from scvi-tools
     # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/model/base/_archesmixin.py#L30

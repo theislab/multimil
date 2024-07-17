@@ -129,7 +129,11 @@ def save_predictions_in_adata(adata, idx, predictions, bag_pred, bag_true, cell_
         else:
             adata.uns[f"bag_full_predictions_{name}"] = df_bag.to_numpy()
 
-def plt_plot_losses(df, loss_names, save):
+def plt_plot_losses(history, loss_names, save):
+    df = pd.concat(history, axis=1)
+    df.columns = df.columns.droplevel(-1)
+    df["epoch"] = df.index
+
     nrows = ceil(len(loss_names) / 2)
 
     plt.figure(figsize=(15, 5 * nrows))

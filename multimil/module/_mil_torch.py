@@ -311,6 +311,16 @@ class MILClassifierTorch(BaseModuleClass):
             extra_metrics=extra_metrics,
         )
 
+    def select_losses_to_plot(self):
+        loss_names = []
+        if self.class_loss_coef != 0 and len(self.class_idx) > 0:
+            loss_names.extend(["class_loss", "accuracy"])
+        if self.regression_loss_coef != 0 and len(self.reg_idx) > 0:
+            loss_names.append("regression_loss")
+        if self.regression_loss_coef != 0 and len(self.ord_idx) > 0:
+            loss_names.extend(["regression_loss", "accuracy"])
+        return loss_names
+
     @torch.inference_mode()
     def sample(self, tensors, n_samples=1):
         return self.vae.sample(tensors, n_samples)

@@ -2,15 +2,12 @@ import torch
 import logging
 import pandas as pd
 import anndata as ad
-import numpy as np
 import warnings
-from matplotlib import pyplot as plt
 
 from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
 from ..module import MILClassifierTorch
-from ..utils import create_df, setup_ordinal_regression, select_covariates, prep_minibatch, get_predictions, get_bag_info, save_predictions_in_adata
+from ..utils import setup_ordinal_regression, select_covariates, prep_minibatch, get_predictions, get_bag_info, save_predictions_in_adata, plt_plot_losses
 from typing import List, Optional, Union, Dict
-from math import ceil
 from scvi.model.base import BaseModelClass, ArchesMixin
 from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.train._callbacks import SaveBestState
@@ -449,36 +446,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
      
     def plot_losses(self, save=None):
         """Plot losses."""
-        df = pd.DataFrame(self.history["train_loss_epoch"])
-        for key in self.history.keys():
-            if key != "train_loss_epoch":
-                df = df.join(self.history[key])
-
-        df["epoch"] = df.index
-
-        loss_names = []
-
-        if self.module.class_loss_coef != 0 and len(self.module.class_idx) > 0:
-            loss_names.extend(["class_loss", "accuracy"])
-        
-        if self.module.regression_loss_coef != 0 and len(self.module.reg_idx) > 0:
-            loss_names.append("regression_loss")
-
-        if self.module.regression_loss_coef != 0 and len(self.module.ord_idx) > 0:
-            loss_names.extend(["regression_loss", "accuracy"])
-
-        nrows = ceil(len(loss_names) / 2)
-
-        plt.figure(figsize=(15, 5 * nrows))
-
-        for i, name in enumerate(loss_names):
-            plt.subplot(nrows, 2, i + 1)
-            plt.plot(df["epoch"], df[name + "_train"], ".-", label=name + "_train")
-            plt.plot(df["epoch"], df[name + "_validation"], ".-", label=name + "_validation")
-            plt.xlabel("epoch")
-            plt.legend()
-        if save is not None:
-            plt.savefig(save, bbox_inches="tight")
+        loss_names = self.module.select_losses_to_plot()
+        plt_plot_losses(self.history, loss_names, save)
 
     # adjusted from scvi-tools
     # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/model/base/_archesmixin.py#L30
@@ -505,12 +474,12 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             Whether to freeze the encoders and decoders and only train the new weights
         """
 
-        # TODO I think currently this function works only if the prediction cov is present in the .obs of the query
-        # need to allow it to be missing, check
+        # currently this function works only if the prediction cov is present in the .obs of the query
+        # TODO need to allow it to be missing, maybe add a dummy column to .obs of query adata
 
         _, _, device = parse_use_gpu_arg(use_gpu)
 
-        attr_dict, var_names, load_state_dict = _get_loaded_data(
+        attr_dict, _, _ = _get_loaded_data(
             reference_model, device=device
         )
 
