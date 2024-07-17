@@ -10,7 +10,7 @@ import warnings
 from ..model import MultiVAE, MILClassifier
 from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
 from ..module import MultiVAETorch_MIL
-from ..utils import create_df, calculate_size_factor, setup_ordinal_regression
+from ..utils import create_df, calculate_size_factor, setup_ordinal_regression, select_covariates, prep_minibatch, get_predictions, get_bag_info, save_predictions_in_adata
 from typing import List, Optional, Union, Dict
 from math import ceil
 from scvi.model.base import BaseModelClass, ArchesMixin
@@ -438,8 +438,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             drop_last=False,
         )
 
-        # TODO duplicate code with _mil.py, move to function
-        latent, cell_level_attn = [], []
+        latent, cell_level_attn, bags = [], [], []
         class_pred, ord_pred, reg_pred = {}, {}, {}
         (
             bag_class_true,
@@ -450,6 +449,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             bag_ord_pred,
         ) = ({}, {}, {}, {}, {}, {})
 
+        bag_counter = 0
+        cell_counter = 0
+
         for tensors in scdl:
 
             cont_key = REGISTRY_KEYS.CONT_COVS_KEY
@@ -457,129 +459,54 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
             cat_key = REGISTRY_KEYS.CAT_COVS_KEY
             cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-
-            batch_size = cat_covs.shape[0]
-
-            idx = list(
-                range(
-                    self.module.mil_module.sample_batch_size,
-                    batch_size,
-                    self.module.mil_module.sample_batch_size,
-                )
-            )
-            if (
-                batch_size % self.module.mil_module.sample_batch_size != 0
-            ):  # can only happen during inference for last batches for each sample
-                idx = []
-
-            if len(self.mil.regression_idx) > 0:
-                regression = torch.index_select(cont_covs, 1, self.mil.regression_idx)
-                regression = regression.view(
-                    len(idx) + 1, -1, len(self.mil.regression_idx)
-                )[:, 0, :]
-
-            if len(self.mil.ord_idx) > 0:
-                ordinal_regression = torch.index_select(cat_covs, 1, self.mil.ord_idx)
-                ordinal_regression = ordinal_regression.view(
-                    len(idx) + 1, -1, len(self.mil.ord_idx)
-                )[:, 0, :]
-            if len(self.mil.class_idx) > 0:
-                classification = torch.index_select(cat_covs, 1, self.mil.class_idx)
-                classification = classification.view(
-                    len(idx) + 1, -1, len(self.mil.class_idx)
-                )[:, 0, :]
-
+            
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
             z = outputs["z_joint"]
             pred = outputs["predictions"]
+
+            latent += [z.cpu()]
+
             cell_attn = self.module.mil_module.cell_level_aggregator[-1].A.squeeze(dim=1)
-            size = cell_attn.shape[-1]
+            sample_size = cell_attn.shape[-1]
             cell_attn = (
                 cell_attn.flatten()
             )  # in inference always one patient per batch
-
-            for i in range(len(self.mil.class_idx)):
-                bag_class_pred[i] = bag_class_pred.get(i, []) + [pred[i].cpu()]
-                bag_class_true[i] = bag_class_true.get(i, []) + [
-                    classification[:, i].cpu()
-                ]
-                class_pred[i] = class_pred.get(i, []) + [
-                    pred[i].unsqueeze(1).repeat(1, size, 1).flatten(0, 1)
-                ]
-            for i in range(len(self.mil.ord_idx)):
-                bag_ord_pred[i] = bag_ord_pred.get(i, []) + [
-                    pred[len(self.mil.class_idx) + i]
-                ]
-                bag_ord_true[i] = bag_ord_true.get(i, []) + [
-                    ordinal_regression[:, i].cpu()
-                ]
-                ord_pred[i] = ord_pred.get(i, []) + [
-                    pred[len(self.mil.class_idx) + i].repeat(1, size).flatten()
-                ]
-            for i in range(len(self.mil.regression_idx)):
-                bag_reg_pred[i] = bag_reg_pred.get(i, []) + [
-                    pred[len(self.mil.class_idx) + len(self.mil.ord_idx) + i].cpu()
-                ]
-                bag_reg_true[i] = bag_reg_true.get(i, []) + [regression[:, i].cpu()]
-                reg_pred[i] = reg_pred.get(i, []) + [
-                    pred[len(self.mil.class_idx) + len(self.mil.ord_idx) + i]
-                    .repeat(1, size)
-                    .flatten()
-                ]
-
-            latent += [z.cpu()]
             cell_level_attn += [cell_attn.cpu()]
+
+            minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.module.mil_module.sample_batch_size)
+            regression = select_covariates(cont_covs, self.mil.regression_idx, n_samples_in_batch)
+            ordinal_regression = select_covariates(cat_covs, self.mil.ord_idx, n_samples_in_batch)
+            classification = select_covariates(cat_covs, self.mil.class_idx, n_samples_in_batch)
+
+            bag_class_pred, bag_class_true, class_pred = get_predictions(self.mil.class_idx, pred, classification, sample_size, bag_class_pred, bag_class_true, class_pred)
+            bag_ord_pred, bag_ord_true, ord_pred = get_predictions(self.mil.ord_idx, pred, ordinal_regression, sample_size, bag_ord_pred, bag_ord_true, ord_pred, len(self.mil.class_idx))
+            bag_reg_pred, bag_reg_true, reg_pred = get_predictions(self.mil.regression_idx, pred, regression, sample_size, bag_reg_pred, bag_reg_true, reg_pred, len(self.mil.class_idx) + len(self.mil.ord_idx))
+
+            bags, cell_counter, bag_counter = get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, self.module.mil_module.sample_batch_size)
+            
 
         latent = torch.cat(latent).numpy()
         cell_level = torch.cat(cell_level_attn).numpy()
 
         adata.obsm["X_multiMIL"] = latent
         adata.obs["cell_attn"] = cell_level
+        flat_bags = [value for sublist in bags for value in sublist]
+        adata.obs["bags"] = flat_bags
 
         for i in range(len(self.mil.class_idx)):
             name = self.mil.classification[i]
-            classes = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            df = create_df(class_pred[i], classes, index=adata.obs_names)
-            adata.obsm[f"classification_predictions_{name}"] = df
-            adata.obs[f"predicted_{name}"] = df.to_numpy().argmax(axis=1)
-            adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype(
-                "category"
-            )
-            adata.obs[f"predicted_{name}"] = adata.obs[
-                f"predicted_{name}"
-            ].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
-            adata.uns[f"bag_classification_true_{name}"] = create_df(
-                bag_class_true, self.mil.classification
-            )
-            df_bag = create_df(bag_class_pred[i], classes)
-            adata.uns[f"bag_classification_predictions_{name}"] = df_bag
-            adata.uns[f"bag_predicted_{name}"] = df_bag.to_numpy().argmax(axis=1)
+            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
+            save_predictions_in_adata(adata, i, self.mil.classification, bag_class_pred, bag_class_true, class_pred, class_names, name, clip='argmax')
         for i in range(len(self.mil.ord_idx)):
             name = self.mil.ordinal_regression[i]
-            classes = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            df = create_df(ord_pred[i], columns=['pred_regression_value'], index=adata.obs_names)
-            adata.obsm[f"ord_regression_predictions_{name}"] = df
-            adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(classes) - 1.0)
-            adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype(int).astype("category")
-            adata.obs[f"predicted_{name}"] = adata.obs[
-                f"predicted_{name}"
-            ].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
-            adata.uns[f"bag_ord_regression_true_{name}"] = create_df(bag_ord_true, self.mil.ordinal_regression)
-            df_bag = create_df(bag_ord_pred[i], ['predicted_regression_value'])
-            adata.uns[f"bag_ord_regression_predictions_{name}"] = df_bag
-            adata.uns[f"bag_predicted_{name}"] = np.clip(np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(classes) - 1.0)
-        if len(self.mil.regression_idx) > 0:
-            adata.obsm["regression_predictions"] = create_df(
-                reg_pred, self.mil.regression, index=adata.obs_names
-            )
-            adata.uns["bag_regression_true"] = create_df(
-                bag_reg_true, self.mil.regression
-            )
-            adata.uns["bag_regression_predictions"] = create_df(
-                bag_reg_pred, self.mil.regression
-            )
-
+            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
+            save_predictions_in_adata(adata, i, self.mil.ordinal_regression, bag_ord_pred, bag_ord_true, ord_pred, class_names, name, clip='clip')
+        for i in range(len(self.mil.regression_idx)):
+            name = self.mil.regression[i]
+            reg_names = self.adata_manager.get_state_registry('extra_continuous_covs')['columns']
+            save_predictions_in_adata(adata, i, self.mil.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip='round', reg=True)
+     
     def plot_losses(self, save=None):
         """Plot losses."""
         df = pd.DataFrame(self.history["train_loss_epoch"])

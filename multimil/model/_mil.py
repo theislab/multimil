@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 
 from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
 from ..module import MILClassifierTorch
-from ..utils import create_df, setup_ordinal_regression
+from ..utils import create_df, setup_ordinal_regression, select_covariates, prep_minibatch, get_predictions, get_bag_info, save_predictions_in_adata
 from typing import List, Optional, Union, Dict
 from math import ceil
 from scvi.model.base import BaseModelClass, ArchesMixin
@@ -388,11 +388,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             bag_ord_pred,
         ) = ({}, {}, {}, {}, {}, {})
 
-        batch_start_idx = 0
-        batch_end_idx = 0
-
         bag_counter = 0
-        s = 0 # TODO rename
+        cell_counter = 0
+
         for tensors in scdl:
 
             cont_key = REGISTRY_KEYS.CONT_COVS_KEY
@@ -401,141 +399,54 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             cat_key = REGISTRY_KEYS.CAT_COVS_KEY
             cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
-            actual_batch_size = cat_covs.shape[0]
-            batch_end_idx += actual_batch_size
-
-            idx = list(
-                range(
-                    self.module.sample_batch_size,
-                    actual_batch_size,
-                    self.module.sample_batch_size,
-                )
-            ) 
-            # these batches can be any size between 1 and batch_size, this is intended
-            # as if we split them into 128, 128, 2 e.g., then stacking and forward pass would not work
-            if (
-                actual_batch_size % self.module.sample_batch_size != 0
-            ):  # can only happen during inference for last batches for each patient
-                idx = []
-            
-            if len(self.regression_idx) > 0:
-                regression = torch.index_select(cont_covs, 1, self.regression_idx)
-                regression = regression.view(
-                    len(idx) + 1, -1, len(self.regression_idx)
-                )[:, 0, :]
-
-            if len(self.ord_idx) > 0:
-                ordinal_regression = torch.index_select(cat_covs, 1, self.ord_idx)
-                ordinal_regression = ordinal_regression.view(
-                    len(idx) + 1, -1, len(self.ord_idx)
-                )[:, 0, :]
-            if len(self.class_idx) > 0:
-                classification = torch.index_select(cat_covs, 1, self.class_idx)
-                classification = classification.view(
-                    len(idx) + 1, -1, len(self.class_idx)
-                )[:, 0, :]
-
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
             pred = outputs["predictions"]
 
-            num_of_bags_in_batch = pred[0].shape[0]
-            
-            if len(idx) == 0:
-                bags += [[bag_counter] * actual_batch_size]
-                s += actual_batch_size
-                bag_counter += 1
-            else:
-                bags += [[bag_counter + i]*self.module.sample_batch_size for i in range(num_of_bags_in_batch)]
-                bag_counter += num_of_bags_in_batch
-                s += self.module.sample_batch_size * num_of_bags_in_batch
+            # get attention for each cell in the bag
             cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
-            size = cell_attn.shape[-1]
+            sample_size = cell_attn.shape[-1]
             cell_attn = (
                 cell_attn.flatten()
             )  # in inference always one patient per batch
-
-            for i in range(len(self.class_idx)):
-                bag_class_pred[i] = bag_class_pred.get(i, []) + [pred[i].cpu()]
-                bag_class_true[i] = bag_class_true.get(i, []) + [
-                    classification[:, i].cpu()
-                ]
-                class_pred[i] = class_pred.get(i, []) + [
-                    pred[i].unsqueeze(1).repeat(1, size, 1).flatten(0, 1)
-                ]
-            for i in range(len(self.ord_idx)):
-                bag_ord_pred[i] = bag_ord_pred.get(i, []) + [
-                    pred[len(self.class_idx) + i]
-                ]
-                bag_ord_true[i] = bag_ord_true.get(i, []) + [
-                    ordinal_regression[:, i].cpu()
-                ]
-                ord_pred[i] = ord_pred.get(i, []) + [
-                    pred[len(self.class_idx) + i].repeat(1, size).flatten()
-                ]
-            for i in range(len(self.regression_idx)):
-                bag_reg_pred[i] = bag_reg_pred.get(i, []) + [
-                    pred[len(self.class_idx) + len(self.ord_idx) + i].cpu()
-                ]
-                bag_reg_true[i] = bag_reg_true.get(i, []) + [regression[:, i].cpu()]
-                reg_pred[i] = reg_pred.get(i, []) + [
-                    pred[len(self.class_idx) + len(self.ord_idx) + i]
-                    .repeat(1, size)
-                    .flatten()
-                ]
-
             cell_level_attn += [cell_attn.cpu()]
-            batch_start_idx += actual_batch_size
-        
+            minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.module.sample_batch_size)
+            regression = select_covariates(cont_covs, self.regression_idx, n_samples_in_batch)
+            ordinal_regression = select_covariates(cat_covs, self.ord_idx, n_samples_in_batch)
+            classification = select_covariates(cat_covs, self.class_idx, n_samples_in_batch)
+            
+
+            # calculate accuracies of predictions
+            bag_class_pred, bag_class_true, class_pred = get_predictions(self.class_idx, pred, classification, sample_size, bag_class_pred, bag_class_true, class_pred)
+            bag_ord_pred, bag_ord_true, ord_pred = get_predictions(self.ord_idx, pred, ordinal_regression, sample_size, bag_ord_pred, bag_ord_true, ord_pred, len(self.class_idx))
+            bag_reg_pred, bag_reg_true, reg_pred = get_predictions(self.regression_idx, pred, regression, sample_size, bag_reg_pred, bag_reg_true, reg_pred, len(self.class_idx) + len(self.ord_idx))
+
+            # TODO remove n_of_bags_in_batch after testing
+            n_of_bags_in_batch = pred[0].shape[0]
+            assert n_samples_in_batch == n_of_bags_in_batch
+
+            # save bag info to be able to calculate bag predictions later
+            bags, cell_counter, bag_counter = get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, self.module.sample_batch_size)
+            
+
         cell_level = torch.cat(cell_level_attn).numpy()
-        
         adata.obs["cell_attn"] = cell_level
         flat_bags = [value for sublist in bags for value in sublist]
         adata.obs["bags"] = flat_bags
 
         for i in range(len(self.class_idx)):
             name = self.classification[i]
-            classes = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            df = create_df(class_pred[i], classes, index=adata.obs_names)
-            adata.obsm[f"classification_predictions_{name}"] = df
-            adata.obs[f"predicted_{name}"] = df.to_numpy().argmax(axis=1)
-            adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype(
-                "category"
-            )
-            adata.obs[f"predicted_{name}"] = adata.obs[
-                f"predicted_{name}"
-            ].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
-            adata.uns[f"bag_classification_true_{name}"] = create_df(bag_class_true, self.classification)
-            df_bag = create_df(bag_class_pred[i], classes)
-            adata.uns[f"bag_classification_predictions_{name}"] = df_bag
-            adata.uns[f"bag_predicted_{name}"] = df_bag.to_numpy().argmax(axis=1)
-        # TODO ord regression only tested with one label
+            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
+            save_predictions_in_adata(adata, i, self.classification, bag_class_pred, bag_class_true, class_pred, class_names, name, clip='argmax')
         for i in range(len(self.ord_idx)):
             name = self.ordinal_regression[i]
-            classes = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            df = create_df(ord_pred[i], columns=['pred_regression_value'], index=adata.obs_names)
-            adata.obsm[f"ord_regression_predictions_{name}"] = df
-            adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(classes) - 1.0)
-            adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype(int).astype("category")
-            adata.obs[f"predicted_{name}"] = adata.obs[
-                f"predicted_{name}"
-            ].cat.rename_categories({i: cl for i, cl in enumerate(classes)})
-            adata.uns[f"bag_ord_regression_true_{name}"] = create_df(bag_ord_true, self.ordinal_regression)
-            df_bag = create_df(bag_ord_pred[i], ['predicted_regression_value'])
-            adata.uns[f"bag_ord_regression_predictions_{name}"] = df_bag
-            adata.uns[f"bag_predicted_{name}"] = np.clip(np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(classes) - 1.0)
-
-        if len(self.regression_idx) > 0:
-            adata.obsm["regression_predictions"] = create_df(
-                reg_pred, self.regression, index=adata.obs_names
-            )
-            adata.uns["bag_regression_true"] = create_df(
-                bag_reg_true, self.regression
-            )
-            adata.uns["bag_regression_predictions"] = create_df(
-                bag_reg_pred, self.regression
-            )
-
+            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
+            save_predictions_in_adata(adata, i, self.ordinal_regression, bag_ord_pred, bag_ord_true, ord_pred, class_names, name, clip='clip')
+        for i in range(len(self.regression_idx)):
+            name = self.regression[i]
+            reg_names = self.adata_manager.get_state_registry('extra_continuous_covs')['columns']
+            save_predictions_in_adata(adata, i, self.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip='round', reg=True)
+     
     def plot_losses(self, save=None):
         """Plot losses."""
         df = pd.DataFrame(self.history["train_loss_epoch"])
@@ -595,7 +506,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         """
 
         # TODO I think currently this function works only if the prediction cov is present in the .obs of the query
-        # need to allow it to be missing
+        # need to allow it to be missing, check
 
         _, _, device = parse_use_gpu_arg(use_gpu)
 
