@@ -51,7 +51,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         aggr="attn", # or 'both' = attn + average (two heads)
         activation='leaky_relu', # or tanh
         initialization=None, # xavier (tanh) or kaiming (leaky_relu)
-        weighted_class_loss=False, 
         anneal_class_loss=False,
         ignore_covariates=None,
     ):
@@ -60,12 +59,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         self.sample_key = sample_key
         self.scoring = scoring
 
-        self.sample_idx = None
         if self.sample_key not in self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
                 raise ValueError(
                     f"Sample key = '{self.sample_key}' has to be one of the registered categorical covariates = {self.adata_manager.registry['setup_args']['categorical_covariate_keys']}"
                 )
-        self.sample_idx = self.adata_manager.registry["setup_args"]["categorical_covariate_keys"].index(self.sample_key)
        
         if len(classification) + len(regression) + len(ordinal_regression) == 0:
             raise ValueError(
@@ -128,17 +125,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 f'The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with the `ordinal_regression_order` parameter.'
             )
 
-        # TODO probably remove
-        # create a list with a dict per classification label with weights per class for that label
-        self.class_weights = None
-        if weighted_class_loss is True:
-            for label in self.classification:
-                self.class_weights_dict = dict(adata.obsm['_scvi_extra_categorical_covs'][label].value_counts())
-                denominator = 0.0
-                for _, n_obs_in_class in self.class_weights_dict.items():
-                    denominator += (1.0 / n_obs_in_class)
-                self.class_weights.append({name: (1 / value ) / denominator for name, value in self.class_weights_dict.items()})
-
         self.class_idx = torch.tensor(self.class_idx)
         self.ord_idx = torch.tensor(self.ord_idx)
         self.regression_idx = torch.tensor(self.regression_idx)
@@ -162,7 +148,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             n_hidden_mlp_attn=n_hidden_mlp_attn,
             class_loss_coef=class_loss_coef,
             regression_loss_coef=regression_loss_coef,
-            sample_idx=self.sample_idx,
             sample_batch_size=sample_batch_size,
             attention_dropout=attention_dropout,
             class_idx=self.class_idx,
@@ -170,7 +155,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             reg_idx=self.regression_idx,
             drop_attn=drop_attn,
             aggr=aggr,
-            class_weights=self.class_weights,
             anneal_class_loss=anneal_class_loss,
         )
 

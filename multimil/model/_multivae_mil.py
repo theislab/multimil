@@ -1,6 +1,5 @@
 import torch
 import logging
-import pandas as pd
 import anndata as ad
 import warnings
 
@@ -69,11 +68,10 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         aggr="attn", # or 'both' = attn + average (two heads)
         activation='leaky_relu', # or tanh
         initialization='kaiming', # xavier (tanh) or kaiming (leaky_relu)
-        weighted_class_loss=False, 
+        # ted_class_loss=False, 
         anneal_class_loss=False,
     ):
         super().__init__(adata)
-        # TODO check if sample_in_vae works as intended
 
         # add prediction covariates to ignore_covariates_vae
         ignore_covariates_vae = []
@@ -164,7 +162,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             aggr=aggr,
             activation=activation,
             initialization=initialization,
-            weighted_class_loss=weighted_class_loss,
             anneal_class_loss=anneal_class_loss,
             ignore_covariates=ignore_covariates_mil,
         )
@@ -217,16 +214,13 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             n_hidden_mlp_attn=n_hidden_mlp_attn,
             class_loss_coef=class_loss_coef,
             regression_loss_coef=regression_loss_coef,
-            sample_idx=self.mil.sample_idx, # TODO I think we don't need it any more
             sample_batch_size=sample_batch_size,
             attention_dropout=attention_dropout,
             class_idx=self.mil.class_idx,
             ord_idx=self.mil.ord_idx,
             reg_idx=self.mil.regression_idx,
             drop_attn=drop_attn,
-            sample_in_vae=sample_in_vae,
             aggr=aggr,
-            class_weights=self.mil.class_weights,
             anneal_class_loss=anneal_class_loss,
         )
 
@@ -576,7 +570,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
         ignore_covariates = []
         if reference_model.sample_in_vae is False:
-            ignore_covariates.append(reference_model.sample_key)
+            ignore_covariates.append(reference_model.mil.sample_key)
 
         # needed for the load_query_data to work
         reference_model.multivae.module = reference_model.module.vae_module.to(device)
@@ -633,6 +627,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         path_to_checkpoints: Optional[str] = None,
         **kwargs,
     ):
+        # TODO add a check if there are any new params added in load_query_data, i.e. if there are any new params that can be trained
         vae = self.multivae
         vae.module = self.module.vae_module
 

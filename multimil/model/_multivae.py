@@ -175,27 +175,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
         self.init_params_ = self._get_init_params(locals())
 
-    # def impute(self, target_modality, adata=None, batch_size=256):
-    #     """Impute values for the target modality."""
-    #     with torch.no_grad():
-    #         self.module.eval()
-    #         if not self.is_trained_:
-    #             raise RuntimeError("Please train the model first.")
-
-    #         adata = self._validate_anndata(adata)
-
-    #         scdl = self._make_data_loader(adata=adata, batch_size=batch_size)
-
-    #         imputed = []
-    #         for tensors in scdl:
-    #             _, generative_outputs = self.module.forward(tensors, compute_loss=False)
-
-    #             rs = generative_outputs["rs"]
-    #             r = rs[target_modality]
-    #             imputed += [r.cpu()]
-
-    #         return torch.cat(imputed).squeeze().numpy()
-
     @torch.inference_mode()
     def get_model_output(self, adata=None, batch_size=256):
         """Return the latent representation."""

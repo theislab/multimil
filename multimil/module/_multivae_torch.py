@@ -139,7 +139,7 @@ class MultiVAETorch(BaseModuleClass):
                 f'activation should be one of ["leaky_relu", "tanh"], but activation={activation} was passed.'
             )
 
-        # TODO: clean
+        # TODO: add warnings that mse is used
         if losses is None:
             self.losses = ["mse"] * self.n_modality
         elif len(losses) == self.n_modality:
@@ -365,35 +365,13 @@ class MultiVAETorch(BaseModuleClass):
         # if we want to condition encoders, i.e. concat covariates to the input
         if self.condition_encoders is True:
             
-            # TODO index select and calculation to function
-            if len(self.cat_covs_idx) > 0:
-                cat_covs = torch.index_select(cat_covs, 1, self.cat_covs_idx.to(self.device))
-                cat_embedds = [
-                        cat_covariate_embedding(covariate.long())
-                        for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)
-                    ]
-            else:
-                cat_embedds = []
-
-            if len(cat_embedds) > 0: 
-                cat_embedds = torch.cat(cat_embedds, dim=-1) # TODO check if concatenation is needed
-            else:
-                cat_embedds = torch.Tensor().to(self.device)
-
-            if len(self.cont_covs_idx) > 0:
-                cont_covs = torch.index_select(
-                    cont_covs, 1, self.cont_covs_idx.to(self.device)
-                )
-                if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
-                    cont_covs = cont_covs[:, 0 : self.n_cont_cov]
-                cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
-            else:
-                cont_embedds = torch.Tensor().to(self.device)
+            cat_embedds = self._select_cat_covariates(cat_covs)
+            cont_embedds = self._select_cont_covariates(cont_covs)
 
             # concatenate input with categorical and continuous covariates
             xs = [
                 torch.cat([x, cat_embedds, cont_embedds], dim=-1) for x in xs
-            ]  # concat embedding to each modality x along the feature axis
+            ]  # concat input to each modality x along the feature axis
 
         # TODO don't forward if mask is 0 for that dataset for that modality
         # hs = hidden state that we get after the encoder but before calculating mu and logvar for each modality
@@ -433,30 +411,8 @@ class MultiVAETorch(BaseModuleClass):
         zs = torch.split(z, 1, dim=1)
 
         if self.condition_decoders is True:
-
-            if len(self.cat_covs_idx) > 0:
-                cat_covs = torch.index_select(cat_covs, 1, self.cat_covs_idx.to(self.device))
-                cat_embedds = [
-                    cat_covariate_embedding(covariate.long())
-                    for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)
-                ]
-            else:
-                cat_embedds = []
-
-            if len(cat_embedds) > 0:
-                cat_embedds = torch.cat(cat_embedds, dim=-1)
-            else:
-                cat_embedds = torch.Tensor().to(self.device)
-
-            if len(self.cont_covs_idx) > 0:
-                cont_covs = torch.index_select(
-                    cont_covs, 1, self.cont_covs_idx.to(self.device)
-                )
-                if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors TODO check if still needed
-                    cont_covs = cont_covs[:, 0 : self.n_cont_cov]
-                cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
-            else:
-                cont_embedds = torch.Tensor().to(self.device)
+            cat_embedds = self._select_cat_covariates(cat_covs)
+            cont_embedds = self._select_cont_covariates(cont_covs)
 
             zs = [
                 torch.cat([z.squeeze(1), cat_embedds, cont_embedds], dim=-1) for z in zs
@@ -464,6 +420,34 @@ class MultiVAETorch(BaseModuleClass):
 
         rs = [self._h_to_x(z, mod) for mod, z in enumerate(zs)]
         return {"rs": rs}
+
+    def _select_cat_covariates(self, cat_covs):
+        if len(self.cat_covs_idx) > 0:
+            cat_covs = torch.index_select(cat_covs, 1, self.cat_covs_idx.to(self.device))
+            cat_embedds = [
+                    cat_covariate_embedding(covariate.long())
+                    for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)
+                ]
+        else:
+            cat_embedds = []
+
+        if len(cat_embedds) > 0: 
+            cat_embedds = torch.cat(cat_embedds, dim=-1) # TODO check if concatenation is needed
+        else:
+            cat_embedds = torch.Tensor().to(self.device)
+        return cat_embedds
+
+    def _select_cont_covariates(self, cont_covs):
+        if len(self.cont_covs_idx) > 0:
+            cont_covs = torch.index_select(
+                cont_covs, 1, self.cont_covs_idx.to(self.device)
+            )
+            if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
+                cont_covs = cont_covs[:, 0 : self.n_cont_cov]
+            cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
+        else:
+            cont_embedds = torch.Tensor().to(self.device)
+        return cont_embedds
 
     def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
         x = tensors[REGISTRY_KEYS.X_KEY]

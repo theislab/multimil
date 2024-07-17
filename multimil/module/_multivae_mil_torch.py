@@ -1,5 +1,3 @@
-import torch
-
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi import REGISTRY_KEYS
 
@@ -25,7 +23,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
         n_layers_decoders=None,
         n_hidden_encoders=None,
         n_hidden_decoders=None,
-        sample_idx=None,
         num_classification_classes=[],  # number of classes for each of the classification task
         scoring="gated_attn",
         attn_dim=16,
@@ -53,11 +50,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference
         drop_attn=False,
         mmd="latent",
-        sample_in_vae=True,
         aggr="attn",
         activation='leaky_relu',
         initialization=None,
-        class_weights=None,
         anneal_class_loss=False,
     ):
         super().__init__()
@@ -105,13 +100,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
             regression_loss_coef=regression_loss_coef,
             sample_batch_size=sample_batch_size,
             aggr=aggr,
-            class_weights=class_weights,
             anneal_class_loss=anneal_class_loss,
             num_classification_classes=num_classification_classes,
             class_idx=class_idx,
             ord_idx=ord_idx,
             reg_idx=reg_idx,
-            sample_idx=sample_idx,
             drop_attn=drop_attn,
             attention_dropout=attention_dropout,
             activation=activation,

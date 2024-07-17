@@ -6,6 +6,7 @@ from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi import REGISTRY_KEYS
 
 from ..nn import MLP, Aggregator
+from ..utils import prep_minibatch, select_covariates
 
 
 class MILClassifierTorch(BaseModuleClass):
@@ -14,7 +15,6 @@ class MILClassifierTorch(BaseModuleClass):
         z_dim=16,
         dropout=0.2,
         normalization="layer",
-        sample_idx=None,
         num_classification_classes=[],  # number of classes for each of the classification task
         scoring="gated_attn",
         attn_dim=16,
@@ -37,7 +37,6 @@ class MILClassifierTorch(BaseModuleClass):
         aggr="attn",
         activation='leaky_relu',
         initialization=None,
-        class_weights=None,
         anneal_class_loss=False,
     ):
         super().__init__()
@@ -53,10 +52,8 @@ class MILClassifierTorch(BaseModuleClass):
 
         self.class_loss_coef = class_loss_coef
         self.regression_loss_coef = regression_loss_coef
-        self.sample_idx = sample_idx
         self.sample_batch_size = sample_batch_size
         self.aggr = aggr
-        self.class_weights = class_weights
         self.anneal_class_loss = anneal_class_loss
         self.num_classification_classes = num_classification_classes
         self.class_idx = class_idx
@@ -204,39 +201,11 @@ class MILClassifierTorch(BaseModuleClass):
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
         # MIL classification loss
-        batch_size = x.shape[0]
-        # keep indices of the start positions of samples in the batch (but not the first)
-        idx = list(
-            range(self.sample_batch_size, batch_size, self.sample_batch_size)
-        ) 
-        if (
-            batch_size % self.sample_batch_size != 0
-        ):  # can only happen during inference for last batches for each sample
-            idx = []
+        minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.sample_batch_size)
+        regression = select_covariates(cont_covs, self.reg_idx.to(self.device), n_samples_in_batch)
+        ordinal_regression = select_covariates(cat_covs, self.ord_idx.to(self.device), n_samples_in_batch)
+        classification = select_covariates(cat_covs, self.class_idx.to(self.device), n_samples_in_batch)
 
-        # TODO put these into functions
-        if len(self.reg_idx) > 0:
-            regression = torch.index_select(cont_covs, 1, self.reg_idx.to(self.device)) # batch_size x number of regression tasks
-            # select the first element of each sample in the batch because we predict on sample level
-            regression = regression.view(len(idx) + 1, -1, len(self.reg_idx)) # num_samples_in_batch x sample_batch_size x number of regression tasks
-            # take the first element of each sample in the batch as the values are the same for the sample_batch
-            regression = regression[:, 0, :] # num_samples_in_batch x number of regression tasks
-       
-        if len(self.ord_idx) > 0:
-            ordinal_regression = torch.index_select(
-                cat_covs, 1, self.ord_idx.to(self.device)
-            )
-            ordinal_regression = ordinal_regression.view(
-                len(idx) + 1, -1, len(self.ord_idx)
-            )[:, 0, :]
-        if len(self.class_idx) > 0:
-            classification = torch.index_select(
-                cat_covs, 1, self.class_idx.to(self.device)
-            )
-            classification = classification.view(len(idx) + 1, -1, len(self.class_idx))[
-                :, 0, :
-            ]
-        
         predictions = inference_outputs[
             "predictions"
         ]  # list, first from classifiers, then from regressors
@@ -244,10 +213,8 @@ class MILClassifierTorch(BaseModuleClass):
         accuracies = []
         classification_loss = torch.tensor(0.0).to(self.device)
         for i in range(len(self.class_idx)):
-            if self.class_weights is not None:
-                self.class_weights = self.class_weights.to(self.device)
             classification_loss += F.cross_entropy(
-                predictions[i], classification[:, i].long(), weight=self.class_weights
+                predictions[i], classification[:, i].long()
             )  # assume same in the batch
             accuracies.append(
                 torch.sum(
@@ -277,8 +244,6 @@ class MILClassifierTorch(BaseModuleClass):
                 regression[:, i],
             )
             
-        accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
-              
         class_loss_anneal_coef = kl_weight if self.anneal_class_loss else 1.0
 
         loss = torch.mean(
@@ -288,12 +253,16 @@ class MILClassifierTorch(BaseModuleClass):
 
         extra_metrics = {
             "class_loss": classification_loss,
-            "accuracy": accuracy,
             "regression_loss": regression_loss,
         }
 
-        recon_loss = torch.zeros(batch_size)
-        kl_loss = torch.zeros(batch_size)
+        if len(accuracies) > 0:
+            accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
+            extra_metrics["accuracy"] = accuracy
+        
+        # don't need in this model but have to return
+        recon_loss = torch.zeros(minibatch_size)
+        kl_loss = torch.zeros(minibatch_size)
 
         return loss, recon_loss, kl_loss, extra_metrics
 
