@@ -1,6 +1,5 @@
 import torch
 import logging
-import pandas as pd
 import anndata as ad
 import warnings
 
@@ -48,7 +47,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         drop_attn=False,
-        aggr="attn", # or 'both' = attn + average (two heads)
         activation='leaky_relu', # or tanh
         initialization=None, # xavier (tanh) or kaiming (leaky_relu)
         anneal_class_loss=False,
@@ -154,7 +152,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             ord_idx=self.ord_idx,
             reg_idx=self.regression_idx,
             drop_attn=drop_attn,
-            aggr=aggr,
             anneal_class_loss=anneal_class_loss,
         )
 

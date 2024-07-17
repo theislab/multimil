@@ -2,7 +2,6 @@ import logging
 from typing import Dict, List, Literal, Optional, Union
 
 import anndata as ad
-import pandas as pd
 
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -84,7 +83,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     ):
         super().__init__(adata)
 
-       # self.adata = adata
         self.group_column = integrate_on
 
         # TODO: add options for number of hidden layers, hidden layers dim and output activation functions

@@ -50,7 +50,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
         reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference
         drop_attn=False,
         mmd="latent",
-        aggr="attn",
         activation='leaky_relu',
         initialization=None,
         anneal_class_loss=False,
@@ -99,7 +98,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
             class_loss_coef=class_loss_coef,
             regression_loss_coef=regression_loss_coef,
             sample_batch_size=sample_batch_size,
-            aggr=aggr,
             anneal_class_loss=anneal_class_loss,
             num_classification_classes=num_classification_classes,
             class_idx=class_idx,

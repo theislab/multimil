@@ -65,10 +65,8 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         drop_attn=False,
         mmd="latent",
         sample_in_vae=True,
-        aggr="attn", # or 'both' = attn + average (two heads)
         activation='leaky_relu', # or tanh
         initialization='kaiming', # xavier (tanh) or kaiming (leaky_relu)
-        # ted_class_loss=False, 
         anneal_class_loss=False,
     ):
         super().__init__(adata)
@@ -159,7 +157,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             regression_loss_coef=regression_loss_coef,
             attention_dropout=attention_dropout,
             drop_attn=drop_attn,
-            aggr=aggr,
             activation=activation,
             initialization=initialization,
             anneal_class_loss=anneal_class_loss,
@@ -220,7 +217,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             ord_idx=self.mil.ord_idx,
             reg_idx=self.mil.regression_idx,
             drop_attn=drop_attn,
-            aggr=aggr,
             anneal_class_loss=anneal_class_loss,
         )
 

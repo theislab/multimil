@@ -34,7 +34,6 @@ class MILClassifierTorch(BaseModuleClass):
         ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference; this is a torch tensor
         reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference; this is a torch tensor
         drop_attn=False,
-        aggr="attn",
         activation='leaky_relu',
         initialization=None,
         anneal_class_loss=False,
@@ -53,7 +52,6 @@ class MILClassifierTorch(BaseModuleClass):
         self.class_loss_coef = class_loss_coef
         self.regression_loss_coef = regression_loss_coef
         self.sample_batch_size = sample_batch_size
-        self.aggr = aggr
         self.anneal_class_loss = anneal_class_loss
         self.num_classification_classes = num_classification_classes
         self.class_idx = class_idx
@@ -88,10 +86,8 @@ class MILClassifierTorch(BaseModuleClass):
         if len(self.class_idx) > 0:
             self.classifiers = torch.nn.ModuleList()
 
-            # TODO check/remove other aggr types
-            # TODO 2 * z_dim is for `both`, remove 
             # classify zs directly
-            class_input_dim = z_dim if self.aggr == 'attn' else 2 * z_dim 
+            class_input_dim = z_dim
 
             for num in self.num_classification_classes:
                 if n_layers_classifier == 1:
@@ -169,18 +165,12 @@ class MILClassifierTorch(BaseModuleClass):
         zs = torch.tensor_split(z_joint, idx, dim=0)
         zs = torch.stack(zs, dim=0) # num of bags x batch_size x z_dim
         zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
-    
-        if self.aggr == "both":
-            zs = torch.mean(zs, dim=1)
-            zs_aggr = torch.cat([zs_attn, zs], dim=-1) # num of bags in batch x (2 * cond_dim) but cond_dim has to be = z_dim #TODO
-        else: # "attn"
-            zs_aggr = zs_attn
-        predictions = []
 
+        predictions = []
         if len(self.class_idx) > 0:
-            predictions.extend([classifier(zs_aggr) for classifier in self.classifiers])
+            predictions.extend([classifier(zs_attn) for classifier in self.classifiers])
         if len(self.ord_idx) + len(self.reg_idx) > 0:
-            predictions.extend([regressor(zs_aggr) for regressor in self.regressors])
+            predictions.extend([regressor(zs_attn) for regressor in self.regressors])
 
         inference_outputs.update(
             {"predictions": predictions}
