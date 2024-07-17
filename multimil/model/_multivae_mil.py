@@ -505,7 +505,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         for i in range(len(self.mil.regression_idx)):
             name = self.mil.regression[i]
             reg_names = self.adata_manager.get_state_registry('extra_continuous_covs')['columns']
-            save_predictions_in_adata(adata, i, self.mil.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip='round', reg=True)
+            save_predictions_in_adata(adata, i, self.mil.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip=None, reg=True)
      
     def plot_losses(self, save=None):
         """Plot losses."""

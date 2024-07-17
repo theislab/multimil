@@ -2,6 +2,8 @@ import pandas as pd
 import torch
 import scipy
 import numpy as np
+from matplotlib import pyplot as plt
+from math import ceil
 
 def create_df(pred, columns=None, index=None):
     if isinstance(pred, dict):
@@ -105,8 +107,8 @@ def save_predictions_in_adata(adata, idx, predictions, bag_pred, bag_true, cell_
             adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0)
         elif clip == 'argmax': # classification
             adata.obs[f"predicted_{name}"] = df.to_numpy().argmax(axis=1)
-        elif clip == 'round':
-            adata.obs[f"predicted_{name}"] = np.round(df.to_numpy())
+        else:
+            adata.obs[f"predicted_{name}"] = df.to_numpy()
         if reg is False:
             adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype(
                 "category"
@@ -120,8 +122,23 @@ def save_predictions_in_adata(adata, idx, predictions, bag_pred, bag_true, cell_
             bag_true, predictions
         )
         df_bag = create_df(bag_pred[idx], class_names)
-        adata.uns[f"bag_full_predictions_{name}"] = df_bag
         if clip == 'clip':
             adata.uns[f"bag_full_predictions_{name}"] = np.clip(np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0)
         elif clip == 'argmax':
             adata.uns[f"bag_full_predictions_{name}"] = df_bag.to_numpy().argmax(axis=1)
+        else:
+            adata.uns[f"bag_full_predictions_{name}"] = df_bag.to_numpy()
+
+def plt_plot_losses(df, loss_names, save):
+    nrows = ceil(len(loss_names) / 2)
+
+    plt.figure(figsize=(15, 5 * nrows))
+
+    for i, name in enumerate(loss_names):
+        plt.subplot(nrows, 2, i + 1)
+        plt.plot(df["epoch"], df[name + "_train"], ".-", label=name + "_train")
+        plt.plot(df["epoch"], df[name + "_validation"], ".-", label=name + "_validation")
+        plt.xlabel("epoch")
+        plt.legend()
+    if save is not None:
+        plt.savefig(save, bbox_inches="tight")

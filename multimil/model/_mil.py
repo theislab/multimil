@@ -445,7 +445,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         for i in range(len(self.regression_idx)):
             name = self.regression[i]
             reg_names = self.adata_manager.get_state_registry('extra_continuous_covs')['columns']
-            save_predictions_in_adata(adata, i, self.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip='round', reg=True)
+            save_predictions_in_adata(adata, i, self.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip=None, reg=True)
      
     def plot_losses(self, save=None):
         """Plot losses."""
