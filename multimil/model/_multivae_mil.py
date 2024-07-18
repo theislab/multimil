@@ -162,7 +162,11 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             anneal_class_loss=anneal_class_loss,
             ignore_covariates=ignore_covariates_mil,
         )
-
+        # TODO check if don't have to set these to None, rather reference them in self.module
+        # i.e. create a MultiVAETorch_MIL, it will create some module inside, but then do
+        # self.module.vae_module = self.multivae.module and
+        # self.module.mil_module = self.mil.module
+        
         # clear up memory
         self.multivae.module = None
         self.mil.module = None
@@ -353,7 +357,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def setup_anndata(
         cls,
         adata: ad.AnnData,
-        batch_key: Optional[str] = None,
         size_factor_key: Optional[str] = None,
         rna_indices_end: Optional[int] = None,
         categorical_covariate_keys: Optional[List[str]] = None,
@@ -383,9 +386,10 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
+        # TODO first add from multivae, then from mil
         anndata_fields = [
             fields.LayerField(REGISTRY_KEYS.X_KEY, layer=None,),
-            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
+            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, None),
             fields.CategoricalJointObsField(
                 REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
             ),

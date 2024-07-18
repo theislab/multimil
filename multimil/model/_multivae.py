@@ -299,16 +299,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 batch_size=batch_size,
                 use_gpu=use_gpu,
             )
-
-        if self.group_column is not None:
-            data_splitter = GroupDataSplitter(
-                self.adata_manager,
-                group_column=self.group_column,
-                train_size=train_size,
-                validation_size=validation_size,
-                batch_size=batch_size,
-                use_gpu=use_gpu,
-            )
         else:
             data_splitter = DataSplitter(
                 self.adata_manager,
@@ -337,7 +327,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     def setup_anndata(
         cls,
         adata: ad.AnnData,
-        batch_key: Optional[str] = None,
         size_factor_key: Optional[str] = None,
         rna_indices_end: Optional[int] = None,
         categorical_covariate_keys: Optional[List[str]] = None,
@@ -367,7 +356,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 REGISTRY_KEYS.X_KEY,
                 layer=None,
             ),
-            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
+            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, None), # TODO check if need to add if it's None
             fields.CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
             fields.NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]

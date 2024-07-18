@@ -220,6 +220,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
+        # TODO put in a function, return params needed for splitter, plan and runner, then can call the function from multivae_mil
         if len(self.regression) > 0:
             if early_stopping_monitor == "accuracy_validation":
                 warnings.warn("Setting early_stopping_monitor to 'regression_loss_validation' and early_stopping_mode to 'min' as regression is used.")
@@ -258,6 +259,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 ))
             else:
                 raise ValueError(f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}.")
+        # until here
 
         data_splitter = GroupDataSplitter(
             self.adata_manager,
@@ -491,3 +493,4 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         model.is_trained_ = True
 
         return model
+     
