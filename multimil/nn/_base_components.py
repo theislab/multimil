@@ -7,7 +7,7 @@ from torch.nn import functional as F
 
 
 class MLP(nn.Module):
-    """A helper class to build blocks of fully-connected, normalization and dropout layers."""
+    """A helper class to build blocks of fully-connected, normalization, dropout and activation layers."""
 
     def __init__(
         self,
@@ -152,8 +152,6 @@ class Aggregator(nn.Module):
         attn_dim=16,  # D
         sample_batch_size=None,
         scale=False,
-        attention_dropout=False,
-        drop_attn=False,
         dropout=0.2,
         n_layers_mlp_attn=1,
         n_hidden_mlp_attn=16,
@@ -172,7 +170,6 @@ class Aggregator(nn.Module):
             self.attention = nn.Sequential(
                 nn.Linear(n_input, self.attn_dim),
                 nn.Tanh(),
-                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
                 nn.Linear(self.attn_dim, 1, bias=False),
             )
         elif self.scoring == "gated_attn":
@@ -180,13 +177,11 @@ class Aggregator(nn.Module):
             self.attention_V = nn.Sequential(
                 nn.Linear(n_input, self.attn_dim),
                 nn.Tanh(),
-                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
             )
 
             self.attention_U = nn.Sequential(
                 nn.Linear(n_input, self.attn_dim),
                 nn.Sigmoid(),
-                nn.Dropout(dropout) if attention_dropout else nn.Identity(),
             )
 
             self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
@@ -207,7 +202,6 @@ class Aggregator(nn.Module):
                     ),
                     nn.Linear(n_hidden_mlp_attn, 1),
                 )
-        self.dropout_attn = nn.Dropout(dropout) if drop_attn else nn.Identity()
 
     def forward(self, x):
         # if self.scoring == "sum":
@@ -239,8 +233,6 @@ class Aggregator(nn.Module):
 
         if self.scale:
             self.A = self.A * self.A.shape[-1] / self.patient_batch_size
-
-        self.A = self.dropout_attn(self.A)
 
         return torch.bmm(self.A, x).squeeze(dim=1)  # z_dim
 

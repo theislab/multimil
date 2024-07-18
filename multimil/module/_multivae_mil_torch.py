@@ -44,11 +44,9 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         sample_batch_size=128,
-        attention_dropout=True,
         class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference
         ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference
         reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference
-        drop_attn=False,
         mmd="latent",
         activation='leaky_relu',
         initialization=None,
@@ -103,8 +101,6 @@ class MultiVAETorch_MIL(BaseModuleClass):
             class_idx=class_idx,
             ord_idx=ord_idx,
             reg_idx=reg_idx,
-            drop_attn=drop_attn,
-            attention_dropout=attention_dropout,
             activation=activation,
             initialization=initialization,
             normalization=normalization,

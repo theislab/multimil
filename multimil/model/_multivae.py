@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class MultiVAE(BaseModelClass, ArchesMixin):
-    """Multigrate model.
+    """MultiMIL multimodal integration model.
 
     :param adata:
         AnnData object that has been registered via :meth:`~multigrate.model.MultiVAE.setup_anndata`.
@@ -37,23 +37,39 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     :param normalization:
         What normalization to use; has to be one of `batch` or `layer`. Default is `layer`.
     :param z_dim:
-        Dimensionality of the latent space. Default is 15.
+        Dimensionality of the latent space. Default is 16.
     :param losses:
         Which losses to use for each modality. Has to be the same length as the number of modalities. Default is `MSE` for all modalities.
     :param dropout:
         Dropout rate. Default is 0.2.
     :param cond_dim:
-        Dimensionality of the covariate embeddings. Default is 10.
+        Dimensionality of the covariate embeddings. Default is 16.
+    :param kernel_type:
+        Type of kernel to use for the MMD loss. Default is `gaussian`.
     :param loss_coefs:
         Loss coeficients for the different losses in the model. Default is 1 for all.
+    :param cont_cov_type:
+        How to calculate embeddings for continuous covariates. Default is `logsim`.
+    :param n_layers_cont_embed:
+        Number of layers for the continuous covariate embedding calculation. Default is 1.
     :param n_layers_encoders:
         Number of layers for each encoder. Default is 2 for all modalities. Has to be the same length as the number of modalities.
     :param n_layers_decoders:
         Number of layers for each decoder. Default is 2 for all modalities. Has to be the same length as the number of modalities.
+    :param n_hidden_cont_embed:
+        Number of nodes for each hidden layer in the continuous covariate embedding calculation. Default is 32.
     :param n_hidden_encoders:
         Number of nodes for each hidden layer in the encoders. Default is 32.
     :param n_hidden_decoders:
         Number of nodes for each hidden layer in the decoders. Default is 32.
+    :param mmd:
+        Which MMD loss to use. Default is `latent`.
+    :param activation:
+        Activation function to use. Default is `leaky_relu`.
+    :param initialization:
+        Initialization method to use. Default is `None`.
+    :param ignore_covariates:
+        List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
     """
 
     def __init__(
@@ -63,26 +79,27 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         condition_encoders: bool = False,
         condition_decoders: bool = True,
         normalization: Literal["layer", "batch", None] = "layer",
-        z_dim: int = 15,
+        z_dim: int = 16,
         losses: Optional[List[str]] = None,
         dropout: float = 0.2,
         cond_dim: int = 16,
         kernel_type: Literal["gaussian", None] = "gaussian",
         loss_coefs: Dict[int, float] = None,
         cont_cov_type: Literal["logsim", "sigm", None] = "logsigm",
-        n_layers_cont_embed: int = 1,
+        n_layers_cont_embed: int = 1, # TODO default to None?
         n_layers_encoders: Optional[List[int]] = None,
         n_layers_decoders: Optional[List[int]] = None,
-        n_hidden_cont_embed: int = 32,
+        n_hidden_cont_embed: int = 32, # TODO default to None?
         n_hidden_encoders: Optional[List[int]] = None,
         n_hidden_decoders: Optional[List[int]] = None,
         mmd: Literal["latent", "marginal", "both"] = "latent",
-        activation: Optional[str] = "leaky_relu",
-        initialization: Optional[str] = None,
+        activation: Optional[str] = "leaky_relu", # TODO add which options are impelemted
+        initialization: Optional[str] = None, # TODO add which options are impelemted
         ignore_covariates: Optional[List[str]] = None,
     ):
         super().__init__(adata)
 
+        # for the integration with MMD loss
         self.group_column = integrate_on
 
         # TODO: add options for number of hidden layers, hidden layers dim and output activation functions
@@ -175,7 +192,13 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
     @torch.inference_mode()
     def get_model_output(self, adata=None, batch_size=256):
-        """Return the latent representation."""
+        """Save the latent representation in the adata object.
+        
+        :param adata:
+            AnnData object to run the model on. If `None`, the model's AnnData object is used.
+        :param batch_size:
+            Minibatch size to use. Default is 256.
+        """
         if not self.is_trained_:
             raise RuntimeError("Please train the model first.")
 
@@ -207,7 +230,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         check_val_every_n_epoch: Optional[int] = None,
         n_epochs_kl_warmup: Optional[int] = None,
         n_steps_kl_warmup: Optional[int] = None,
-        adversarial_mixing: bool = False,
+        adversarial_mixing: bool = False, # TODO check if suppored by us, i don't think it is
         plan_kwargs: Optional[dict] = None,
         save_checkpoint_every_n_epochs: Optional[int] = None,
         path_to_checkpoints: Optional[str] = None,
@@ -248,9 +271,17 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
             Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
             to `floor(0.75 * adata.n_obs)`
+        :param adversarial_mixing:
+            Whether to use adversarial mixing. Default is `False`.
         :param plan_kwargs:
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate
+        :param save_checkpoint_every_n_epochs:
+            Save a checkpoint every n epochs. If `None`, no checkpoints are saved.
+        :param path_to_checkpoints:
+            Path to save checkpoints. Required if `save_checkpoint_every_n_epochs` is not `None`
+        :param kwargs:
+            Additional keyword arguments for :class:`~scvi.train.TrainRunner`
         """
         if n_epochs_kl_warmup is None:
             n_epochs_kl_warmup = max(max_epochs // 3, 1)
@@ -341,12 +372,16 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
         :param adata:
             AnnData object containing raw counts. Rows represent cells, columns represent features
+        :param size_factor_key:
+            Key in `adata.obs` containing the size factor. If `None`, will be calculated from the RNA counts.
         :param rna_indices_end:
-            Integer to indicate where RNA feature end in the AnnData object. May be needed to calculate ``libary_size``.
+            Integer to indicate where RNA feature end in the AnnData object. Is used to calculate ``libary_size``.
         :param categorical_covariate_keys:
             Keys in `adata.obs` that correspond to categorical data
         :param continuous_covariate_keys:
             Keys in `adata.obs` that correspond to continuous data
+        :param kwargs:
+            Additional parameters to pass to register_fields() of AnnDataManager
         """
 
         setup_method_args = cls._get_setup_method_args(**locals())
@@ -368,6 +403,11 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         cls.register_manager(adata_manager)
 
     def plot_losses(self, save=None):
+        """Plot losses.
+        
+        :param save:
+            If not None, save the plot to this location.
+        """
         loss_names = self.module.select_losses_to_plot()
         plt_plot_losses(self.history, loss_names, save)
 
@@ -396,6 +436,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False)
         :param freeze:
             Whether to freeze the encoders and decoders and only train the new weights
+        :param ignore_covariates:
+            List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
         """
         _, _, device = parse_use_gpu_arg(use_gpu)
 

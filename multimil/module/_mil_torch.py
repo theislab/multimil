@@ -29,11 +29,9 @@ class MILClassifierTorch(BaseModuleClass):
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         sample_batch_size=128,
-        attention_dropout=True,
         class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference; this is a torch tensor
         ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference; this is a torch tensor
         reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference; this is a torch tensor
-        drop_attn=False,
         activation='leaky_relu',
         initialization=None,
         anneal_class_loss=False,
@@ -74,8 +72,6 @@ class MILClassifierTorch(BaseModuleClass):
                 attn_dim=attn_dim,
                 sample_batch_size=sample_batch_size,
                 scale=True,
-                attention_dropout=attention_dropout,
-                drop_attn=drop_attn,
                 dropout=dropout,
                 n_layers_mlp_attn=n_layers_mlp_attn,
                 n_hidden_mlp_attn=n_hidden_mlp_attn,

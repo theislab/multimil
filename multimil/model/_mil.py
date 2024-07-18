@@ -31,9 +31,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         ordinal_regression=[],
         sample_batch_size=128,
         normalization="layer",
-        z_dim=16,
+        z_dim=16, # TODO do we need it? can't we get it from adata?
         dropout=0.2,
-        scoring="gated_attn",
+        scoring="gated_attn", # TODO test if MLP is supported and if we want to keep it
         attn_dim=16,
         n_layers_cell_aggregator: int = 1,
         n_layers_classifier: int = 2,
@@ -43,15 +43,66 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         n_hidden_classifier: int = 128,
         n_hidden_mlp_attn: int = 32,
         n_hidden_regressor: int = 128,
-        attention_dropout=False,
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
-        drop_attn=False,
         activation='leaky_relu', # or tanh
         initialization=None, # xavier (tanh) or kaiming (leaky_relu)
         anneal_class_loss=False,
         ignore_covariates=None,
     ):
+        """MultiMIL MIL prediction model.
+
+        :param adata:
+            AnnData object containing embeddings and covariates.
+        :param sample_key:
+            Key in `adata.obs` that corresponds to the sample covariate.
+        :param classification:
+            List of keys in `adata.obs` that correspond to the classification covariates.
+        :param regression:
+            List of keys in `adata.obs` that correspond to the regression covariates.
+        :param ordinal_regression:
+            List of keys in `adata.obs` that correspond to the ordinal regression covariates.
+        :param sample_batch_size:
+            Number of samples per bag, i.e. sample. Default is 128.
+        :param normalization:
+            One of "layer" or "batch". Default is "layer".
+        :param z_dim:
+            Dimensionality of the input latent space. Default is 16.
+        :param dropout:
+            Dropout rate. Default is 0.2.
+        :param scoring:
+            How to calculate attention scores. One of "gated_attn", "MLP". Default is "gated_attn".
+        :param attn_dim:
+            Dimensionality of the hidden layer in attention calculation. Default is 16.
+        :param n_layers_cell_aggregator:
+            Number of layers in the cell aggregator. Default is 1.
+        :param n_layers_classifier:
+            Number of layers in the classifier. Default is 2.
+        :param n_layers_regressor:
+            Number of layers in the regressor. Default is 2.
+        :param n_layers_mlp_attn:
+            Number of layers in the MLP attention. Only used if `scoring` = "MLP". Default is 1.
+        :param n_hidden_cell_aggregator:
+            Number of hidden units in the cell aggregator. Default is 128.
+        :param n_hidden_classifier:
+            Number of hidden units in the classifier. Default is 128.
+        :param n_hidden_mlp_attn:
+            Number of hidden units in the MLP attention. Default is 32.
+        :param n_hidden_regressor:
+            Number of hidden units in the regressor. Default is 128.
+        :param class_loss_coef:
+            Coefficient for the classification loss. Default is 1.0.
+        :param regression_loss_coef:
+            Coefficient for the regression loss. Default is 1.0.
+        :param activation:
+            Activation function. Default is 'leaky_relu'.
+        :param initialization:
+            Initialization method for the weights. Default is None.
+        :param anneal_class_loss:
+            Whether to anneal the classification loss. Default is False.
+        :param ignore_covariates:
+            List of covariates to ignore. Needed for query-to-reference mapping. Default is None.
+        """
         super().__init__(adata)
 
         self.sample_key = sample_key
@@ -77,6 +128,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         # TODO add that n_layers has to be > 0 for all
         # TODO warning if n_layers == 1 then n_hidden is not used for classifier and MLP attention
         # TODO warning if MLP attention is used but n layers and n hidden not given that using default values
+        # TODO check that there is at least on ecovariate to predict
         if scoring == "MLP":
             if not n_layers_mlp_attn:
                 n_layers_mlp_attn = 1
@@ -147,11 +199,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             class_loss_coef=class_loss_coef,
             regression_loss_coef=regression_loss_coef,
             sample_batch_size=sample_batch_size,
-            attention_dropout=attention_dropout,
             class_idx=self.class_idx,
             ord_idx=self.ord_idx,
             reg_idx=self.regression_idx,
-            drop_attn=drop_attn,
             anneal_class_loss=anneal_class_loss,
         )
 
@@ -210,13 +260,26 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         check_val_every_n_epoch
             Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`.
             If so, val is checked every epoch.
+        n_epochs_kl_warmup
+            Number of epochs to scale weight on KL divergences from 0 to 1.
+            Overrides `n_steps_kl_warmup` when both are not `None`. Default is 1/3 of `max_epochs`.
         n_steps_kl_warmup
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
-        If `None`, defaults
-            to `floor(0.75 * adata.n_obs)`.
+            Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
+            to `floor(0.75 * adata.n_obs)`
+        adversarial_mixing
+            Whether to use adversarial mixing. Default is False.
         plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
+        early_stopping_monitor
+            Metric to monitor for early stopping. Default is "accuracy_validation".
+        early_stopping_mode
+            One of "min" or "max". Default is "max".
+        save_checkpoint_every_n_epochs
+            Save a checkpoint every n epochs.
+        path_to_checkpoints
+            Path to save checkpoints.
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
@@ -304,14 +367,14 @@ class MILClassifier(BaseModelClass, ArchesMixin):
 
         :param adata:
             AnnData object containing raw counts. Rows represent cells, columns represent features
-        :param rna_indices_end:
-            Integer to indicate where RNA feature end in the AnnData object. May be needed to calculate ``libary_size``.
         :param categorical_covariate_keys:
             Keys in `adata.obs` that correspond to categorical data
         :param continuous_covariate_keys:
             Keys in `adata.obs` that correspond to continuous data
         :param ordinal_regression_order:
             Dictionary with regression classes as keys and order of classes as values
+        :param kwargs:
+            Additional parameters to pass to register_fields() of AnnDataManager
         """
 
         setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
@@ -341,6 +404,14 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         adata=None,
         batch_size=256,
     ):
+        """Save the attention scores and predictions in the adata object.
+
+        :param adata:
+            AnnData object to run the model on. If `None`, the model's AnnData object is used.
+        :param batch_size:
+            Minibatch size to use. Default is 256.
+
+        """
         if not self.is_trained_:
             raise RuntimeError("Please train the model first.")
 
@@ -428,7 +499,11 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             save_predictions_in_adata(adata, i, self.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip=None, reg=True)
      
     def plot_losses(self, save=None):
-        """Plot losses."""
+        """Plot losses.
+        
+        :param save:
+            If not None, save the plot to this location.
+        """
         loss_names = self.module.select_losses_to_plot()
         plt_plot_losses(self.history, loss_names, save)
 
@@ -453,8 +528,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         :param use_gpu:
             Load model on default GPU if available (if None or True),
             or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False)
-        :param freeze:
-            Whether to freeze the encoders and decoders and only train the new weights
         """
 
         # currently this function works only if the prediction cov is present in the .obs of the query
@@ -493,4 +566,3 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         model.is_trained_ = True
 
         return model
-     
