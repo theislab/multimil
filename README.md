@@ -1,4 +1,4 @@
-# multimil
+# Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases.
 
 [![Tests][badge-tests]][link-tests]
 [![Documentation][badge-docs]][link-docs]
@@ -7,7 +7,13 @@
 [link-tests]: https://github.com/theislab/multimil/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/multimil
 
-Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases.
+---
+
+**NOTE**
+
+This repository is WIP. Tutorials, documentation and code updates are coming in the next few weeks.
+
+---
 
 ## Getting started
 
@@ -48,6 +54,10 @@ If you found a bug, please use the [issue tracker][issue-tracker].
 ## Citation
 
 > t.b.a
+
+## Reproducibility
+
+Code and notebooks to reproduce the results from the paper are available at https://github.com/theislab/multimil_reproducibility.
 
 [scverse-discourse]: https://discourse.scverse.org/
 [issue-tracker]: https://github.com/theislab/multimil/issues
