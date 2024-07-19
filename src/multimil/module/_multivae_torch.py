@@ -1,5 +1,5 @@
 import warnings
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Literal
 
 import torch
 from scvi import REGISTRY_KEYS
@@ -9,8 +9,8 @@ from torch import nn
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
 
-from ..distributions import MMD
-from ..nn import MLP, Decoder, GeneralizedSigmoid
+from multimil.distributions import MMD
+from multimil.nn import MLP, Decoder, GeneralizedSigmoid
 
 
 class MultiVAETorch(BaseModuleClass):
@@ -193,7 +193,9 @@ class MultiVAETorch(BaseModuleClass):
                 normalization=normalization,
                 activation=self.activation,
             )
-            for x_dim, n_layers, n_hidden in zip(self.input_dims, self.n_layers_encoders, self.n_hidden_encoders)
+            for x_dim, n_layers, n_hidden in zip(
+                self.input_dims, self.n_layers_encoders, self.n_hidden_encoders, strict=False
+            )
         ]
 
         # modality decoders
@@ -211,7 +213,7 @@ class MultiVAETorch(BaseModuleClass):
                 loss=loss,
             )
             for x_dim, loss, n_layers, n_hidden in zip(
-                self.input_dims, self.losses, self.n_layers_decoders, self.n_hidden_decoders
+                self.input_dims, self.losses, self.n_layers_decoders, self.n_hidden_decoders, strict=False
             )
         ]
 
@@ -248,7 +250,9 @@ class MultiVAETorch(BaseModuleClass):
                 )
 
         # register sub-modules
-        for i, (enc, dec, mu, logvar) in enumerate(zip(self.encoders, self.decoders, self.mus, self.logvars)):
+        for i, (enc, dec, mu, logvar) in enumerate(
+            zip(self.encoders, self.decoders, self.mus, self.logvars, strict=False)
+        ):
             self.add_module(f"encoder_{i}", enc)
             self.add_module(f"decoder_{i}", dec)
             self.add_module(f"mu_{i}", mu)
@@ -333,10 +337,10 @@ class MultiVAETorch(BaseModuleClass):
     def inference(
         self,
         x: torch.Tensor,
-        cat_covs: Optional[torch.Tensor] = None,
-        cont_covs: Optional[torch.Tensor] = None,
-        masks: Optional[List[torch.Tensor]] = None,
-    ) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+        cat_covs: torch.Tensor | None = None,
+        cont_covs: torch.Tensor | None = None,
+        masks: list[torch.Tensor] | None = None,
+    ) -> dict[str, torch.Tensor | list[torch.Tensor]]:
         """Compute necessary inference quantities.
 
         :param x:
@@ -364,7 +368,6 @@ class MultiVAETorch(BaseModuleClass):
 
         # if we want to condition encoders, i.e. concat covariates to the input
         if self.condition_encoders is True:
-            
             cat_embedds = self._select_cat_covariates(cat_covs)
             cont_embedds = self._select_cont_covariates(cont_covs)
 
@@ -388,14 +391,14 @@ class MultiVAETorch(BaseModuleClass):
         mu_joint, logvar_joint = self._product_of_experts(mu, logvar, masks)
         z_joint = self._reparameterize(mu_joint, logvar_joint)
         # drop mus and logvars according to masks for kl calculation
-        # TODO here or in loss calculation? check 
+        # TODO here or in loss calculation? check
         # return mus+mus_joint
         return {"z_joint": z_joint, "mu": mu_joint, "logvar": logvar_joint, "z_marginal": z_marginal}
 
     @auto_move_data
     def generative(
-        self, z_joint: torch.Tensor, cat_covs: Optional[torch.Tensor] = None, cont_covs: Optional[torch.Tensor] = None
-    ) -> Dict[str, List[torch.Tensor]]:
+        self, z_joint: torch.Tensor, cat_covs: torch.Tensor | None = None, cont_covs: torch.Tensor | None = None
+    ) -> dict[str, list[torch.Tensor]]:
         """Compute necessary inference quantities.
 
         :param z_joint:
@@ -425,23 +428,21 @@ class MultiVAETorch(BaseModuleClass):
         if len(self.cat_covs_idx) > 0:
             cat_covs = torch.index_select(cat_covs, 1, self.cat_covs_idx.to(self.device))
             cat_embedds = [
-                    cat_covariate_embedding(covariate.long())
-                    for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T)
-                ]
+                cat_covariate_embedding(covariate.long())
+                for cat_covariate_embedding, covariate in zip(self.cat_covariate_embeddings, cat_covs.T, strict=False)
+            ]
         else:
             cat_embedds = []
 
-        if len(cat_embedds) > 0: 
-            cat_embedds = torch.cat(cat_embedds, dim=-1) # TODO check if concatenation is needed
+        if len(cat_embedds) > 0:
+            cat_embedds = torch.cat(cat_embedds, dim=-1)  # TODO check if concatenation is needed
         else:
             cat_embedds = torch.Tensor().to(self.device)
         return cat_embedds
 
     def _select_cont_covariates(self, cont_covs):
         if len(self.cont_covs_idx) > 0:
-            cont_covs = torch.index_select(
-                cont_covs, 1, self.cont_covs_idx.to(self.device)
-            )
+            cont_covs = torch.index_select(cont_covs, 1, self.cont_covs_idx.to(self.device))
             if cont_covs.shape[-1] != self.n_cont_cov:  # get rid of size_factors
                 cont_covs = cont_covs[:, 0 : self.n_cont_cov]
             cont_embedds = self._compute_cont_cov_embeddings(cont_covs)
@@ -522,14 +523,14 @@ class MultiVAETorch(BaseModuleClass):
 
     def loss(
         self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
-    ) -> Tuple[
+    ) -> tuple[
         torch.FloatTensor,
-        Dict[str, torch.FloatTensor],
-        torch.FloatTensor,
-        torch.FloatTensor,
+        dict[str, torch.FloatTensor],
         torch.FloatTensor,
         torch.FloatTensor,
-        Dict[str, torch.FloatTensor],
+        torch.FloatTensor,
+        torch.FloatTensor,
+        dict[str, torch.FloatTensor],
     ]:
         """Calculate the (modality) reconstruction loss, Kullback divergences and integration loss.
 
@@ -572,7 +573,7 @@ class MultiVAETorch(BaseModuleClass):
 
     def _calc_recon_loss(self, xs, rs, losses, group, size_factor, loss_coefs, masks):
         loss = []
-        for i, (x, r, loss_type) in enumerate(zip(xs, rs, losses)):
+        for i, (x, r, loss_type) in enumerate(zip(xs, rs, losses, strict=False)):
             if len(r) != 2 and len(r.shape) == 3:
                 r = r.squeeze()
             if loss_type == "mse":
@@ -640,7 +641,7 @@ class MultiVAETorch(BaseModuleClass):
             return torch.cat(embeddings, 1) @ self.cont_covariate_embeddings.weight
         else:
             return self.cont_covariate_curves(covs) @ self.cont_covariate_embeddings.weight
-        
+
     def select_losses_to_plot(self):
         loss_names = ["kl_local", "elbo", "reconstruction_loss"]
         for i in range(self.n_modality):

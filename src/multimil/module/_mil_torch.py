@@ -1,12 +1,11 @@
 import torch
+from scvi import REGISTRY_KEYS
+from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from torch import nn
 from torch.nn import functional as F
 
-from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
-from scvi import REGISTRY_KEYS
-
-from ..nn import MLP, Aggregator
-from ..utils import prep_minibatch, select_covariates
+from multimil.nn import MLP, Aggregator
+from multimil.utils import prep_minibatch, select_covariates
 
 
 class MILClassifierTorch(BaseModuleClass):
@@ -15,7 +14,7 @@ class MILClassifierTorch(BaseModuleClass):
         z_dim=16,
         dropout=0.2,
         normalization="layer",
-        num_classification_classes=[],  # number of classes for each of the classification task
+        num_classification_classes=None,  # number of classes for each of the classification task
         scoring="gated_attn",
         attn_dim=16,
         n_layers_cell_aggregator=1,
@@ -29,18 +28,18 @@ class MILClassifierTorch(BaseModuleClass):
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         sample_batch_size=128,
-        class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference; this is a torch tensor
-        ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference; this is a torch tensor
-        reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference; this is a torch tensor
-        activation='leaky_relu',
+        class_idx=None,  # which indices in cat covariates to do classification on, i.e. exclude from inference; this is a torch tensor
+        ord_idx=None,  # which indices in cat covariates to do ordinal regression on and also exclude from inference; this is a torch tensor
+        reg_idx=None,  # which indices in cont covariates to do regression on and also exclude from inference; this is a torch tensor
+        activation="leaky_relu",
         initialization=None,
         anneal_class_loss=False,
     ):
         super().__init__()
 
-        if activation == 'leaky_relu':
+        if activation == "leaky_relu":
             self.activation = nn.LeakyReLU
-        elif activation == 'tanh':
+        elif activation == "tanh":
             self.activation = nn.Tanh
         else:
             raise NotImplementedError(
@@ -125,19 +124,19 @@ class MILClassifierTorch(BaseModuleClass):
                         )
                     )
 
-        if initialization == 'xavier':
+        if initialization == "xavier":
             for layer in self.modules():
                 if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain('leaky_relu'))
-        elif initialization == 'kaiming':
+                    nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain("leaky_relu"))
+        elif initialization == "kaiming":
             for layer in self.modules():
                 if isinstance(layer, nn.Linear):
                     # following https://towardsdatascience.com/understand-kaiming-initialization-and-implementation-detail-in-pytorch-f7aa967e9138 (accessed 16.08.22)
-                    nn.init.kaiming_normal_(layer.weight, mode='fan_in')
+                    nn.init.kaiming_normal_(layer.weight, mode="fan_in")
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
-        return  {"x": x}
+        return {"x": x}
 
     def _get_generative_input(self, tensors, inference_outputs):
         z_joint = inference_outputs["z_joint"]
@@ -151,15 +150,13 @@ class MILClassifierTorch(BaseModuleClass):
         # MIL part
         batch_size = x.shape[0]
 
-        idx = list(
-            range(self.sample_batch_size, batch_size, self.sample_batch_size)
-        )
+        idx = list(range(self.sample_batch_size, batch_size, self.sample_batch_size))
         if (
             batch_size % self.sample_batch_size != 0
         ):  # can only happen during inference for last batches for each sample
             idx = []
         zs = torch.tensor_split(z_joint, idx, dim=0)
-        zs = torch.stack(zs, dim=0) # num of bags x batch_size x z_dim
+        zs = torch.stack(zs, dim=0)  # num of bags x batch_size x z_dim
         zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
 
         predictions = []
@@ -178,8 +175,6 @@ class MILClassifierTorch(BaseModuleClass):
         return z_joint
 
     def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
-        x = tensors[REGISTRY_KEYS.X_KEY]
-
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY
         cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
@@ -192,10 +187,8 @@ class MILClassifierTorch(BaseModuleClass):
         ordinal_regression = select_covariates(cat_covs, self.ord_idx.to(self.device), n_samples_in_batch)
         classification = select_covariates(cat_covs, self.class_idx.to(self.device), n_samples_in_batch)
 
-        predictions = inference_outputs[
-            "predictions"
-        ]  # list, first from classifiers, then from regressors
-        
+        predictions = inference_outputs["predictions"]  # list, first from classifiers, then from regressors
+
         accuracies = []
         classification_loss = torch.tensor(0.0).to(self.device)
         for i in range(len(self.class_idx)):
@@ -203,21 +196,21 @@ class MILClassifierTorch(BaseModuleClass):
                 predictions[i], classification[:, i].long()
             )  # assume same in the batch
             accuracies.append(
-                torch.sum(
-                    torch.eq(torch.argmax(predictions[i], dim=-1), classification[:, i])
-                )
+                torch.sum(torch.eq(torch.argmax(predictions[i], dim=-1), classification[:, i]))
                 / classification[:, i].shape[0]
             )
-        
+
         regression_loss = torch.tensor(0.0).to(self.device)
         for i in range(len(self.ord_idx)):
-            regression_loss += F.mse_loss(
-                predictions[len(self.class_idx) + i].squeeze(-1), ordinal_regression[:, i]
-            )
+            regression_loss += F.mse_loss(predictions[len(self.class_idx) + i].squeeze(-1), ordinal_regression[:, i])
             accuracies.append(
                 torch.sum(
                     torch.eq(
-                        torch.clamp(torch.round(predictions[len(self.class_idx) + i].squeeze()), min=0.0, max=self.num_classification_classes[i] - 1.0),
+                        torch.clamp(
+                            torch.round(predictions[len(self.class_idx) + i].squeeze()),
+                            min=0.0,
+                            max=self.num_classification_classes[i] - 1.0,
+                        ),
                         ordinal_regression[:, i],
                     )
                 )
@@ -229,7 +222,7 @@ class MILClassifierTorch(BaseModuleClass):
                 predictions[len(self.class_idx) + len(self.ord_idx) + i].squeeze(-1),
                 regression[:, i],
             )
-            
+
         class_loss_anneal_coef = kl_weight if self.anneal_class_loss else 1.0
 
         loss = torch.mean(
@@ -245,20 +238,18 @@ class MILClassifierTorch(BaseModuleClass):
         if len(accuracies) > 0:
             accuracy = torch.sum(torch.tensor(accuracies)) / len(accuracies)
             extra_metrics["accuracy"] = accuracy
-        
+
         # don't need in this model but have to return
         recon_loss = torch.zeros(minibatch_size)
         kl_loss = torch.zeros(minibatch_size)
 
         return loss, recon_loss, kl_loss, extra_metrics
 
-    def loss(
-        self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
-    ):
+    def loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
         loss, recon_loss, kl_loss, extra_metrics = self._calculate_loss(
             tensors, inference_outputs, generative_outputs, kl_weight
         )
-    
+
         return LossOutput(
             loss=loss,
             reconstruction_loss=recon_loss,

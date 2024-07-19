@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 import torch
 
 
@@ -21,7 +19,7 @@ class MMD(torch.nn.Module):
         self,
         x: torch.Tensor,
         y: torch.Tensor,
-        gamma: Optional[List[float]] = None,
+        gamma: list[float] | None = None,
     ) -> torch.Tensor:
         """Apply Guassian kernel.
 

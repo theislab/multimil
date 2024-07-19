@@ -1,9 +1,7 @@
-from typing import Optional
-
 from scvi.data import AnnDataManager
 from scvi.dataloaders import DataSplitter
 
-from ..dataloaders._ann_dataloader import GroupAnnDataLoader
+from multimil.dataloaders._ann_dataloader import GroupAnnDataLoader
 
 
 # adjusted from scvi-tools
@@ -33,7 +31,7 @@ class GroupDataSplitter(DataSplitter):
         adata_manager: AnnDataManager,
         group_column: str,
         train_size: float = 0.9,
-        validation_size: Optional[float] = None,
+        validation_size: float | None = None,
         use_gpu: bool = False,
         **kwargs,
     ):

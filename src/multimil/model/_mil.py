@@ -1,39 +1,48 @@
-import torch
 import logging
-import anndata as ad
 import warnings
 
-from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
-from ..module import MILClassifierTorch
-from ..utils import setup_ordinal_regression, select_covariates, prep_minibatch, get_predictions, get_bag_info, save_predictions_in_adata, plt_plot_losses
-from typing import List, Optional, Union, Dict
-from scvi.model.base import BaseModelClass, ArchesMixin
-from scvi.model.base._archesmixin import _get_loaded_data
-from scvi.train._callbacks import SaveBestState
-from scvi.train import TrainRunner, AdversarialTrainingPlan
-from scvi import REGISTRY_KEYS
-from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
-from scvi.data import AnnDataManager, fields
+import anndata as ad
+import torch
 from anndata import AnnData
-from scvi.model._utils import parse_use_gpu_arg
-from scvi.model.base._utils import _initialize_model
 from pytorch_lightning.callbacks import ModelCheckpoint
+from scvi import REGISTRY_KEYS
+from scvi.data import AnnDataManager, fields
+from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
+from scvi.model._utils import parse_use_gpu_arg
+from scvi.model.base import ArchesMixin, BaseModelClass
+from scvi.model.base._archesmixin import _get_loaded_data
+from scvi.model.base._utils import _initialize_model
+from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.train._callbacks import SaveBestState
+
+from multimil.dataloaders import GroupAnnDataLoader, GroupDataSplitter
+from multimil.module import MILClassifierTorch
+from multimil.utils import (
+    get_bag_info,
+    get_predictions,
+    plt_plot_losses,
+    prep_minibatch,
+    save_predictions_in_adata,
+    select_covariates,
+    setup_ordinal_regression,
+)
 
 logger = logging.getLogger(__name__)
+
 
 class MILClassifier(BaseModelClass, ArchesMixin):
     def __init__(
         self,
         adata,
         sample_key,
-        classification=[],
-        regression=[],
-        ordinal_regression=[],
+        classification=None,
+        regression=None,
+        ordinal_regression=None,
         sample_batch_size=128,
         normalization="layer",
-        z_dim=16, # TODO do we need it? can't we get it from adata?
+        z_dim=16,  # TODO do we need it? can't we get it from adata?
         dropout=0.2,
-        scoring="gated_attn", # TODO test if MLP is supported and if we want to keep it
+        scoring="gated_attn",  # TODO test if MLP is supported and if we want to keep it
         attn_dim=16,
         n_layers_cell_aggregator: int = 1,
         n_layers_classifier: int = 2,
@@ -45,8 +54,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         n_hidden_regressor: int = 128,
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
-        activation='leaky_relu', # or tanh
-        initialization=None, # xavier (tanh) or kaiming (leaky_relu)
+        activation="leaky_relu",  # or tanh
+        initialization=None,  # xavier (tanh) or kaiming (leaky_relu)
         anneal_class_loss=False,
         ignore_covariates=None,
     ):
@@ -105,14 +114,21 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         """
         super().__init__(adata)
 
+        if classification is None:
+            classification = []
+        if regression is None:
+            regression = []
+        if ordinal_regression is None:
+            ordinal_regression = []
+
         self.sample_key = sample_key
         self.scoring = scoring
 
         if self.sample_key not in self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
-                raise ValueError(
-                    f"Sample key = '{self.sample_key}' has to be one of the registered categorical covariates = {self.adata_manager.registry['setup_args']['categorical_covariate_keys']}"
-                )
-       
+            raise ValueError(
+                f"Sample key = '{self.sample_key}' has to be one of the registered categorical covariates = {self.adata_manager.registry['setup_args']['categorical_covariate_keys']}"
+            )
+
         if len(classification) + len(regression) + len(ordinal_regression) == 0:
             raise ValueError(
                 'At least one of "classification", "regression", "ordinal_regression" has to be specified.'
@@ -134,45 +150,45 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 n_layers_mlp_attn = 1
             if not n_hidden_mlp_attn:
                 n_hidden_mlp_attn = 16
-        
+
         self.regression_idx = []
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
-            for key in cont_covs['columns']:
+            for key in cont_covs["columns"]:
                 if key in self.regression:
-                    self.regression_idx.append(
-                        list(cont_covs['columns']).index(key)
-                    )
-                else: # only can happen when using multivae_mil
+                    self.regression_idx.append(list(cont_covs["columns"]).index(key))
+                else:  # only can happen when using multivae_mil
                     if ignore_covariates is not None and key not in ignore_covariates:
                         warnings.warn(
-                            f"Registered continuous covariate '{key}' is not in regression covariates so will be ignored."
+                            f"Registered continuous covariate '{key}' is not in regression covariates so will be ignored.",
+                            stacklevel=2,
                         )
-       
+
         # classification and ordinal regression together here as ordinal regression values need to be registered as categorical covariates
         self.class_idx, self.ord_idx = [], []
         self.num_classification_classes = []
         if len(cat_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)) > 0:
             for i, num_cat in enumerate(cat_covs.n_cats_per_key):
-                cat_cov_name = cat_covs['field_keys'][i]
+                cat_cov_name = cat_covs["field_keys"][i]
                 if cat_cov_name in self.classification:
-                    self.num_classification_classes.append(
-                        num_cat
-                    )
+                    self.num_classification_classes.append(num_cat)
                     self.class_idx.append(i)
                 elif cat_cov_name in self.ordinal_regression:
-                    self.num_classification_classes.append(
-                        num_cat
-                    )
+                    self.num_classification_classes.append(num_cat)
                     self.ord_idx.append(i)
                 else:  # the actual categorical covariate, only can happen when using multivae_mil
-                    if ignore_covariates is not None and cat_cov_name not in ignore_covariates and cat_cov_name != self.sample_key:
+                    if (
+                        ignore_covariates is not None
+                        and cat_cov_name not in ignore_covariates
+                        and cat_cov_name != self.sample_key
+                    ):
                         warnings.warn(
-                            f"Registered categorical covariate '{cat_cov_name}' is not in classification or ordinal regression covariates and is not the sample covariate so will be ignored."
+                            f"Registered categorical covariate '{cat_cov_name}' is not in classification or ordinal regression covariates and is not the sample covariate so will be ignored.",
+                            stacklevel=2,
                         )
-                        
+
         for label in ordinal_regression:
             print(
-                f'The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with the `ordinal_regression_order` parameter.'
+                f"The order for {label} ordinal classes is: {adata.obs[label].cat.categories}. If you need to change the order, please rerun setup_anndata and specify the correct order with the `ordinal_regression_order` parameter."
             )
 
         self.class_idx = torch.tensor(self.class_idx)
@@ -211,27 +227,28 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
         train_size: float = 0.9,
-        validation_size: Optional[float] = None,
+        validation_size: float | None = None,
         batch_size: int = 256,
         weight_decay: float = 1e-3,
         eps: float = 1e-08,
         early_stopping: bool = True,
         save_best: bool = True,
-        check_val_every_n_epoch: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = None,
-        n_steps_kl_warmup: Optional[int] = None,
+        check_val_every_n_epoch: int | None = None,
+        n_epochs_kl_warmup: int | None = None,
+        n_steps_kl_warmup: int | None = None,
         adversarial_mixing: bool = False,
-        plan_kwargs: Optional[dict] = None,
-        early_stopping_monitor: Optional[str] = "accuracy_validation",
-        early_stopping_mode: Optional[str] = "max",
-        save_checkpoint_every_n_epochs: Optional[int] = None,
-        path_to_checkpoints: Optional[str] = None,
+        plan_kwargs: dict | None = None,
+        early_stopping_monitor: str | None = "accuracy_validation",
+        early_stopping_mode: str | None = "max",
+        save_checkpoint_every_n_epochs: int | None = None,
+        path_to_checkpoints: str | None = None,
         **kwargs,
     ):
         """
         Trains the model using amortized variational inference.
+
         Parameters
         ----------
         max_epochs
@@ -286,7 +303,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         # TODO put in a function, return params needed for splitter, plan and runner, then can call the function from multivae_mil
         if len(self.regression) > 0:
             if early_stopping_monitor == "accuracy_validation":
-                warnings.warn("Setting early_stopping_monitor to 'regression_loss_validation' and early_stopping_mode to 'min' as regression is used.")
+                warnings.warn(
+                    "Setting early_stopping_monitor to 'regression_loss_validation' and early_stopping_mode to 'min' as regression is used.",
+                    stacklevel=2,
+                )
                 early_stopping_monitor = "regression_loss_validation"
                 early_stopping_mode = "min"
         if n_epochs_kl_warmup is None:
@@ -309,19 +329,23 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         if save_best:
             if "callbacks" not in kwargs.keys():
                 kwargs["callbacks"] = []
-            kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor,  mode=early_stopping_mode))
+            kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor, mode=early_stopping_mode))
 
         if save_checkpoint_every_n_epochs is not None:
             if path_to_checkpoints is not None:
-                kwargs["callbacks"].append(ModelCheckpoint(
-                    dirpath = path_to_checkpoints,
-                    save_top_k = -1,
-                    monitor = 'epoch',
-                    every_n_epochs = save_checkpoint_every_n_epochs,
-                    verbose = True,
-                ))
+                kwargs["callbacks"].append(
+                    ModelCheckpoint(
+                        dirpath=path_to_checkpoints,
+                        save_top_k=-1,
+                        monitor="epoch",
+                        every_n_epochs=save_checkpoint_every_n_epochs,
+                        verbose=True,
+                    )
+                )
             else:
-                raise ValueError(f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}.")
+                raise ValueError(
+                    f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}."
+                )
         # until here
 
         data_splitter = GroupDataSplitter(
@@ -354,9 +378,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
     def setup_anndata(
         cls,
         adata: ad.AnnData,
-        categorical_covariate_keys: Optional[List[str]] = None,
-        continuous_covariate_keys: Optional[List[str]] = None,
-        ordinal_regression_order: Optional[Dict[str, List[str]]] = None,
+        categorical_covariate_keys: list[str] | None = None,
+        continuous_covariate_keys: list[str] | None = None,
+        ordinal_regression_order: dict[str, list[str]] | None = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object.
@@ -376,25 +400,21 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         :param kwargs:
             Additional parameters to pass to register_fields() of AnnDataManager
         """
-
         setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
         anndata_fields = [
-            fields.LayerField(REGISTRY_KEYS.X_KEY, layer=None,),
+            fields.LayerField(
+                REGISTRY_KEYS.X_KEY,
+                layer=None,
+            ),
             fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, None),
-            fields.CategoricalJointObsField(
-                REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
-            ),
-            fields.NumericalJointObsField(
-                REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
-            ),
+            fields.CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
+            fields.NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]
 
-        adata_manager = AnnDataManager(
-            fields=anndata_fields, setup_method_args=setup_method_args
-        )
+        adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
 
@@ -443,7 +463,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         cell_counter = 0
 
         for tensors in scdl:
-
             cont_key = REGISTRY_KEYS.CONT_COVS_KEY
             cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
@@ -457,28 +476,46 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             # get attention for each cell in the bag
             cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
             sample_size = cell_attn.shape[-1]
-            cell_attn = (
-                cell_attn.flatten()
-            )  # in inference always one patient per batch
+            cell_attn = cell_attn.flatten()  # in inference always one patient per batch
             cell_level_attn += [cell_attn.cpu()]
             minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.module.sample_batch_size)
             regression = select_covariates(cont_covs, self.regression_idx, n_samples_in_batch)
             ordinal_regression = select_covariates(cat_covs, self.ord_idx, n_samples_in_batch)
             classification = select_covariates(cat_covs, self.class_idx, n_samples_in_batch)
-            
 
             # calculate accuracies of predictions
-            bag_class_pred, bag_class_true, class_pred = get_predictions(self.class_idx, pred, classification, sample_size, bag_class_pred, bag_class_true, class_pred)
-            bag_ord_pred, bag_ord_true, ord_pred = get_predictions(self.ord_idx, pred, ordinal_regression, sample_size, bag_ord_pred, bag_ord_true, ord_pred, len(self.class_idx))
-            bag_reg_pred, bag_reg_true, reg_pred = get_predictions(self.regression_idx, pred, regression, sample_size, bag_reg_pred, bag_reg_true, reg_pred, len(self.class_idx) + len(self.ord_idx))
+            bag_class_pred, bag_class_true, class_pred = get_predictions(
+                self.class_idx, pred, classification, sample_size, bag_class_pred, bag_class_true, class_pred
+            )
+            bag_ord_pred, bag_ord_true, ord_pred = get_predictions(
+                self.ord_idx,
+                pred,
+                ordinal_regression,
+                sample_size,
+                bag_ord_pred,
+                bag_ord_true,
+                ord_pred,
+                len(self.class_idx),
+            )
+            bag_reg_pred, bag_reg_true, reg_pred = get_predictions(
+                self.regression_idx,
+                pred,
+                regression,
+                sample_size,
+                bag_reg_pred,
+                bag_reg_true,
+                reg_pred,
+                len(self.class_idx) + len(self.ord_idx),
+            )
 
             # TODO remove n_of_bags_in_batch after testing
             n_of_bags_in_batch = pred[0].shape[0]
             assert n_samples_in_batch == n_of_bags_in_batch
 
             # save bag info to be able to calculate bag predictions later
-            bags, cell_counter, bag_counter = get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, self.module.sample_batch_size)
-            
+            bags, cell_counter, bag_counter = get_bag_info(
+                bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, self.module.sample_batch_size
+            )
 
         cell_level = torch.cat(cell_level_attn).numpy()
         adata.obs["cell_attn"] = cell_level
@@ -487,20 +524,34 @@ class MILClassifier(BaseModelClass, ArchesMixin):
 
         for i in range(len(self.class_idx)):
             name = self.classification[i]
-            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            save_predictions_in_adata(adata, i, self.classification, bag_class_pred, bag_class_true, class_pred, class_names, name, clip='argmax')
+            class_names = self.adata_manager.get_state_registry("extra_categorical_covs")["mappings"][name]
+            save_predictions_in_adata(
+                adata,
+                i,
+                self.classification,
+                bag_class_pred,
+                bag_class_true,
+                class_pred,
+                class_names,
+                name,
+                clip="argmax",
+            )
         for i in range(len(self.ord_idx)):
             name = self.ordinal_regression[i]
-            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            save_predictions_in_adata(adata, i, self.ordinal_regression, bag_ord_pred, bag_ord_true, ord_pred, class_names, name, clip='clip')
+            class_names = self.adata_manager.get_state_registry("extra_categorical_covs")["mappings"][name]
+            save_predictions_in_adata(
+                adata, i, self.ordinal_regression, bag_ord_pred, bag_ord_true, ord_pred, class_names, name, clip="clip"
+            )
         for i in range(len(self.regression_idx)):
             name = self.regression[i]
-            reg_names = self.adata_manager.get_state_registry('extra_continuous_covs')['columns']
-            save_predictions_in_adata(adata, i, self.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip=None, reg=True)
-     
+            reg_names = self.adata_manager.get_state_registry("extra_continuous_covs")["columns"]
+            save_predictions_in_adata(
+                adata, i, self.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip=None, reg=True
+            )
+
     def plot_losses(self, save=None):
         """Plot losses.
-        
+
         :param save:
             If not None, save the plot to this location.
         """
@@ -515,7 +566,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         cls,
         adata: AnnData,
         reference_model: BaseModelClass,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
     ):
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -529,27 +580,19 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             Load model on default GPU if available (if None or True),
             or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False)
         """
-
         # currently this function works only if the prediction cov is present in the .obs of the query
         # TODO need to allow it to be missing, maybe add a dummy column to .obs of query adata
 
         _, _, device = parse_use_gpu_arg(use_gpu)
 
-        attr_dict, _, _ = _get_loaded_data(
-            reference_model, device=device
-        )
+        attr_dict, _, _ = _get_loaded_data(reference_model, device=device)
 
         registry = attr_dict.pop("registry_")
         if _MODEL_NAME_KEY in registry and registry[_MODEL_NAME_KEY] != cls.__name__:
-            raise ValueError(
-                "It appears you are loading a model from a different class."
-            )
+            raise ValueError("It appears you are loading a model from a different class.")
 
         if _SETUP_ARGS_KEY not in registry:
-            raise ValueError(
-                "Saved model does not contain original setup inputs. "
-                "Cannot load the original setup."
-            )
+            raise ValueError("Saved model does not contain original setup inputs. " "Cannot load the original setup.")
 
         cls.setup_anndata(
             adata,

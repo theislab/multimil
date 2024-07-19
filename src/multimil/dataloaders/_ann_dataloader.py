@@ -1,6 +1,5 @@
 import copy
 import itertools
-from typing import Optional, Union
 
 import numpy as np
 import torch
@@ -34,7 +33,7 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
         batch_size: int,
         min_size_per_class: int,
         shuffle: bool = True,
-        drop_last: Union[bool, int] = True,
+        drop_last: bool | int = True,
         shuffle_classes: bool = True,
     ):
         if drop_last > batch_size:
@@ -168,9 +167,9 @@ class GroupAnnDataLoader(DataLoader):
         indices=None,
         batch_size=128,
         min_size_per_class=None,
-        data_and_attributes: Optional[dict] = None,
-        drop_last: Union[bool, int] = True,
-        sampler: Optional[torch.utils.data.sampler.Sampler] = StratifiedSampler,
+        data_and_attributes: dict | None = None,
+        drop_last: bool | int = True,
+        sampler: torch.utils.data.sampler.Sampler | None = StratifiedSampler,
         **data_loader_kwargs,
     ):
         if adata_manager.adata is None:

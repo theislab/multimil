@@ -1,295 +1,311 @@
-import torch
 import logging
-import anndata as ad
 import warnings
 
-from ..model import MultiVAE, MILClassifier
-from ..dataloaders import GroupDataSplitter, GroupAnnDataLoader
-from ..module import MultiVAETorch_MIL
-from ..utils import calculate_size_factor, setup_ordinal_regression, select_covariates, prep_minibatch, get_predictions, get_bag_info, save_predictions_in_adata, plt_plot_losses
-from typing import List, Optional, Union, Dict
-from scvi.model.base import BaseModelClass, ArchesMixin
-from scvi.model.base._archesmixin import _get_loaded_data
-from scvi.train._callbacks import SaveBestState
-from pytorch_lightning.callbacks import ModelCheckpoint
-from scvi.train import TrainRunner, AdversarialTrainingPlan
-from scvi import REGISTRY_KEYS
-from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
-from scvi.data import AnnDataManager, fields
+import anndata as ad
+import torch
 from anndata import AnnData
+from pytorch_lightning.callbacks import ModelCheckpoint
+from scvi import REGISTRY_KEYS
+from scvi.data import AnnDataManager, fields
+from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
 from scvi.model._utils import parse_use_gpu_arg
+from scvi.model.base import ArchesMixin, BaseModelClass
+from scvi.model.base._archesmixin import _get_loaded_data
 from scvi.model.base._utils import _initialize_model
+from scvi.train import AdversarialTrainingPlan, TrainRunner
+from scvi.train._callbacks import SaveBestState
+
+from multimil.dataloaders import GroupAnnDataLoader, GroupDataSplitter
+from multimil.model import MILClassifier, MultiVAE
+from multimil.module import MultiVAETorch_MIL
+from multimil.utils import (
+    calculate_size_factor,
+    get_bag_info,
+    get_predictions,
+    plt_plot_losses,
+    prep_minibatch,
+    save_predictions_in_adata,
+    select_covariates,
+    setup_ordinal_regression,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def __init__(
-            self,
+        self,
+        adata,
+        sample_key,
+        classification=None,
+        regression=None,
+        ordinal_regression=None,
+        sample_batch_size=128,
+        integrate_on=None,
+        condition_encoders=False,
+        condition_decoders=True,
+        normalization="layer",
+        n_layers_encoders=None,
+        n_layers_decoders=None,
+        n_hidden_encoders=None,
+        n_hidden_decoders=None,
+        z_dim=30,
+        losses=None,
+        dropout=0.2,
+        cond_dim=16,
+        kernel_type="gaussian",
+        loss_coefs=None,
+        scoring="gated_attn",
+        attn_dim=16,
+        n_layers_cell_aggregator: int = 1,
+        n_layers_classifier: int = 2,
+        n_layers_regressor: int = 1,
+        n_layers_mlp_attn: int = 1,
+        n_layers_cont_embed: int = 1,
+        n_hidden_cell_aggregator: int = 128,
+        n_hidden_classifier: int = 128,
+        n_hidden_cont_embed: int = 128,
+        n_hidden_mlp_attn: int = 32,
+        n_hidden_regressor: int = 128,
+        class_loss_coef=1.0,
+        regression_loss_coef=1.0,
+        cont_cov_type="logsigm",
+        mmd="latent",
+        sample_in_vae=True,
+        activation="leaky_relu",  # or tanh
+        initialization="kaiming",  # xavier (tanh) or kaiming (leaky_relu)
+        anneal_class_loss=False,
+    ):
+        """
+        Initialize the MultiVAE_MIL model.
+
+        :param adata: Annotated data object.
+        :param sample_key: Key for the sample column in the adata object.
+        :param classification: List of keys for the categorical covariates used for classification.
+        :param regression: List of keys for the continuous covariates used for regression.
+        :param ordinal_regression: List of keys for the ordinal covariates used for ordinal regression.
+        :param sample_batch_size: Batch size for training the model.
+        :param integrate_on: Key for the covariate used for integration.
+        :param condition_encoders: Whether to condition the encoders on the covariates.
+        :param condition_decoders: Whether to condition the decoders on the covariates.
+        :param normalization: Type of normalization to be applied.
+        :param n_layers_encoders: Number of layers in the encoders.
+        :param n_layers_decoders: Number of layers in the decoders.
+        :param n_hidden_encoders: Number of hidden units in the encoders.
+        :param n_hidden_decoders: Number of hidden units in the decoders.
+        :param z_dim: Dimensionality of the latent space.
+        :param losses: List of loss functions to be used.
+        :param dropout: Dropout rate.
+        :param cond_dim: Dimensionality of the conditional covariates.
+        :param kernel_type: Type of kernel to be used.
+        :param loss_coefs: List of coefficients for the loss functions.
+        :param scoring: Scoring method for the MIL classifier.
+        :param attn_dim: Dimensionality of the attention mechanism.
+        :param n_layers_cell_aggregator: Number of layers in the cell aggregator.
+        :param n_layers_classifier: Number of layers in the classifier.
+        :param n_layers_regressor: Number of layers in the regressor.
+        :param n_layers_mlp_attn: Number of layers in the MLP attention mechanism.
+        :param n_layers_cont_embed: Number of layers in the continuous embedding.
+        :param n_hidden_cell_aggregator: Number of hidden units in the cell aggregator.
+        :param n_hidden_classifier: Number of hidden units in the classifier.
+        :param n_hidden_cont_embed: Number of hidden units in the continuous embedding.
+        :param n_hidden_mlp_attn: Number of hidden units in the MLP attention mechanism.
+        :param n_hidden_regressor: Number of hidden units in the regressor.
+        :param class_loss_coef: Coefficient for the classification loss.
+        :param regression_loss_coef: Coefficient for the regression loss.
+        :param cont_cov_type: Type of continuous covariate.
+        :param mmd: Type of maximum mean discrepancy.
+        :param sample_in_vae: Whether to include the sample key in the VAE.
+        :param activation: Activation function to be used.
+        :param initialization: Initialization method for the model.
+        :param anneal_class_loss: Whether to anneal the classification loss.
+        """
+        super().__init__(adata)
+
+        if classification is None:
+            classification = []
+        if regression is None:
+            regression = []
+        if ordinal_regression is None:
+            ordinal_regression = []
+
+        # add prediction covariates to ignore_covariates_vae
+        ignore_covariates_vae = []
+        if sample_in_vae is False:
+            ignore_covariates_vae.append(sample_key)
+        for key in classification + ordinal_regression + regression:
+            ignore_covariates_vae.append(key)
+
+        setup_args = self.adata_manager.registry["setup_args"].copy()
+
+        setup_args.pop("ordinal_regression_order")
+        MultiVAE.setup_anndata(
             adata,
-            sample_key,
-            classification=[],
-            regression=[],
-            ordinal_regression=[],
-            sample_batch_size=128,
-            integrate_on=None,
-            condition_encoders=False,
-            condition_decoders=True,
-            normalization="layer",
-            n_layers_encoders=None,
-            n_layers_decoders=None,
-            n_hidden_encoders=None,
-            n_hidden_decoders=None,
-            z_dim=30,
-            losses=[],
-            dropout=0.2,
-            cond_dim=16,
-            kernel_type="gaussian",
-            loss_coefs=[],
-            scoring="gated_attn",
-            attn_dim=16,
-            n_layers_cell_aggregator: int = 1,
-            n_layers_classifier: int = 2,
-            n_layers_regressor: int = 1,
-            n_layers_mlp_attn: int = 1,
-            n_layers_cont_embed: int = 1,
-            n_hidden_cell_aggregator: int = 128,
-            n_hidden_classifier: int = 128,
-            n_hidden_cont_embed: int = 128,
-            n_hidden_mlp_attn: int = 32,
-            n_hidden_regressor: int = 128,
-            class_loss_coef=1.0,
-            regression_loss_coef=1.0,
-            cont_cov_type="logsigm",
-            mmd="latent",
-            sample_in_vae=True,
-            activation='leaky_relu', # or tanh
-            initialization='kaiming', # xavier (tanh) or kaiming (leaky_relu)
-            anneal_class_loss=False,
-        ):
-            """
-            Initialize the MultiVAE_MIL model.
+            **setup_args,
+        )
 
-            :param adata: Annotated data object.
-            :param sample_key: Key for the sample column in the adata object.
-            :param classification: List of keys for the categorical covariates used for classification.
-            :param regression: List of keys for the continuous covariates used for regression.
-            :param ordinal_regression: List of keys for the ordinal covariates used for ordinal regression.
-            :param sample_batch_size: Batch size for training the model.
-            :param integrate_on: Key for the covariate used for integration.
-            :param condition_encoders: Whether to condition the encoders on the covariates.
-            :param condition_decoders: Whether to condition the decoders on the covariates.
-            :param normalization: Type of normalization to be applied.
-            :param n_layers_encoders: Number of layers in the encoders.
-            :param n_layers_decoders: Number of layers in the decoders.
-            :param n_hidden_encoders: Number of hidden units in the encoders.
-            :param n_hidden_decoders: Number of hidden units in the decoders.
-            :param z_dim: Dimensionality of the latent space.
-            :param losses: List of loss functions to be used.
-            :param dropout: Dropout rate.
-            :param cond_dim: Dimensionality of the conditional covariates.
-            :param kernel_type: Type of kernel to be used.
-            :param loss_coefs: List of coefficients for the loss functions.
-            :param scoring: Scoring method for the MIL classifier.
-            :param attn_dim: Dimensionality of the attention mechanism.
-            :param n_layers_cell_aggregator: Number of layers in the cell aggregator.
-            :param n_layers_classifier: Number of layers in the classifier.
-            :param n_layers_regressor: Number of layers in the regressor.
-            :param n_layers_mlp_attn: Number of layers in the MLP attention mechanism.
-            :param n_layers_cont_embed: Number of layers in the continuous embedding.
-            :param n_hidden_cell_aggregator: Number of hidden units in the cell aggregator.
-            :param n_hidden_classifier: Number of hidden units in the classifier.
-            :param n_hidden_cont_embed: Number of hidden units in the continuous embedding.
-            :param n_hidden_mlp_attn: Number of hidden units in the MLP attention mechanism.
-            :param n_hidden_regressor: Number of hidden units in the regressor.
-            :param class_loss_coef: Coefficient for the classification loss.
-            :param regression_loss_coef: Coefficient for the regression loss.
-            :param cont_cov_type: Type of continuous covariate.
-            :param mmd: Type of maximum mean discrepancy.
-            :param sample_in_vae: Whether to include the sample key in the VAE.
-            :param activation: Activation function to be used.
-            :param initialization: Initialization method for the model.
-            :param anneal_class_loss: Whether to anneal the classification loss.
-            """
-            
-            super().__init__(adata)
+        self.multivae = MultiVAE(
+            adata=adata,
+            integrate_on=integrate_on,
+            condition_encoders=condition_encoders,
+            condition_decoders=condition_decoders,
+            normalization=normalization,
+            z_dim=z_dim,
+            losses=losses,
+            dropout=dropout,
+            cond_dim=cond_dim,
+            kernel_type=kernel_type,
+            loss_coefs=loss_coefs,
+            cont_cov_type=cont_cov_type,
+            n_layers_cont_embed=n_layers_cont_embed,
+            n_layers_encoders=n_layers_encoders,
+            n_layers_decoders=n_layers_decoders,
+            n_hidden_cont_embed=n_hidden_cont_embed,
+            n_hidden_encoders=n_hidden_encoders,
+            n_hidden_decoders=n_hidden_decoders,
+            mmd=mmd,
+            activation=activation,
+            initialization=initialization,
+            ignore_covariates=ignore_covariates_vae,
+        )
 
-            # add prediction covariates to ignore_covariates_vae
-            ignore_covariates_vae = []
-            if sample_in_vae is False:
-                ignore_covariates_vae.append(sample_key)
-            for key in classification + ordinal_regression + regression:
-                    ignore_covariates_vae.append(key)
-            
-            setup_args = self.adata_manager.registry["setup_args"].copy()
+        # add all actual categorical covariates to ignore_covariates_mil
+        ignore_covariates_mil = []
+        if self.adata_manager.registry["setup_args"]["categorical_covariate_keys"] is not None:
+            for cat_name in self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
+                if cat_name not in classification + ordinal_regression + [sample_key]:
+                    ignore_covariates_mil.append(cat_name)
+        # add all actual continuous covariates to ignore_covariates_mil
+        if self.adata_manager.registry["setup_args"]["continuous_covariate_keys"] is not None:
+            for cat_name in self.adata_manager.registry["setup_args"]["continuous_covariate_keys"]:
+                if cat_name not in regression:
+                    ignore_covariates_mil.append(cat_name)
 
-            setup_args.pop('ordinal_regression_order')
-            MultiVAE.setup_anndata(
-                adata,
-                **setup_args,
-            )
+        setup_args = self.adata_manager.registry["setup_args"].copy()
+        # setup_args.pop('batch_key')
+        setup_args.pop("size_factor_key")
+        setup_args.pop("rna_indices_end")
 
-            self.multivae = MultiVAE(
-                adata=adata,
-                integrate_on=integrate_on,
-                condition_encoders=condition_encoders,
-                condition_decoders=condition_decoders,
-                normalization=normalization,
-                z_dim=z_dim,
-                losses=losses,
-                dropout=dropout,
-                cond_dim=cond_dim,
-                kernel_type=kernel_type,
-                loss_coefs=loss_coefs,
-                cont_cov_type=cont_cov_type,
-                n_layers_cont_embed=n_layers_cont_embed,
-                n_layers_encoders=n_layers_encoders,
-                n_layers_decoders=n_layers_decoders,
-                n_hidden_cont_embed=n_hidden_cont_embed,
-                n_hidden_encoders=n_hidden_encoders,
-                n_hidden_decoders=n_hidden_decoders,
-                mmd=mmd,
-                activation=activation,
-                initialization=initialization,
-                ignore_covariates=ignore_covariates_vae,
-            )
+        MILClassifier.setup_anndata(
+            adata=adata,
+            **setup_args,
+        )
 
-            # add all actual categorical covariates to ignore_covariates_mil
-            ignore_covariates_mil = []
-            if self.adata_manager.registry["setup_args"]["categorical_covariate_keys"] is not None:
-                for cat_name in self.adata_manager.registry["setup_args"]["categorical_covariate_keys"]:
-                    if cat_name not in classification + ordinal_regression + [sample_key]:
-                        ignore_covariates_mil.append(cat_name)
-            # add all actual continuous covariates to ignore_covariates_mil
-            if self.adata_manager.registry["setup_args"]["continuous_covariate_keys"] is not None:
-                for cat_name in self.adata_manager.registry["setup_args"]["continuous_covariate_keys"]:
-                    if cat_name not in regression:
-                        ignore_covariates_mil.append(cat_name)
+        self.mil = MILClassifier(
+            adata=adata,
+            sample_key=sample_key,
+            classification=classification,
+            regression=regression,
+            ordinal_regression=ordinal_regression,
+            sample_batch_size=sample_batch_size,
+            normalization=normalization,
+            z_dim=z_dim,
+            dropout=dropout,
+            scoring=scoring,
+            attn_dim=attn_dim,
+            n_layers_cell_aggregator=n_layers_cell_aggregator,
+            n_layers_classifier=n_layers_classifier,
+            n_layers_mlp_attn=n_layers_mlp_attn,
+            n_layers_regressor=n_layers_regressor,
+            n_hidden_regressor=n_hidden_regressor,
+            n_hidden_cell_aggregator=n_hidden_cell_aggregator,
+            n_hidden_classifier=n_hidden_classifier,
+            n_hidden_mlp_attn=n_hidden_mlp_attn,
+            class_loss_coef=class_loss_coef,
+            regression_loss_coef=regression_loss_coef,
+            activation=activation,
+            initialization=initialization,
+            anneal_class_loss=anneal_class_loss,
+            ignore_covariates=ignore_covariates_mil,
+        )
+        # TODO check if don't have to set these to None, rather reference them in self.module
+        # i.e. create a MultiVAETorch_MIL, it will create some module inside, but then do
+        # self.module.vae_module = self.multivae.module and
+        # self.module.mil_module = self.mil.module
 
-            setup_args = self.adata_manager.registry["setup_args"].copy()
-            # setup_args.pop('batch_key')
-            setup_args.pop('size_factor_key')
-            setup_args.pop('rna_indices_end')
+        # clear up memory
+        self.multivae.module = None
+        self.mil.module = None
 
-            MILClassifier.setup_anndata(
-                adata=adata,
-                **setup_args,
-            )
+        self.sample_in_vae = sample_in_vae
 
-            self.mil = MILClassifier(
-                adata=adata,
-                sample_key=sample_key,
-                classification=classification,
-                regression=regression,
-                ordinal_regression=ordinal_regression,
-                sample_batch_size=sample_batch_size,
-                normalization=normalization,
-                z_dim=z_dim,
-                dropout=dropout,
-                scoring=scoring,
-                attn_dim=attn_dim,
-                n_layers_cell_aggregator=n_layers_cell_aggregator,
-                n_layers_classifier=n_layers_classifier,
-                n_layers_mlp_attn=n_layers_mlp_attn,
-                n_layers_regressor=n_layers_regressor,
-                n_hidden_regressor=n_hidden_regressor,
-                n_hidden_cell_aggregator=n_hidden_cell_aggregator,
-                n_hidden_classifier=n_hidden_classifier,
-                n_hidden_mlp_attn=n_hidden_mlp_attn,
-                class_loss_coef=class_loss_coef,
-                regression_loss_coef=regression_loss_coef,
-                activation=activation,
-                initialization=initialization,
-                anneal_class_loss=anneal_class_loss,
-                ignore_covariates=ignore_covariates_mil,
-            )
-            # TODO check if don't have to set these to None, rather reference them in self.module
-            # i.e. create a MultiVAETorch_MIL, it will create some module inside, but then do
-            # self.module.vae_module = self.multivae.module and
-            # self.module.mil_module = self.mil.module
-            
-            # clear up memory
-            self.multivae.module = None
-            self.mil.module = None
+        self.module = MultiVAETorch_MIL(
+            # vae
+            modality_lengths=self.multivae.modality_lengths,
+            condition_encoders=condition_encoders,
+            condition_decoders=condition_decoders,
+            normalization=normalization,
+            activation=activation,
+            initialization=initialization,
+            z_dim=z_dim,
+            losses=losses,
+            dropout=dropout,
+            cond_dim=cond_dim,
+            kernel_type=kernel_type,
+            loss_coefs=loss_coefs,
+            num_groups=self.multivae.num_groups,
+            integrate_on_idx=self.multivae.integrate_on_idx,
+            n_layers_encoders=n_layers_encoders,
+            n_layers_decoders=n_layers_decoders,
+            n_layers_cont_embed=n_layers_cont_embed,
+            n_hidden_encoders=n_hidden_encoders,
+            n_hidden_decoders=n_hidden_decoders,
+            n_hidden_cont_embed=n_hidden_cont_embed,
+            cat_covariate_dims=self.multivae.cat_covariate_dims,
+            cont_covariate_dims=self.multivae.cont_covariate_dims,
+            cat_covs_idx=self.multivae.cat_covs_idx,
+            cont_covs_idx=self.multivae.cont_covs_idx,
+            cont_cov_type=cont_cov_type,
+            mmd=mmd,
+            # mil
+            num_classification_classes=self.mil.num_classification_classes,
+            scoring=scoring,
+            attn_dim=attn_dim,
+            n_layers_cell_aggregator=n_layers_cell_aggregator,
+            n_layers_classifier=n_layers_classifier,
+            n_layers_mlp_attn=n_layers_mlp_attn,
+            n_layers_regressor=n_layers_regressor,
+            n_hidden_regressor=n_hidden_regressor,
+            n_hidden_cell_aggregator=n_hidden_cell_aggregator,
+            n_hidden_classifier=n_hidden_classifier,
+            n_hidden_mlp_attn=n_hidden_mlp_attn,
+            class_loss_coef=class_loss_coef,
+            regression_loss_coef=regression_loss_coef,
+            sample_batch_size=sample_batch_size,
+            class_idx=self.mil.class_idx,
+            ord_idx=self.mil.ord_idx,
+            reg_idx=self.mil.regression_idx,
+            anneal_class_loss=anneal_class_loss,
+        )
 
-            self.sample_in_vae = sample_in_vae
-
-            self.module = MultiVAETorch_MIL(
-                # vae
-                modality_lengths=self.multivae.modality_lengths,
-                condition_encoders=condition_encoders,
-                condition_decoders=condition_decoders,
-                normalization=normalization,
-                activation=activation,
-                initialization=initialization,
-                z_dim=z_dim,
-                losses=losses,
-                dropout=dropout,
-                cond_dim=cond_dim,
-                kernel_type=kernel_type,
-                loss_coefs=loss_coefs,
-                num_groups=self.multivae.num_groups,
-                integrate_on_idx=self.multivae.integrate_on_idx,
-                n_layers_encoders=n_layers_encoders,
-                n_layers_decoders=n_layers_decoders,
-                n_layers_cont_embed=n_layers_cont_embed,
-                n_hidden_encoders=n_hidden_encoders,
-                n_hidden_decoders=n_hidden_decoders,
-                n_hidden_cont_embed=n_hidden_cont_embed,
-                cat_covariate_dims=self.multivae.cat_covariate_dims,
-                cont_covariate_dims=self.multivae.cont_covariate_dims,
-                cat_covs_idx=self.multivae.cat_covs_idx,
-                cont_covs_idx=self.multivae.cont_covs_idx,
-                cont_cov_type=cont_cov_type,
-                mmd=mmd,
-                # mil
-                num_classification_classes=self.mil.num_classification_classes,
-                scoring=scoring,
-                attn_dim=attn_dim,
-                n_layers_cell_aggregator=n_layers_cell_aggregator,
-                n_layers_classifier=n_layers_classifier,
-                n_layers_mlp_attn=n_layers_mlp_attn,
-                n_layers_regressor=n_layers_regressor,
-                n_hidden_regressor=n_hidden_regressor,
-                n_hidden_cell_aggregator=n_hidden_cell_aggregator,
-                n_hidden_classifier=n_hidden_classifier,
-                n_hidden_mlp_attn=n_hidden_mlp_attn,
-                class_loss_coef=class_loss_coef,
-                regression_loss_coef=regression_loss_coef,
-                sample_batch_size=sample_batch_size,
-                class_idx=self.mil.class_idx,
-                ord_idx=self.mil.ord_idx,
-                reg_idx=self.mil.regression_idx,
-                anneal_class_loss=anneal_class_loss,
-            )
-
-            self.init_params_ = self._get_init_params(locals())
+        self.init_params_ = self._get_init_params(locals())
 
     def train(
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
         train_size: float = 0.9,
-        validation_size: Optional[float] = None,
+        validation_size: float | None = None,
         batch_size: int = 256,
         weight_decay: float = 1e-3,
         eps: float = 1e-08,
         early_stopping: bool = True,
         save_best: bool = True,
-        check_val_every_n_epoch: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = None,
-        n_steps_kl_warmup: Optional[int] = None,
+        check_val_every_n_epoch: int | None = None,
+        n_epochs_kl_warmup: int | None = None,
+        n_steps_kl_warmup: int | None = None,
         adversarial_mixing: bool = False,
-        plan_kwargs: Optional[dict] = None,
-        early_stopping_monitor: Optional[str] = "accuracy_validation",
-        early_stopping_mode: Optional[str] = "max",
-        save_checkpoint_every_n_epochs: Optional[int] = None,
-        path_to_checkpoints: Optional[str] = None,
+        plan_kwargs: dict | None = None,
+        early_stopping_monitor: str | None = "accuracy_validation",
+        early_stopping_mode: str | None = "max",
+        save_checkpoint_every_n_epochs: int | None = None,
+        path_to_checkpoints: str | None = None,
         **kwargs,
     ):
         """
         Trains the model using amortized variational inference.
+
         Parameters
         ----------
         max_epochs
@@ -343,7 +359,10 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         """
         if len(self.mil.regression) > 0:
             if early_stopping_monitor == "accuracy_validation":
-                warnings.warn("Setting early_stopping_monitor to 'regression_loss_validation' and early_stopping_mode to 'min' as regression is used.")
+                warnings.warn(
+                    "Setting early_stopping_monitor to 'regression_loss_validation' and early_stopping_mode to 'min' as regression is used.",
+                    stacklevel=2,
+                )
                 early_stopping_monitor = "regression_loss_validation"
                 early_stopping_mode = "min"
         if n_epochs_kl_warmup is None:
@@ -366,19 +385,23 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         if save_best:
             if "callbacks" not in kwargs.keys():
                 kwargs["callbacks"] = []
-            kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor,  mode=early_stopping_mode))
+            kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor, mode=early_stopping_mode))
 
         if save_checkpoint_every_n_epochs is not None:
             if path_to_checkpoints is not None:
-                kwargs["callbacks"].append(ModelCheckpoint(
-                    dirpath = path_to_checkpoints,
-                    save_top_k = -1,
-                    monitor = 'epoch',
-                    every_n_epochs = save_checkpoint_every_n_epochs,
-                    verbose = True,
-                ))
+                kwargs["callbacks"].append(
+                    ModelCheckpoint(
+                        dirpath=path_to_checkpoints,
+                        save_top_k=-1,
+                        monitor="epoch",
+                        every_n_epochs=save_checkpoint_every_n_epochs,
+                        verbose=True,
+                    )
+                )
             else:
-                raise ValueError(f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}.")
+                raise ValueError(
+                    f"`save_checkpoint_every_n_epochs` = {save_checkpoint_every_n_epochs} so `path_to_checkpoints` has to be not None but is {path_to_checkpoints}."
+                )
 
         data_splitter = GroupDataSplitter(
             self.adata_manager,
@@ -409,11 +432,11 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def setup_anndata(
         cls,
         adata: ad.AnnData,
-        size_factor_key: Optional[str] = None,
-        rna_indices_end: Optional[int] = None,
-        categorical_covariate_keys: Optional[List[str]] = None,
-        continuous_covariate_keys: Optional[List[str]] = None,
-        ordinal_regression_order: Optional[Dict[str, List[str]]] = None,
+        size_factor_key: str | None = None,
+        rna_indices_end: int | None = None,
+        categorical_covariate_keys: list[str] | None = None,
+        continuous_covariate_keys: list[str] | None = None,
+        ordinal_regression_order: dict[str, list[str]] | None = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object.
@@ -437,28 +460,24 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         :param kwargs:
             Additional parameters to pass to register_fields() of AnnDataManager
         """
-
         setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
         setup_method_args = cls._get_setup_method_args(**locals())
 
         # TODO first add from multivae, then from mil
         anndata_fields = [
-            fields.LayerField(REGISTRY_KEYS.X_KEY, layer=None,),
+            fields.LayerField(
+                REGISTRY_KEYS.X_KEY,
+                layer=None,
+            ),
             fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, None),
-            fields.CategoricalJointObsField(
-                REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
-            ),
-            fields.NumericalJointObsField(
-                REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
-            ),
+            fields.CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
+            fields.NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]
         size_factor_key = calculate_size_factor(adata, size_factor_key, rna_indices_end)
         anndata_fields.append(fields.NumericalObsField(REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key))
 
-        adata_manager = AnnDataManager(
-            fields=anndata_fields, setup_method_args=setup_method_args
-        )
+        adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
 
@@ -476,7 +495,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             Minibatch size to use. Default is 256.
 
         """
-
         if not self.is_trained_:
             raise RuntimeError("Please train the model first.")
 
@@ -508,13 +526,12 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         cell_counter = 0
 
         for tensors in scdl:
-
             cont_key = REGISTRY_KEYS.CONT_COVS_KEY
             cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
 
             cat_key = REGISTRY_KEYS.CAT_COVS_KEY
             cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
-            
+
             inference_inputs = self.module._get_inference_input(tensors)
             outputs = self.module.inference(**inference_inputs)
             z = outputs["z_joint"]
@@ -524,9 +541,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
             cell_attn = self.module.mil_module.cell_level_aggregator[-1].A.squeeze(dim=1)
             sample_size = cell_attn.shape[-1]
-            cell_attn = (
-                cell_attn.flatten()
-            )  # in inference always one patient per batch
+            cell_attn = cell_attn.flatten()  # in inference always one patient per batch
             cell_level_attn += [cell_attn.cpu()]
 
             minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.module.mil_module.sample_batch_size)
@@ -534,12 +549,38 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             ordinal_regression = select_covariates(cat_covs, self.mil.ord_idx, n_samples_in_batch)
             classification = select_covariates(cat_covs, self.mil.class_idx, n_samples_in_batch)
 
-            bag_class_pred, bag_class_true, class_pred = get_predictions(self.mil.class_idx, pred, classification, sample_size, bag_class_pred, bag_class_true, class_pred)
-            bag_ord_pred, bag_ord_true, ord_pred = get_predictions(self.mil.ord_idx, pred, ordinal_regression, sample_size, bag_ord_pred, bag_ord_true, ord_pred, len(self.mil.class_idx))
-            bag_reg_pred, bag_reg_true, reg_pred = get_predictions(self.mil.regression_idx, pred, regression, sample_size, bag_reg_pred, bag_reg_true, reg_pred, len(self.mil.class_idx) + len(self.mil.ord_idx))
+            bag_class_pred, bag_class_true, class_pred = get_predictions(
+                self.mil.class_idx, pred, classification, sample_size, bag_class_pred, bag_class_true, class_pred
+            )
+            bag_ord_pred, bag_ord_true, ord_pred = get_predictions(
+                self.mil.ord_idx,
+                pred,
+                ordinal_regression,
+                sample_size,
+                bag_ord_pred,
+                bag_ord_true,
+                ord_pred,
+                len(self.mil.class_idx),
+            )
+            bag_reg_pred, bag_reg_true, reg_pred = get_predictions(
+                self.mil.regression_idx,
+                pred,
+                regression,
+                sample_size,
+                bag_reg_pred,
+                bag_reg_true,
+                reg_pred,
+                len(self.mil.class_idx) + len(self.mil.ord_idx),
+            )
 
-            bags, cell_counter, bag_counter = get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, self.module.mil_module.sample_batch_size)
-            
+            bags, cell_counter, bag_counter = get_bag_info(
+                bags,
+                n_samples_in_batch,
+                minibatch_size,
+                cell_counter,
+                bag_counter,
+                self.module.mil_module.sample_batch_size,
+            )
 
         latent = torch.cat(latent).numpy()
         cell_level = torch.cat(cell_level_attn).numpy()
@@ -551,20 +592,51 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
         for i in range(len(self.mil.class_idx)):
             name = self.mil.classification[i]
-            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            save_predictions_in_adata(adata, i, self.mil.classification, bag_class_pred, bag_class_true, class_pred, class_names, name, clip='argmax')
+            class_names = self.adata_manager.get_state_registry("extra_categorical_covs")["mappings"][name]
+            save_predictions_in_adata(
+                adata,
+                i,
+                self.mil.classification,
+                bag_class_pred,
+                bag_class_true,
+                class_pred,
+                class_names,
+                name,
+                clip="argmax",
+            )
         for i in range(len(self.mil.ord_idx)):
             name = self.mil.ordinal_regression[i]
-            class_names = self.adata_manager.get_state_registry('extra_categorical_covs')['mappings'][name]
-            save_predictions_in_adata(adata, i, self.mil.ordinal_regression, bag_ord_pred, bag_ord_true, ord_pred, class_names, name, clip='clip')
+            class_names = self.adata_manager.get_state_registry("extra_categorical_covs")["mappings"][name]
+            save_predictions_in_adata(
+                adata,
+                i,
+                self.mil.ordinal_regression,
+                bag_ord_pred,
+                bag_ord_true,
+                ord_pred,
+                class_names,
+                name,
+                clip="clip",
+            )
         for i in range(len(self.mil.regression_idx)):
             name = self.mil.regression[i]
-            reg_names = self.adata_manager.get_state_registry('extra_continuous_covs')['columns']
-            save_predictions_in_adata(adata, i, self.mil.regression, bag_reg_pred, bag_reg_true, reg_pred, reg_names, name, clip=None, reg=True)
-     
+            reg_names = self.adata_manager.get_state_registry("extra_continuous_covs")["columns"]
+            save_predictions_in_adata(
+                adata,
+                i,
+                self.mil.regression,
+                bag_reg_pred,
+                bag_reg_true,
+                reg_pred,
+                reg_names,
+                name,
+                clip=None,
+                reg=True,
+            )
+
     def plot_losses(self, save=None):
         """Plot losses.
-        
+
         :param save:
             If not None, save the plot to this location.
         """
@@ -581,9 +653,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         cls,
         adata: AnnData,
         reference_model: BaseModelClass,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
         freeze: bool = True,
-        ignore_covariates: Optional[List[str]] = None,
+        ignore_covariates: list[str] | None = None,
     ):
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -603,21 +675,14 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         """
         _, _, device = parse_use_gpu_arg(use_gpu)
 
-        attr_dict, _, _ = _get_loaded_data(
-            reference_model, device=device
-        )
+        attr_dict, _, _ = _get_loaded_data(reference_model, device=device)
 
         registry = attr_dict.pop("registry_")
         if _MODEL_NAME_KEY in registry and registry[_MODEL_NAME_KEY] != cls.__name__:
-            raise ValueError(
-                "It appears you are loading a model from a different class."
-            )
+            raise ValueError("It appears you are loading a model from a different class.")
 
         if _SETUP_ARGS_KEY not in registry:
-            raise ValueError(
-                "Saved model does not contain original setup inputs. "
-                "Cannot load the original setup."
-            )
+            raise ValueError("Saved model does not contain original setup inputs. " "Cannot load the original setup.")
 
         cls.setup_anndata(
             adata,
@@ -632,7 +697,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         # set up vae model with load_query_data
         ref_adata = reference_model.adata.copy()
         setup_args = reference_model.adata_manager.registry["setup_args"].copy()
-        setup_args.pop('ordinal_regression_order')
+        setup_args.pop("ordinal_regression_order")
 
         MultiVAE.setup_anndata(ref_adata, **setup_args)
 
@@ -648,9 +713,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             use_gpu=use_gpu,
             freeze=freeze,
             ignore_covariates=ignore_covariates
-                + reference_model.mil.classification
-                + reference_model.mil.regression
-                + reference_model.mil.ordinal_regression,
+            + reference_model.mil.classification
+            + reference_model.mil.regression
+            + reference_model.mil.ordinal_regression,
         )
 
         # clear up memory
@@ -667,7 +732,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
 
         model.module.eval()
         model.is_trained_ = False
-       
+
         model.to_device(device)
 
         return model
@@ -676,23 +741,23 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 1e-4,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
         train_size: float = 0.9,
-        validation_size: Optional[float] = None,
+        validation_size: float | None = None,
         batch_size: int = 256,
         weight_decay: float = 0,
         eps: float = 1e-08,
         early_stopping: bool = True,
         save_best: bool = True,
-        check_val_every_n_epoch: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = None,
-        n_steps_kl_warmup: Optional[int] = None,
+        check_val_every_n_epoch: int | None = None,
+        n_epochs_kl_warmup: int | None = None,
+        n_steps_kl_warmup: int | None = None,
         adversarial_mixing: bool = False,
-        plan_kwargs: Optional[dict] = None,
+        plan_kwargs: dict | None = None,
         plot_losses=True,
         save_loss=None,
-        save_checkpoint_every_n_epochs: Optional[int] = None,
-        path_to_checkpoints: Optional[str] = None,
+        save_checkpoint_every_n_epochs: int | None = None,
+        path_to_checkpoints: str | None = None,
         **kwargs,
     ):
         """Train the VAE part of the model.
@@ -708,7 +773,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             Size of training set in the range [0.0, 1.0].
         :param validation_size:
             Size of the test set. If `None`, defaults to 1 - `train_size`. If
-            `train_size + validation_size < 1`, the remaining cells belong to a test set. 
+            `train_size + validation_size < 1`, the remaining cells belong to a test set.
         :param batch_size:
             Minibatch size to use during training.
         :param weight_decay:
@@ -745,7 +810,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             Path to save checkpoints.
         :param kwargs:
             Other keyword args for :class:`~scvi.train.Trainer`.
-    
+
         """
         # TODO add a check if there are any new params added in load_query_data, i.e. if there are any new params that can be trained
         vae = self.multivae
@@ -780,7 +845,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         self.module.vae_module = vae.module
         self.multivae.module = None
         self.is_trained_ = True
-        
+
         # otherwise mil module stays on cpu, but vae module is on gpu -> error in inference
         self.to_device(device)
-        

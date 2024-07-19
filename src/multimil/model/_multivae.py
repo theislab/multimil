@@ -1,8 +1,7 @@
 import logging
-from typing import Dict, List, Literal, Optional, Union
+from typing import Literal
 
 import anndata as ad
-
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from scvi import REGISTRY_KEYS
@@ -16,9 +15,9 @@ from scvi.model.base._utils import _initialize_model
 from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.train._callbacks import SaveBestState
 
-from ..dataloaders import GroupDataSplitter
-from ..module import MultiVAETorch
-from ..utils import calculate_size_factor, plt_plot_losses
+from multimil.dataloaders import GroupDataSplitter
+from multimil.module import MultiVAETorch
+from multimil.utils import calculate_size_factor, plt_plot_losses
 
 logger = logging.getLogger(__name__)
 
@@ -75,27 +74,27 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     def __init__(
         self,
         adata: ad.AnnData,
-        integrate_on: Optional[str] = None,
+        integrate_on: str | None = None,
         condition_encoders: bool = False,
         condition_decoders: bool = True,
         normalization: Literal["layer", "batch", None] = "layer",
         z_dim: int = 16,
-        losses: Optional[List[str]] = None,
+        losses: list[str] | None = None,
         dropout: float = 0.2,
         cond_dim: int = 16,
         kernel_type: Literal["gaussian", None] = "gaussian",
-        loss_coefs: Dict[int, float] = None,
+        loss_coefs: dict[int, float] = None,
         cont_cov_type: Literal["logsim", "sigm", None] = "logsigm",
-        n_layers_cont_embed: int = 1, # TODO default to None?
-        n_layers_encoders: Optional[List[int]] = None,
-        n_layers_decoders: Optional[List[int]] = None,
-        n_hidden_cont_embed: int = 32, # TODO default to None?
-        n_hidden_encoders: Optional[List[int]] = None,
-        n_hidden_decoders: Optional[List[int]] = None,
+        n_layers_cont_embed: int = 1,  # TODO default to None?
+        n_layers_encoders: list[int] | None = None,
+        n_layers_decoders: list[int] | None = None,
+        n_hidden_cont_embed: int = 32,  # TODO default to None?
+        n_hidden_encoders: list[int] | None = None,
+        n_hidden_decoders: list[int] | None = None,
         mmd: Literal["latent", "marginal", "both"] = "latent",
-        activation: Optional[str] = "leaky_relu", # TODO add which options are impelemted
-        initialization: Optional[str] = None, # TODO add which options are impelemted
-        ignore_covariates: Optional[List[str]] = None,
+        activation: str | None = "leaky_relu",  # TODO add which options are impelemted
+        initialization: str | None = None,  # TODO add which options are impelemted
+        ignore_covariates: list[str] | None = None,
     ):
         super().__init__(adata)
 
@@ -126,9 +125,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 )
             elif integrate_on in ignore_covariates:
                 raise ValueError(
-                    "Specified integrate_on = {!r} is in ignore_covariates = {}.".format(
-                        integrate_on, ignore_covariates
-                    )
+                    f"Specified integrate_on = {integrate_on!r} is in ignore_covariates = {ignore_covariates}."
                 )
             else:
                 self.num_groups = len(
@@ -138,7 +135,9 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                     integrate_on
                 )
 
-        self.modality_lengths = [adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())]
+        self.modality_lengths = [
+            adata.uns["modality_lengths"][key] for key in sorted(adata.uns["modality_lengths"].keys())
+        ]
 
         self.cont_covs_idx = []
         self.cont_covariate_dims = []
@@ -193,7 +192,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     @torch.inference_mode()
     def get_model_output(self, adata=None, batch_size=256):
         """Save the latent representation in the adata object.
-        
+
         :param adata:
             AnnData object to run the model on. If `None`, the model's AnnData object is used.
         :param batch_size:
@@ -219,21 +218,21 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
         train_size: float = 0.9,
-        validation_size: Optional[float] = None,
+        validation_size: float | None = None,
         batch_size: int = 256,
         weight_decay: float = 1e-3,
         eps: float = 1e-08,
         early_stopping: bool = True,
         save_best: bool = True,
-        check_val_every_n_epoch: Optional[int] = None,
-        n_epochs_kl_warmup: Optional[int] = None,
-        n_steps_kl_warmup: Optional[int] = None,
-        adversarial_mixing: bool = False, # TODO check if suppored by us, i don't think it is
-        plan_kwargs: Optional[dict] = None,
-        save_checkpoint_every_n_epochs: Optional[int] = None,
-        path_to_checkpoints: Optional[str] = None,
+        check_val_every_n_epoch: int | None = None,
+        n_epochs_kl_warmup: int | None = None,
+        n_steps_kl_warmup: int | None = None,
+        adversarial_mixing: bool = False,  # TODO check if suppored by us, i don't think it is
+        plan_kwargs: dict | None = None,
+        save_checkpoint_every_n_epochs: int | None = None,
+        path_to_checkpoints: str | None = None,
         **kwargs,
     ):
         """Train the model using amortized variational inference.
@@ -358,10 +357,10 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     def setup_anndata(
         cls,
         adata: ad.AnnData,
-        size_factor_key: Optional[str] = None,
-        rna_indices_end: Optional[int] = None,
-        categorical_covariate_keys: Optional[List[str]] = None,
-        continuous_covariate_keys: Optional[List[str]] = None,
+        size_factor_key: str | None = None,
+        rna_indices_end: int | None = None,
+        categorical_covariate_keys: list[str] | None = None,
+        continuous_covariate_keys: list[str] | None = None,
         **kwargs,
     ):
         """Set up :class:`~anndata.AnnData` object.
@@ -383,7 +382,6 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         :param kwargs:
             Additional parameters to pass to register_fields() of AnnDataManager
         """
-
         setup_method_args = cls._get_setup_method_args(**locals())
 
         anndata_fields = [
@@ -391,7 +389,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 REGISTRY_KEYS.X_KEY,
                 layer=None,
             ),
-            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, None), # TODO check if need to add if it's None
+            fields.CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, None),  # TODO check if need to add if it's None
             fields.CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
             fields.NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]
@@ -404,7 +402,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
 
     def plot_losses(self, save=None):
         """Plot losses.
-        
+
         :param save:
             If not None, save the plot to this location.
         """
@@ -419,9 +417,9 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         cls,
         adata: ad.AnnData,
         reference_model: BaseModelClass,
-        use_gpu: Optional[Union[str, int, bool]] = None,
+        use_gpu: str | int | bool | None = None,
         freeze: bool = True,
-        ignore_covariates: Optional[List[str]] = None,
+        ignore_covariates: list[str] | None = None,
     ):
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -472,6 +470,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
                 zip(
                     reference_model.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY).n_cats_per_key,
                     adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY).n_cats_per_key,
+                    strict=False,
                 )
             )
             if adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)["field_keys"][i] not in ignore_covariates

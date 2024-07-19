@@ -1,7 +1,7 @@
-from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi import REGISTRY_KEYS
+from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 
-from ..module import MultiVAETorch, MILClassifierTorch
+from multimil.module import MILClassifierTorch, MultiVAETorch
 
 
 class MultiVAETorch_MIL(BaseModuleClass):
@@ -12,24 +12,24 @@ class MultiVAETorch_MIL(BaseModuleClass):
         condition_decoders=True,
         normalization="layer",
         z_dim=16,
-        losses=[],
+        losses=None,
         dropout=0.2,
         cond_dim=16,
         kernel_type="gaussian",
-        loss_coefs=[],
+        loss_coefs=None,
         num_groups=1,
         integrate_on_idx=None,
         n_layers_encoders=None,
         n_layers_decoders=None,
         n_hidden_encoders=None,
         n_hidden_decoders=None,
-        num_classification_classes=[],  # number of classes for each of the classification task
+        num_classification_classes=None,  # number of classes for each of the classification task
         scoring="gated_attn",
         attn_dim=16,
-        cat_covariate_dims=[],
-        cont_covariate_dims=[],
-        cat_covs_idx=[],
-        cont_covs_idx=[],
+        cat_covariate_dims=None,
+        cont_covariate_dims=None,
+        cat_covs_idx=None,
+        cont_covs_idx=None,
         cont_cov_type="logsigm",
         n_layers_cell_aggregator=1,
         n_layers_classifier=1,
@@ -44,11 +44,11 @@ class MultiVAETorch_MIL(BaseModuleClass):
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         sample_batch_size=128,
-        class_idx=[],  # which indices in cat covariates to do classification on, i.e. exclude from inference
-        ord_idx=[],  # which indices in cat covariates to do ordinal regression on and also exclude from inference
-        reg_idx=[],  # which indices in cont covariates to do regression on and also exclude from inference
+        class_idx=None,  # which indices in cat covariates to do classification on, i.e. exclude from inference
+        ord_idx=None,  # which indices in cat covariates to do ordinal regression on and also exclude from inference
+        reg_idx=None,  # which indices in cont covariates to do regression on and also exclude from inference
         mmd="latent",
-        activation='leaky_relu',
+        activation="leaky_relu",
         initialization=None,
         anneal_class_loss=False,
     ):
@@ -81,7 +81,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
             mmd=mmd,
             activation=activation,
             initialization=initialization,
-        )   
+        )
         self.mil_module = MILClassifierTorch(
             z_dim=z_dim,
             dropout=dropout,
@@ -135,7 +135,7 @@ class MultiVAETorch_MIL(BaseModuleClass):
         # VAE part
         inference_outputs = self.vae_module.inference(x, cat_covs, cont_covs)
         z_joint = inference_outputs["z_joint"]
-        
+
         # MIL part
         mil_inference_outputs = self.mil_module.inference(z_joint)
         inference_outputs.update(mil_inference_outputs)
@@ -145,11 +145,13 @@ class MultiVAETorch_MIL(BaseModuleClass):
     def generative(self, z_joint, cat_covs, cont_covs):
         return self.vae_module.generative(z_joint, cat_covs, cont_covs)
 
-    def loss(
-        self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0
-    ):
-        loss_vae, recon_loss, kl_loss, extra_metrics = self.vae_module._calculate_loss(tensors, inference_outputs, generative_outputs, kl_weight)
-        loss_mil, _, _, extra_metrics_mil = self.mil_module._calculate_loss(tensors, inference_outputs, generative_outputs, kl_weight)
+    def loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
+        loss_vae, recon_loss, kl_loss, extra_metrics = self.vae_module._calculate_loss(
+            tensors, inference_outputs, generative_outputs, kl_weight
+        )
+        loss_mil, _, _, extra_metrics_mil = self.mil_module._calculate_loss(
+            tensors, inference_outputs, generative_outputs, kl_weight
+        )
         loss = loss_vae + loss_mil
         extra_metrics.update(extra_metrics_mil)
 

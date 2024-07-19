@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 from scvi.nn import FCLayers
@@ -127,7 +127,7 @@ class GeneralizedSigmoid(nn.Module):
     https://github.com/facebookresearch/CPA/blob/382ff641c588820a453d801e5d0e5bb56642f282/compert/model.py#L109
     """
 
-    def __init__(self, dim, nonlin: Optional[Literal["logsigm", "sigm"]] = "logsigm"):
+    def __init__(self, dim, nonlin: Literal["logsigm", "sigm"] | None = "logsigm"):
         super().__init__()
         self.nonlin = nonlin
         self.beta = torch.nn.Parameter(torch.ones(1, dim), requires_grad=True)
@@ -141,7 +141,7 @@ class GeneralizedSigmoid(nn.Module):
             return (x * self.beta + self.bias).sigmoid()
         else:
             return x
-        
+
 
 class Aggregator(nn.Module):
     # TODO add docstring
@@ -164,9 +164,7 @@ class Aggregator(nn.Module):
         self.scale = scale
 
         if self.scoring == "attn":
-            self.attn_dim = (
-                attn_dim  # attn dim from https://arxiv.org/pdf/1802.04712.pdf
-            )
+            self.attn_dim = attn_dim  # attn dim from https://arxiv.org/pdf/1802.04712.pdf
             self.attention = nn.Sequential(
                 nn.Linear(n_input, self.attn_dim),
                 nn.Tanh(),
@@ -187,7 +185,6 @@ class Aggregator(nn.Module):
             self.attention_weights = nn.Linear(self.attn_dim, 1, bias=False)
 
         elif self.scoring == "mlp":
-
             if n_layers_mlp_attn == 1:
                 self.attention = nn.Linear(n_input, 1)
             else:
@@ -217,9 +214,7 @@ class Aggregator(nn.Module):
             # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
             A_V = self.attention_V(x)  # NxD
             A_U = self.attention_U(x)  # NxD
-            self.A = self.attention_weights(
-                A_V * A_U
-            )  # element wise multiplication # Nx1
+            self.A = self.attention_weights(A_V * A_U)  # element wise multiplication # Nx1
             self.A = torch.transpose(self.A, -1, -2)  # 1xN
             self.A = F.softmax(self.A, dim=-1)  # softmax over N
 
@@ -229,10 +224,11 @@ class Aggregator(nn.Module):
             self.A = F.softmax(self.A, dim=-1)
 
         else:
-            raise NotImplementedError(f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].')
+            raise NotImplementedError(
+                f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].'
+            )
 
         if self.scale:
             self.A = self.A * self.A.shape[-1] / self.patient_batch_size
 
         return torch.bmm(self.A, x).squeeze(dim=1)  # z_dim
-
