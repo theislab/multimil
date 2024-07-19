@@ -128,6 +128,7 @@ convention = "numpy"
 "docs/*" = ["I"]
 "tests/*" = ["D"]
 "*/__init__.py" = ["F401"]
+"src/multimil/module/__init__.py" = ["I"]
 
 [tool.cruft]
 skip = [
