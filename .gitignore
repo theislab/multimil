@@ -1,8 +1,0 @@
-.DS_Store
-data/*
-.ipynb_checkpoints
-__pycache__
-*.h5ad
-.vscode
-.Rhistory
-*.egg-info

@@ -1,3 +1,0 @@
-scanpy
-scvi-tools
-matplotlib
