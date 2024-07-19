@@ -1,7 +1,7 @@
 from importlib.metadata import version
 
-from . import pl, pp, tl
+from . import data, dataloaders, distributions, model, module, nn, utils
 
-__all__ = ["pl", "pp", "tl"]
+__all__ = ["data", "dataloaders", "distributions", "model", "module", "nn", "utils"]
 
 __version__ = version("multimil")
