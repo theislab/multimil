@@ -52,6 +52,11 @@ test = [
     "pytest",
     "coverage",
 ]
+tutorials = [
+    "jupyterlab",
+    "leidenalg",
+    "igraph",
+]
 
 [tool.coverage.run]
 source = ["multimil"]
