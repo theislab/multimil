@@ -7,7 +7,7 @@
 [link-tests]: https://github.com/alitinet/multimil/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/multimil
 
-Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases
+Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases.
 
 ## Getting started
 
