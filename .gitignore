@@ -1,8 +1,29 @@
+# Temp files
 .DS_Store
-data/*
-.ipynb_checkpoints
-__pycache__
-*.h5ad
-.vscode
-.Rhistory
-*.egg-info
+*~
+buck-out/
+
+# Compiled files
+.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+
+# Distribution / packaging
+/build/
+/dist/
+/*.egg-info/
+
+# Tests and coverage
+/.pytest_cache/
+/.cache/
+/data/
+/node_modules/
+
+# docs
+/docs/generated/
+/docs/_build/
+
+# IDEs
+/.idea/
+/.vscode/
