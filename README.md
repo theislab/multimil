@@ -3,8 +3,8 @@
 [![Tests][badge-tests]][link-tests]
 [![Documentation][badge-docs]][link-docs]
 
-[badge-tests]: https://img.shields.io/github/actions/workflow/status/alitinet/multimil/test.yaml?branch=main
-[link-tests]: https://github.com/alitinet/multimil/actions/workflows/test.yml
+[badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/multimil/test.yaml?branch=main
+[link-tests]: https://github.com/theislab/multimil/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/multimil
 
 Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases.
@@ -33,7 +33,7 @@ pip install multimil
 1. Install the latest development version:
 
 ```bash
-pip install git+https://github.com/alitinet/multimil.git@main
+pip install git+https://github.com/theislab/multimil.git@main
 ```
 
 ## Release notes
@@ -50,7 +50,7 @@ If you found a bug, please use the [issue tracker][issue-tracker].
 > t.b.a
 
 [scverse-discourse]: https://discourse.scverse.org/
-[issue-tracker]: https://github.com/alitinet/multimil/issues
+[issue-tracker]: https://github.com/theislab/multimil/issues
 [changelog]: https://multimil.readthedocs.io/latest/changelog.html
 [link-docs]: https://multimil.readthedocs.io
 [link-api]: https://multimil.readthedocs.io/latest/api.html

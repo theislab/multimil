@@ -10,7 +10,7 @@
       "author_full_name": "Anastasia Litinetskaya",
       "author_email": "alitinet@gmail.com",
       "github_user": "alitinet",
-      "project_repo": "https://github.com/alitinet/multimil",
+      "project_repo": "https://github.com/theislab/multimil",
       "license": "BSD 3-Clause License",
       "_copy_without_render": [
         ".github/workflows/build.yaml",

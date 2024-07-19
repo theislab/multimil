@@ -37,7 +37,7 @@ needs_sphinx = "4.0"
 html_context = {
     "display_github": True,  # Integrate GitHub
     "github_user": "alitinet",
-    "github_repo": "https://github.com/alitinet/multimil",
+    "github_repo": "https://github.com/theislab/multimil",
     "github_version": "main",
     "conf_py_path": "/docs/",
 }

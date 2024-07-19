@@ -16,8 +16,8 @@ maintainers = [
     {name = "Anastasia Litinetskaya", email = "alitinet@gmail.com"},
 ]
 urls.Documentation = "https://multimil.readthedocs.io/"
-urls.Source = "https://github.com/alitinet/multimil"
-urls.Home-page = "https://github.com/alitinet/multimil"
+urls.Source = "https://github.com/theislab/multimil"
+urls.Home-page = "https://github.com/theislab/multimil"
 dependencies = [
     "anndata",
     # for debug logging (referenced from the issue template)
