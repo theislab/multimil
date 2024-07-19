@@ -1,38 +1,29 @@
 # API
 
-## Preprocessing
+## Model
 
 ```{eval-rst}
-.. module:: multimil.pp
+.. module:: multimil.model
 .. currentmodule:: multimil
 
 .. autosummary::
     :toctree: generated
 
-    pp.basic_preproc
+    model.MultiVAE
+    model.MILClassifier
+    model.MultiVAE_MIL
 ```
 
-## Tools
+## Module
 
 ```{eval-rst}
-.. module:: multimil.tl
+.. module:: multimil.module
 .. currentmodule:: multimil
 
 .. autosummary::
     :toctree: generated
 
-    tl.basic_tool
-```
-
-## Plotting
-
-```{eval-rst}
-.. module:: multimil.pl
-.. currentmodule:: multimil
-
-.. autosummary::
-    :toctree: generated
-
-    pl.basic_plot
-    pl.BasicClass
+    module.MultiVAETorch
+    module.MILClassifierTorch
+    module.MultiVAETorch_MIL
 ```
