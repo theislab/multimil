@@ -32,10 +32,11 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end):
     if size_factor_key is not None:
         return size_factor_key
     if rna_indices_end is not None:
+        adata_rna = adata[:, :rna_indices_end].copy()
         if scipy.sparse.issparse(adata.X):
-            adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.A.sum(1).T.tolist()
+            adata.obs.loc[:, "size_factors"] = adata_rna.X.toarray().sum(1).T.tolist()
         else:
-            adata.obs.loc[:, "size_factors"] = adata[:, :rna_indices_end].X.sum(1).T.tolist()
+            adata.obs.loc[:, "size_factors"] = adata_rna.X.sum(1).T.tolist()
         return "size_factors"
 
 def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys):
