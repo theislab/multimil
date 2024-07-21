@@ -9,6 +9,58 @@ from multimil.utils import prep_minibatch, select_covariates
 
 
 class MILClassifierTorch(BaseModuleClass):
+    """MultiMIL's MIL classification module.
+
+    Parameters
+    ----------
+    z_dim
+        Latent dimension.
+    dropout
+        Dropout rate.
+    normalization
+        Normalization type.
+    num_classification_classes
+        Number of classes for each of the classification task.
+    scoring
+        Scoring type. One of ["gated_attn", "attn", "mlp"].
+    attn_dim
+        Hidden attention dimension.
+    n_layers_cell_aggregator
+        Number of layers in the cell aggregator.
+    n_layers_classifier
+        Number of layers in the classifier.
+    n_layers_mlp_attn
+        Number of layers in the MLP attention.
+    n_layers_regressor
+        Number of layers in the regressor.
+    n_hidden_regressor
+        Hidden dimension in the regressor.
+    n_hidden_cell_aggregator
+        Hidden dimension in the cell aggregator.
+    n_hidden_classifier
+        Hidden dimension in the classifier.
+    n_hidden_mlp_attn
+        Hidden dimension in the MLP attention.
+    class_loss_coef
+        Classification loss coefficient.
+    regression_loss_coef
+        Regression loss coefficient.
+    sample_batch_size
+        Sample batch size.
+    class_idx
+        Which indices in cat covariates to do classification on.
+    ord_idx
+        Which indices in cat covariates to do ordinal regression on.
+    reg_idx
+        Which indices in cont covariates to do regression on.
+    activation
+        Activation function.
+    initialization
+        Initialization type.
+    anneal_class_loss
+        Whether to anneal the classification loss.
+    """
+
     def __init__(
         self,
         z_dim=16,
@@ -143,7 +195,18 @@ class MILClassifierTorch(BaseModuleClass):
         return {"z_joint": z_joint}
 
     @auto_move_data
-    def inference(self, x):
+    def inference(self, x) -> dict[str, torch.Tensor | list[torch.Tensor]]:
+        """Forward pass for inference.
+
+        Parameters
+        ----------
+        x
+            Input.
+
+        Returns
+        -------
+        Predictions.
+        """
         z_joint = x
         inference_outputs = {"z_joint": z_joint}
 
@@ -171,7 +234,19 @@ class MILClassifierTorch(BaseModuleClass):
         return inference_outputs  # z_joint, mu, logvar, predictions
 
     @auto_move_data
-    def generative(self, z_joint):
+    def generative(self, z_joint) -> torch.Tensor:
+        # TODO even if not used, make consistent with the rest, i.e. return dict
+        """Forward pass for generative.
+
+        Parameters
+        ----------
+        z_joint
+            Latent embeddings.
+
+        Returns
+        -------
+        Same as input.
+        """
         return z_joint
 
     def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
@@ -246,6 +321,23 @@ class MILClassifierTorch(BaseModuleClass):
         return loss, recon_loss, kl_loss, extra_metrics
 
     def loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
+        """Loss calculation.
+
+        Parameters
+        ----------
+        tensors
+            Input tensors.
+        inference_outputs
+            Inference outputs.
+        generative_outputs
+            Generative outputs.
+        kl_weight
+            KL weight. Default is 1.0.
+
+        Returns
+        -------
+        Prediction loss.
+        """
         loss, recon_loss, kl_loss, extra_metrics = self._calculate_loss(
             tensors, inference_outputs, generative_outputs, kl_weight
         )
@@ -258,6 +350,12 @@ class MILClassifierTorch(BaseModuleClass):
         )
 
     def select_losses_to_plot(self):
+        """Select losses to plot.
+
+        Returns
+        -------
+        Loss names.
+        """
         loss_names = []
         if self.class_loss_coef != 0 and len(self.class_idx) > 0:
             loss_names.extend(["class_loss", "accuracy"])
@@ -266,7 +364,3 @@ class MILClassifierTorch(BaseModuleClass):
         if self.regression_loss_coef != 0 and len(self.ord_idx) > 0:
             loss_names.extend(["regression_loss", "accuracy"])
         return loss_names
-
-    @torch.inference_mode()
-    def sample(self, tensors, n_samples=1):
-        return self.vae.sample(tensors, n_samples)

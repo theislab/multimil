@@ -7,7 +7,22 @@ import torch
 from matplotlib import pyplot as plt
 
 
-def create_df(pred, columns=None, index=None):
+def create_df(pred, columns=None, index=None) -> pd.DataFrame:
+    """Create a pandas DataFrame from a list of predictions.
+
+    Parameters
+    ----------
+    pred
+        List of predictions.
+    columns
+        Column names, i.e. class_names.
+    index
+        Index names, i.e. obs_names.
+
+    Returns
+    -------
+    DataFrame with predictions.
+    """
     if isinstance(pred, dict):
         for key in pred.keys():
             pred[key] = torch.cat(pred[key]).squeeze().cpu().numpy()
@@ -22,7 +37,22 @@ def create_df(pred, columns=None, index=None):
     return df
 
 
-def calculate_size_factor(adata, size_factor_key, rna_indices_end):
+def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
+    """Calculate size factors.
+
+    Parameters
+    ----------
+    adata
+        Annotated data object.
+    size_factor_key
+        Key in `adata.obs` where size factors are stored.
+    rna_indices_end
+        Index of the last RNA feature in the data.
+
+    Returns
+    -------
+    Size factor key.
+    """
     # TODO check that organize_multiome_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
     if size_factor_key is not None and rna_indices_end is not None:
         raise ValueError(
@@ -44,6 +74,17 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end):
 
 
 def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys):
+    """Setup ordinal regression.
+
+    Parameters
+    ----------
+    adata
+        Annotated data object.
+    ordinal_regression_order
+        Order of categories for ordinal regression.
+    categorical_covariate_keys
+        Keys of categorical covariates.
+    """
     # TODO make sure not to assume categorical columns for ordinal regression -> change to np.unique if needed
     if ordinal_regression_order is not None:
         if not set(ordinal_regression_order.keys()).issubset(categorical_covariate_keys):
@@ -59,7 +100,22 @@ def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covari
             adata.obs[key] = adata.obs[key].cat.reorder_categories(ordinal_regression_order[key])
 
 
-def select_covariates(covs, prediction_idx, n_samples_in_batch):
+def select_covariates(covs, prediction_idx, n_samples_in_batch) -> torch.Tensor:
+    """Select prediction covariates from all covariates.
+
+    Parameters
+    ----------
+    covs
+        Covariates.
+    prediction_idx
+        Index of predictions.
+    n_samples_in_batch
+        Number of samples in the batch.
+
+    Returns
+    -------
+    Prediction covariates.
+    """
     if len(prediction_idx) > 0:
         covs = torch.index_select(covs, 1, prediction_idx)
         covs = covs.view(n_samples_in_batch, -1, len(prediction_idx))[:, 0, :]
@@ -68,7 +124,20 @@ def select_covariates(covs, prediction_idx, n_samples_in_batch):
     return covs
 
 
-def prep_minibatch(covs, sample_batch_size):
+def prep_minibatch(covs, sample_batch_size) -> tuple[int, int]:
+    """Prepare minibatch.
+
+    Parameters
+    ----------
+    covs
+        Covariates.
+    sample_batch_size
+        Sample batch size.
+
+    Returns
+    -------
+    Batch size and number of samples in the batch.
+    """
     batch_size = covs.shape[0]
 
     if batch_size % sample_batch_size != 0:
@@ -78,7 +147,34 @@ def prep_minibatch(covs, sample_batch_size):
     return batch_size, n_samples_in_batch
 
 
-def get_predictions(prediction_idx, pred_values, true_values, size, bag_pred, bag_true, full_pred, offset=0):
+def get_predictions(
+    prediction_idx, pred_values, true_values, size, bag_pred, bag_true, full_pred, offset=0
+) -> tuple[dict, dict, dict]:
+    """Get predictions.
+
+    Parameters
+    ----------
+    prediction_idx
+        Index of predictions.
+    pred_values
+        Predicted values.
+    true_values
+        True values.
+    size
+        Size of the bag minibatch.
+    bag_pred
+        Bag predictions.
+    bag_true
+        Bag true values.
+    full_pred
+        Full predictions, i.e. on cell-level.
+    offset
+        Offset, needed because of several possible types of predictions.
+
+    Returns
+    -------
+    Bag predictions, bag true values, full predictions on cell-level.
+    """
     for i in range(len(prediction_idx)):
         bag_pred[i] = bag_pred.get(i, []) + [pred_values[offset + i].cpu()]
         bag_true[i] = bag_true.get(i, []) + [true_values[:, i].cpu()]
@@ -90,6 +186,27 @@ def get_predictions(prediction_idx, pred_values, true_values, size, bag_pred, ba
 
 
 def get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, sample_batch_size):
+    """Get bag information.
+
+    Parameters
+    ----------
+    bags
+        Bags.
+    n_samples_in_batch
+        Number of samples in the batch.
+    minibatch_size
+        Minibatch size.
+    cell_counter
+        Cell counter.
+    bag_counter
+        Bag counter.
+    sample_batch_size
+        Sample batch size.
+
+    Returns
+    -------
+    Updated bags, cell counter, and bag counter.
+    """
     if n_samples_in_batch == 1:
         bags += [[bag_counter] * minibatch_size]
         cell_counter += minibatch_size
@@ -104,6 +221,31 @@ def get_bag_info(bags, n_samples_in_batch, minibatch_size, cell_counter, bag_cou
 def save_predictions_in_adata(
     adata, idx, predictions, bag_pred, bag_true, cell_pred, class_names, name, clip, reg=False
 ):
+    """Save predictions in anndata object.
+
+    Parameters
+    ----------
+    adata
+        Annotated data object.
+    idx
+        Index, i.e. obs_names.
+    predictions
+        Predictions.
+    bag_pred
+        Bag predictions.
+    bag_true
+        Bag true values.
+    cell_pred
+        Cell predictions.
+    class_names
+        Class names.
+    name
+        Name of the prediction column.
+    clip
+        Whether to transofrm the predictions. One of `clip`, `argmax`, or `none`.
+    reg
+        Whether the rediciton task is a regression task.
+    """
     # cell level predictions
     df = create_df(cell_pred[idx], class_names, index=adata.obs_names)
     adata.obsm[f"full_predictions_{name}"] = df
@@ -131,6 +273,17 @@ def save_predictions_in_adata(
 
 
 def plt_plot_losses(history, loss_names, save):
+    """Plot losses.
+
+    Parameters
+    ----------
+    history
+        History of losses.
+    loss_names
+        Loss names to plot.
+    save
+        Path to save the plot.
+    """
     df = pd.concat(history, axis=1)
     df.columns = df.columns.droplevel(-1)
     df["epoch"] = df.index

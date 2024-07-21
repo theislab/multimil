@@ -25,49 +25,51 @@ logger = logging.getLogger(__name__)
 class MultiVAE(BaseModelClass, ArchesMixin):
     """MultiMIL multimodal integration model.
 
-    :param adata:
+    Parameters
+    ----------
+    adata
         AnnData object that has been registered via :meth:`~multigrate.model.MultiVAE.setup_anndata`.
-    :param integrate_on:
+    integrate_on
         One of the categorical covariates refistered with :math:`~multigrate.model.MultiVAE.setup_anndata` to integrate on. The latent space then will be disentangled from this covariate. If `None`, no integration is performed.
-    :param condition_encoders:
+    condition_encoders
         Whether to concatentate covariate embeddings to the first layer of the encoders. Default is `False`.
-    :param condition_decoders:
+    condition_decoders
         Whether to concatentate covariate embeddings to the first layer of the decoders. Default is `True`.
-    :param normalization:
+    normalization
         What normalization to use; has to be one of `batch` or `layer`. Default is `layer`.
-    :param z_dim:
+    z_dim
         Dimensionality of the latent space. Default is 16.
-    :param losses:
+    losses
         Which losses to use for each modality. Has to be the same length as the number of modalities. Default is `MSE` for all modalities.
-    :param dropout:
+    dropout
         Dropout rate. Default is 0.2.
-    :param cond_dim:
+    cond_dim
         Dimensionality of the covariate embeddings. Default is 16.
-    :param kernel_type:
+    kernel_type
         Type of kernel to use for the MMD loss. Default is `gaussian`.
-    :param loss_coefs:
+    loss_coefs
         Loss coeficients for the different losses in the model. Default is 1 for all.
-    :param cont_cov_type:
+    cont_cov_type
         How to calculate embeddings for continuous covariates. Default is `logsim`.
-    :param n_layers_cont_embed:
+    n_layers_cont_embed
         Number of layers for the continuous covariate embedding calculation. Default is 1.
-    :param n_layers_encoders:
+    n_layers_encoders
         Number of layers for each encoder. Default is 2 for all modalities. Has to be the same length as the number of modalities.
-    :param n_layers_decoders:
+    n_layers_decoders
         Number of layers for each decoder. Default is 2 for all modalities. Has to be the same length as the number of modalities.
-    :param n_hidden_cont_embed:
+    n_hidden_cont_embed
         Number of nodes for each hidden layer in the continuous covariate embedding calculation. Default is 32.
-    :param n_hidden_encoders:
+    n_hidden_encoders
         Number of nodes for each hidden layer in the encoders. Default is 32.
-    :param n_hidden_decoders:
+    n_hidden_decoders
         Number of nodes for each hidden layer in the decoders. Default is 32.
-    :param mmd:
+    mmd
         Which MMD loss to use. Default is `latent`.
-    :param activation:
+    activation
         Activation function to use. Default is `leaky_relu`.
-    :param initialization:
+    initialization
         Initialization method to use. Default is `None`.
-    :param ignore_covariates:
+    ignore_covariates
         List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
     """
 
@@ -193,9 +195,11 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     def get_model_output(self, adata=None, batch_size=256):
         """Save the latent representation in the adata object.
 
-        :param adata:
+        Parameters
+        ----------
+        adata
             AnnData object to run the model on. If `None`, the model's AnnData object is used.
-        :param batch_size:
+        batch_size
             Minibatch size to use. Default is 256.
         """
         if not self.is_trained_:
@@ -237,50 +241,56 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     ):
         """Train the model using amortized variational inference.
 
-        :param max_epochs:
-            Number of passes through the dataset
-        :param lr:
-            Learning rate for optimization
-        :param use_gpu:
+        Parameters
+        ----------
+        max_epochs
+            Number of passes through the dataset.
+        lr
+            Learning rate for optimization.
+        use_gpu
             Use default GPU if available (if None or True), or index of GPU to use (if int),
-            or name of GPU (if str), or use CPU (if False)
-        :param train_size:
-            Size of training set in the range [0.0, 1.0]
-        :param validation_size:
+            or name of GPU (if str), or use CPU (if False).
+        train_size
+            Size of training set in the range [0.0, 1.0].
+        validation_size
             Size of the test set. If `None`, defaults to 1 - `train_size`. If
-            `train_size + validation_size < 1`, the remaining cells belong to a test set
-        :param batch_size:
-            Minibatch size to use during training
-        :param weight_decay:
-            Weight decay regularization term for optimization
-        :param eps:
-            Optimizer eps
-        :param early_stopping:
-            Whether to perform early stopping with respect to the validation set
-        :param save_best:
+            `train_size + validation_size < 1`, the remaining cells belong to a test set.
+        batch_size
+            Minibatch size to use during training.
+        weight_decay
+            Weight decay regularization term for optimization.
+        eps
+            Optimizer eps.
+        early_stopping
+            Whether to perform early stopping with respect to the validation set.
+        save_best
             Save the best model state with respect to the validation loss, or use the final
-            state in the training procedure
-        :param check_val_every_n_epoch:
+            state in the training procedure.
+        check_val_every_n_epoch
             Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`.
-            If so, val is checked every epoch
-        :param n_epochs_kl_warmup:
+            If so, val is checked every epoch.
+        n_epochs_kl_warmup
             Number of epochs to scale weight on KL divergences from 0 to 1.
             Overrides `n_steps_kl_warmup` when both are not `None`. Default is 1/3 of `max_epochs`.
-        :param n_steps_kl_warmup:
+        n_steps_kl_warmup
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
             Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
-            to `floor(0.75 * adata.n_obs)`
-        :param adversarial_mixing:
+            to `floor(0.75 * adata.n_obs)`.
+        adversarial_mixing
             Whether to use adversarial mixing. Default is `False`.
-        :param plan_kwargs:
+        plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
-            `train()` will overwrite values present in `plan_kwargs`, when appropriate
-        :param save_checkpoint_every_n_epochs:
+            `train()` will overwrite values present in `plan_kwargs`, when appropriate.
+        save_checkpoint_every_n_epochs
             Save a checkpoint every n epochs. If `None`, no checkpoints are saved.
-        :param path_to_checkpoints:
-            Path to save checkpoints. Required if `save_checkpoint_every_n_epochs` is not `None`
-        :param kwargs:
-            Additional keyword arguments for :class:`~scvi.train.TrainRunner`
+        path_to_checkpoints
+            Path to save checkpoints. Required if `save_checkpoint_every_n_epochs` is not `None`.
+        kwargs
+            Additional keyword arguments for :class:`~scvi.train.TrainRunner`.
+
+        Returns
+        -------
+        Trainer object.
         """
         if n_epochs_kl_warmup is None:
             n_epochs_kl_warmup = max(max_epochs // 3, 1)
@@ -369,18 +379,20 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         This method will also compute the log mean and log variance per batch for the library size prior.
         None of the data in adata are modified. Only adds fields to adata.
 
-        :param adata:
-            AnnData object containing raw counts. Rows represent cells, columns represent features
-        :param size_factor_key:
+        Parameters
+        ----------
+        adata
+            AnnData object containing raw counts. Rows represent cells, columns represent features.
+        size_factor_key
             Key in `adata.obs` containing the size factor. If `None`, will be calculated from the RNA counts.
-        :param rna_indices_end:
+        rna_indices_end
             Integer to indicate where RNA feature end in the AnnData object. Is used to calculate ``libary_size``.
-        :param categorical_covariate_keys:
-            Keys in `adata.obs` that correspond to categorical data
-        :param continuous_covariate_keys:
-            Keys in `adata.obs` that correspond to continuous data
-        :param kwargs:
-            Additional parameters to pass to register_fields() of AnnDataManager
+        categorical_covariate_keys
+            Keys in `adata.obs` that correspond to categorical data.
+        continuous_covariate_keys
+            Keys in `adata.obs` that correspond to continuous data.
+        kwargs
+            Additional parameters to pass to register_fields() of AnnDataManager.
         """
         setup_method_args = cls._get_setup_method_args(**locals())
 
@@ -403,7 +415,9 @@ class MultiVAE(BaseModelClass, ArchesMixin):
     def plot_losses(self, save=None):
         """Plot losses.
 
-        :param save:
+        Parameters
+        ----------
+        save
             If not None, save the plot to this location.
         """
         loss_names = self.module.select_losses_to_plot()
@@ -420,22 +434,28 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         use_gpu: str | int | bool | None = None,
         freeze: bool = True,
         ignore_covariates: list[str] | None = None,
-    ):
+    ) -> BaseModelClass:
         """Online update of a reference model with scArches algorithm # TODO cite.
 
-        :param adata:
+        Parameters
+        ----------
+        adata
             AnnData organized in the same way as data used to train model.
             It is not necessary to run setup_anndata,
             as AnnData is validated against the ``registry``.
-        :param reference_model:
-            Already instantiated model of the same class
-        :param use_gpu:
+        reference_model
+            Already instantiated model of the same class.
+        use_gpu
             Load model on default GPU if available (if None or True),
-            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False)
-        :param freeze:
-            Whether to freeze the encoders and decoders and only train the new weights
-        :param ignore_covariates:
+            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False).
+        freeze
+            Whether to freeze the encoders and decoders and only train the new weights.
+        ignore_covariates
             List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
+
+        Returns
+        -------
+        Model with updated architecture and weights.
         """
         _, _, device = parse_use_gpu_arg(use_gpu)
 
