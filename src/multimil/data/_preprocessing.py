@@ -8,7 +8,7 @@ import pandas as pd
 def organize_multiome_anndatas(
     adatas: list[list[ad.AnnData | None]],
     layers: list[list[str | None]] | None = None,
-):
+) -> ad.AnnData:
     """Concatenate all the input anndata objects.
 
     These anndata objects should already have been preprocessed so that all single-modality
@@ -16,11 +16,16 @@ def organize_multiome_anndatas(
     `.var`) should match between the objects for vertical integration and cell names (index of
     `.obs`) should match between the objects for horizontal integration.
 
-    :param adatas:
-        List of Lists with AnnData objects or None where each sublist corresponds to a modality
-    :param layers:
+    Parameters
+    ----------
+    adatas
+        List of Lists with AnnData objects or None where each sublist corresponds to a modality.
+    layers
         List of Lists of the same lengths as `adatas` specifying which `.layer` to use for each AnnData. Default is None which means using `.X`.
 
+    Returns
+    -------
+    Concatenated AnnData object across modalities and datasets.
     """
     # TODO: add checks for layers
     # TODO: add check that len of modalities is the same as len of losses, etc

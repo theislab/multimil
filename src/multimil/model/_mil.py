@@ -31,6 +31,62 @@ logger = logging.getLogger(__name__)
 
 
 class MILClassifier(BaseModelClass, ArchesMixin):
+    """MultiMIL MIL prediction model.
+
+    Parameters
+    ----------
+    adata
+        AnnData object containing embeddings and covariates.
+    sample_key
+        Key in `adata.obs` that corresponds to the sample covariate.
+    classification
+        List of keys in `adata.obs` that correspond to the classification covariates.
+    regression
+        List of keys in `adata.obs` that correspond to the regression covariates.
+    ordinal_regression
+        List of keys in `adata.obs` that correspond to the ordinal regression covariates.
+    sample_batch_size
+        Number of samples per bag, i.e. sample. Default is 128.
+    normalization
+        One of "layer" or "batch". Default is "layer".
+    z_dim
+        Dimensionality of the input latent space. Default is 16.
+    dropout
+        Dropout rate. Default is 0.2.
+    scoring
+        How to calculate attention scores. One of "gated_attn", "MLP". Default is "gated_attn".
+    attn_dim
+        Dimensionality of the hidden layer in attention calculation. Default is 16.
+    n_layers_cell_aggregator
+        Number of layers in the cell aggregator. Default is 1.
+    n_layers_classifier
+        Number of layers in the classifier. Default is 2.
+    n_layers_regressor
+        Number of layers in the regressor. Default is 2.
+    n_layers_mlp_attn
+        Number of layers in the MLP attention. Only used if `scoring` = "MLP". Default is 1.
+    n_hidden_cell_aggregator
+        Number of hidden units in the cell aggregator. Default is 128.
+    n_hidden_classifier
+        Number of hidden units in the classifier. Default is 128.
+    n_hidden_mlp_attn
+        Number of hidden units in the MLP attention. Default is 32.
+    n_hidden_regressor
+        Number of hidden units in the regressor. Default is 128.
+    class_loss_coef
+        Coefficient for the classification loss. Default is 1.0.
+    regression_loss_coef
+        Coefficient for the regression loss. Default is 1.0.
+    activation
+        Activation function. Default is 'leaky_relu'.
+    initialization
+        Initialization method for the weights. Default is None.
+    anneal_class_loss
+        Whether to anneal the classification loss. Default is False.
+    ignore_covariates
+        List of covariates to ignore. Needed for query-to-reference mapping. Default is None.
+    """
+
     def __init__(
         self,
         adata,
@@ -59,59 +115,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         anneal_class_loss=False,
         ignore_covariates=None,
     ):
-        """MultiMIL MIL prediction model.
-
-        :param adata:
-            AnnData object containing embeddings and covariates.
-        :param sample_key:
-            Key in `adata.obs` that corresponds to the sample covariate.
-        :param classification:
-            List of keys in `adata.obs` that correspond to the classification covariates.
-        :param regression:
-            List of keys in `adata.obs` that correspond to the regression covariates.
-        :param ordinal_regression:
-            List of keys in `adata.obs` that correspond to the ordinal regression covariates.
-        :param sample_batch_size:
-            Number of samples per bag, i.e. sample. Default is 128.
-        :param normalization:
-            One of "layer" or "batch". Default is "layer".
-        :param z_dim:
-            Dimensionality of the input latent space. Default is 16.
-        :param dropout:
-            Dropout rate. Default is 0.2.
-        :param scoring:
-            How to calculate attention scores. One of "gated_attn", "MLP". Default is "gated_attn".
-        :param attn_dim:
-            Dimensionality of the hidden layer in attention calculation. Default is 16.
-        :param n_layers_cell_aggregator:
-            Number of layers in the cell aggregator. Default is 1.
-        :param n_layers_classifier:
-            Number of layers in the classifier. Default is 2.
-        :param n_layers_regressor:
-            Number of layers in the regressor. Default is 2.
-        :param n_layers_mlp_attn:
-            Number of layers in the MLP attention. Only used if `scoring` = "MLP". Default is 1.
-        :param n_hidden_cell_aggregator:
-            Number of hidden units in the cell aggregator. Default is 128.
-        :param n_hidden_classifier:
-            Number of hidden units in the classifier. Default is 128.
-        :param n_hidden_mlp_attn:
-            Number of hidden units in the MLP attention. Default is 32.
-        :param n_hidden_regressor:
-            Number of hidden units in the regressor. Default is 128.
-        :param class_loss_coef:
-            Coefficient for the classification loss. Default is 1.0.
-        :param regression_loss_coef:
-            Coefficient for the regression loss. Default is 1.0.
-        :param activation:
-            Activation function. Default is 'leaky_relu'.
-        :param initialization:
-            Initialization method for the weights. Default is None.
-        :param anneal_class_loss:
-            Whether to anneal the classification loss. Default is False.
-        :param ignore_covariates:
-            List of covariates to ignore. Needed for query-to-reference mapping. Default is None.
-        """
         super().__init__(adata)
 
         if classification is None:
@@ -246,8 +249,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         path_to_checkpoints: str | None = None,
         **kwargs,
     ):
-        """
-        Trains the model using amortized variational inference.
+        """Trains the model using amortized variational inference.
 
         Parameters
         ----------
@@ -299,6 +301,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             Path to save checkpoints.
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
+
+        Returns
+        -------
+        Trainer object.
         """
         # TODO put in a function, return params needed for splitter, plan and runner, then can call the function from multivae_mil
         if len(self.regression) > 0:
@@ -389,16 +395,18 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         This method will also compute the log mean and log variance per batch for the library size prior.
         None of the data in adata are modified. Only adds fields to adata.
 
-        :param adata:
-            AnnData object containing raw counts. Rows represent cells, columns represent features
-        :param categorical_covariate_keys:
-            Keys in `adata.obs` that correspond to categorical data
-        :param continuous_covariate_keys:
-            Keys in `adata.obs` that correspond to continuous data
-        :param ordinal_regression_order:
-            Dictionary with regression classes as keys and order of classes as values
-        :param kwargs:
-            Additional parameters to pass to register_fields() of AnnDataManager
+        Parameters
+        ----------
+        adata
+            AnnData object containing raw counts. Rows represent cells, columns represent features.
+        categorical_covariate_keys
+            Keys in `adata.obs` that correspond to categorical data.
+        continuous_covariate_keys
+            Keys in `adata.obs` that correspond to continuous data.
+        ordinal_regression_order
+            Dictionary with regression classes as keys and order of classes as values.
+        kwargs
+            Additional parameters to pass to register_fields() of AnnDataManager.
         """
         setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
@@ -426,9 +434,11 @@ class MILClassifier(BaseModelClass, ArchesMixin):
     ):
         """Save the attention scores and predictions in the adata object.
 
-        :param adata:
+        Parameters
+        ----------
+        adata
             AnnData object to run the model on. If `None`, the model's AnnData object is used.
-        :param batch_size:
+        batch_size
             Minibatch size to use. Default is 256.
 
         """
@@ -552,7 +562,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
     def plot_losses(self, save=None):
         """Plot losses.
 
-        :param save:
+        Parameters
+        ----------
+        save
             If not None, save the plot to this location.
         """
         loss_names = self.module.select_losses_to_plot()
@@ -567,18 +579,24 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         adata: AnnData,
         reference_model: BaseModelClass,
         use_gpu: str | int | bool | None = None,
-    ):
+    ) -> BaseModelClass:
         """Online update of a reference model with scArches algorithm # TODO cite.
 
-        :param adata:
+        Parameters
+        ----------
+        adata
             AnnData organized in the same way as data used to train model.
             It is not necessary to run setup_anndata,
             as AnnData is validated against the ``registry``.
-        :param reference_model:
-            Already instantiated model of the same class
-        :param use_gpu:
+        reference_model
+            Already instantiated model of the same class.
+        use_gpu
             Load model on default GPU if available (if None or True),
-            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False)
+            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False).
+
+        Returns
+        -------
+        Model with updated architecture and weights.
         """
         # currently this function works only if the prediction cov is present in the .obs of the query
         # TODO need to allow it to be missing, maybe add a dummy column to .obs of query adata

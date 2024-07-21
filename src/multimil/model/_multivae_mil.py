@@ -33,6 +33,92 @@ logger = logging.getLogger(__name__)
 
 
 class MultiVAE_MIL(BaseModelClass, ArchesMixin):
+    """MultiVAE_MIL model.
+
+    Parameters
+    ----------
+    adata
+        Annotated data object.
+    sample_key
+        Key for the sample column in the adata object.
+    classification
+        List of keys for the categorical covariates used for classification.
+    regression
+        List of keys for the continuous covariates used for regression.
+    ordinal_regression
+        List of keys for the ordinal covariates used for ordinal regression.
+    sample_batch_size
+        Bag batch size for training the model.
+    integrate_on
+        Key for the covariate used for integration.
+    condition_encoders
+        Whether to condition the encoders on the covariates.
+    condition_decoders
+        Whether to condition the decoders on the covariates.
+    normalization
+        Type of normalization to be applied.
+    n_layers_encoders
+        Number of layers in the encoders.
+    n_layers_decoders
+        Number of layers in the decoders.
+    n_hidden_encoders
+        Number of hidden units in the encoders.
+    n_hidden_decoders
+        Number of hidden units in the decoders.
+    z_dim
+        Dimensionality of the latent space.
+    losses
+        List of loss functions to be used.
+    dropout
+        Dropout rate.
+    cond_dim
+        Dimensionality of the covariate embeddings.
+    kernel_type
+        Type of kernel to be used in MMD calculation.
+    loss_coefs
+        List of coefficients for different losses.
+    scoring
+        Scoring method for the MIL classifier.
+    attn_dim
+        Dimensionality of the hidden dimentino in the attention mechanism.
+    n_layers_cell_aggregator
+        Number of layers in the cell aggregator.
+    n_layers_classifier
+        Number of layers in the classifier.
+    n_layers_regressor
+        Number of layers in the regressor.
+    n_layers_mlp_att
+        Number of layers in the MLP attention mechanism.
+    n_layers_cont_embed
+        Number of layers in the continuous embedding.
+    n_hidden_cell_aggregator
+        Number of hidden units in the cell aggregator.
+    n_hidden_classifier
+        Number of hidden units in the classifier.
+    n_hidden_cont_embed
+        Number of hidden units in the continuous embedding.
+    n_hidden_mlp_attn
+        Number of hidden units in the MLP attention mechanism.
+    n_hidden_regressor
+        Number of hidden units in the regressor.
+    class_loss_coef
+        Coefficient for the classification loss.
+    regression_loss_coef
+        Coefficient for the regression loss.
+    cont_cov_type
+        How to calucate the embeddings for the continuous covariates.
+    mmd
+        Type of maximum mean discrepancy.
+    sample_in_vae
+        Whether to include the sample key in the VAE as a covariate.
+    activation
+        Activation function to be used.
+    initialization
+        Initialization method for the weights.
+    anneal_class_loss
+        Whether to anneal the classification loss.
+    """
+
     def __init__(
         self,
         adata,
@@ -76,50 +162,6 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         initialization="kaiming",  # xavier (tanh) or kaiming (leaky_relu)
         anneal_class_loss=False,
     ):
-        """
-        Initialize the MultiVAE_MIL model.
-
-        :param adata: Annotated data object.
-        :param sample_key: Key for the sample column in the adata object.
-        :param classification: List of keys for the categorical covariates used for classification.
-        :param regression: List of keys for the continuous covariates used for regression.
-        :param ordinal_regression: List of keys for the ordinal covariates used for ordinal regression.
-        :param sample_batch_size: Batch size for training the model.
-        :param integrate_on: Key for the covariate used for integration.
-        :param condition_encoders: Whether to condition the encoders on the covariates.
-        :param condition_decoders: Whether to condition the decoders on the covariates.
-        :param normalization: Type of normalization to be applied.
-        :param n_layers_encoders: Number of layers in the encoders.
-        :param n_layers_decoders: Number of layers in the decoders.
-        :param n_hidden_encoders: Number of hidden units in the encoders.
-        :param n_hidden_decoders: Number of hidden units in the decoders.
-        :param z_dim: Dimensionality of the latent space.
-        :param losses: List of loss functions to be used.
-        :param dropout: Dropout rate.
-        :param cond_dim: Dimensionality of the conditional covariates.
-        :param kernel_type: Type of kernel to be used.
-        :param loss_coefs: List of coefficients for the loss functions.
-        :param scoring: Scoring method for the MIL classifier.
-        :param attn_dim: Dimensionality of the attention mechanism.
-        :param n_layers_cell_aggregator: Number of layers in the cell aggregator.
-        :param n_layers_classifier: Number of layers in the classifier.
-        :param n_layers_regressor: Number of layers in the regressor.
-        :param n_layers_mlp_attn: Number of layers in the MLP attention mechanism.
-        :param n_layers_cont_embed: Number of layers in the continuous embedding.
-        :param n_hidden_cell_aggregator: Number of hidden units in the cell aggregator.
-        :param n_hidden_classifier: Number of hidden units in the classifier.
-        :param n_hidden_cont_embed: Number of hidden units in the continuous embedding.
-        :param n_hidden_mlp_attn: Number of hidden units in the MLP attention mechanism.
-        :param n_hidden_regressor: Number of hidden units in the regressor.
-        :param class_loss_coef: Coefficient for the classification loss.
-        :param regression_loss_coef: Coefficient for the regression loss.
-        :param cont_cov_type: Type of continuous covariate.
-        :param mmd: Type of maximum mean discrepancy.
-        :param sample_in_vae: Whether to include the sample key in the VAE.
-        :param activation: Activation function to be used.
-        :param initialization: Initialization method for the model.
-        :param anneal_class_loss: Whether to anneal the classification loss.
-        """
         super().__init__(adata)
 
         if classification is None:
@@ -303,8 +345,7 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         path_to_checkpoints: str | None = None,
         **kwargs,
     ):
-        """
-        Trains the model using amortized variational inference.
+        """Trains the model.
 
         Parameters
         ----------
@@ -356,6 +397,10 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
             Path to save checkpoints.
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
+
+        Returns
+        -------
+        Trainer object.
         """
         if len(self.mil.regression) > 0:
             if early_stopping_monitor == "accuracy_validation":
@@ -445,20 +490,22 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         This method will also compute the log mean and log variance per batch for the library size prior.
         None of the data in adata are modified. Only adds fields to adata.
 
-        :param adata:
-            AnnData object containing raw counts. Rows represent cells, columns represent features
-        :param size_factor_key:
+        Parameters
+        ----------
+        adata
+            AnnData object containing raw counts. Rows represent cells, columns represent features.
+        size_factor_key
             Key in `adata.obs` containing the size factor. If `None`, will be calculated from the RNA counts.
-        :param rna_indices_end:
+        rna_indices_end
             Integer to indicate where RNA feature end in the AnnData object. May be needed to calculate ``libary_size``.
-        :param categorical_covariate_keys:
-            Keys in `adata.obs` that correspond to categorical data
-        :param continuous_covariate_keys:
-            Keys in `adata.obs` that correspond to continuous data
-        :param ordinal_regression_order:
-            Dictionary with regression classes as keys and order of classes as values
-        :param kwargs:
-            Additional parameters to pass to register_fields() of AnnDataManager
+        categorical_covariate_keys
+            Keys in `adata.obs` that correspond to categorical data.
+        continuous_covariate_keys
+            Keys in `adata.obs` that correspond to continuous data.
+        ordinal_regression_order
+            Dictionary with regression classes as keys and order of classes as values.
+        kwargs
+            Additional parameters to pass to register_fields() of AnnDataManager.
         """
         setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
@@ -489,9 +536,11 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     ):
         """Save the latent representation, attention scores and predictions in the adata object.
 
-        :param adata:
+        Parameters
+        ----------
+        adata
             AnnData object to run the model on. If `None`, the model's AnnData object is used.
-        :param batch_size:
+        batch_size
             Minibatch size to use. Default is 256.
 
         """
@@ -637,7 +686,9 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     def plot_losses(self, save=None):
         """Plot losses.
 
-        :param save:
+        Parameters
+        ----------
+        save
             If not None, save the plot to this location.
         """
         loss_names = []
@@ -656,22 +707,28 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
         use_gpu: str | int | bool | None = None,
         freeze: bool = True,
         ignore_covariates: list[str] | None = None,
-    ):
+    ) -> BaseModelClass:
         """Online update of a reference model with scArches algorithm # TODO cite.
 
-        :param adata:
+        Parameters
+        ----------
+        adata
             AnnData organized in the same way as data used to train model.
             It is not necessary to run setup_anndata,
             as AnnData is validated against the ``registry``.
-        :param reference_model:
-            Already instantiated model of the same class
-        :param use_gpu:
+        reference_model
+            Already instantiated model of the same class.
+        use_gpu
             Load model on default GPU if available (if None or True),
-            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False)
-        :param freeze:
-            Whether to freeze the encoders and decoders and only train the new weights
-        :param ignore_covariates:
+            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False).
+        freeze
+            Whether to freeze the encoders and decoders and only train the new weights.
+        ignore_covariates
             List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
+
+        Returns
+        -------
+        Model with updated architecture and weights.
         """
         _, _, device = parse_use_gpu_arg(use_gpu)
 
@@ -762,55 +819,56 @@ class MultiVAE_MIL(BaseModelClass, ArchesMixin):
     ):
         """Train the VAE part of the model.
 
-        :param max_epochs:
+        Parameters
+        ----------
+        max_epochs
             Number of passes through the dataset.
-        :param lr:
+        lr
             Learning rate for optimization.
-        :param use_gpu:
+        use_gpu
             Use default GPU if available (if None or True), or index of GPU to use (if int),
             or name of GPU (if str), or use CPU (if False).
-        :param train_size:
+        train_size
             Size of training set in the range [0.0, 1.0].
-        :param validation_size:
+        validation_size
             Size of the test set. If `None`, defaults to 1 - `train_size`. If
             `train_size + validation_size < 1`, the remaining cells belong to a test set.
-        :param batch_size:
+        batch_size
             Minibatch size to use during training.
-        :param weight_decay:
+        weight_decay
             weight decay regularization term for optimization
-        :param eps:
-            Optimizer eps
-        :param early_stopping:
+        eps
+            Optimizer eps.
+        early_stopping
             Whether to perform early stopping with respect to the validation set.
-        :param save_best:
+        save_best
             Save the best model state with respect to the validation loss, or use the final
-            state in the training procedure
-        :param check_val_every_n_epoch:
+            state in the training procedure.
+        check_val_every_n_epoch
             Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`.
             If so, val is checked every epoch.
-        :param n_epochs_kl_warmup:
+        n_epochs_kl_warmup
             Number of epochs to scale weight on KL divergences from 0 to 1.
             Overrides `n_steps_kl_warmup` when both are not `None`. Default is 1/3 of `max_epochs`.
-        :param n_steps_kl_warmup:
+        n_steps_kl_warmup
             Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
             Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
-            to `floor(0.75 * adata.n_obs)`
-        :param adversarial_mixing:
+            to `floor(0.75 * adata.n_obs)`.
+        adversarial_mixing
             Whether to use adversarial mixing in the training procedure.
-        :param plan_kwargs:
+        plan_kwargs
             Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword arguments passed to
             `train()` will overwrite values present in `plan_kwargs`, when appropriate.
-        :param plot_losses:
+        plot_losses
             Whether to plot the losses.
-        :param save_loss:
+        save_loss
             If not None, save the plot to this location.
-        :param save_checkpoint_every_n_epochs:
+        save_checkpoint_every_n_epochs
             Save a checkpoint every n epochs.
-        :param path_to_checkpoints:
+        path_to_checkpoints
             Path to save checkpoints.
-        :param kwargs:
+        kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
-
         """
         # TODO add a check if there are any new params added in load_query_data, i.e. if there are any new params that can be trained
         vae = self.multivae

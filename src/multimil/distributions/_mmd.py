@@ -4,10 +4,12 @@ import torch
 class MMD(torch.nn.Module):
     """Maximum mean discrepancy.
 
-    :param kernel_type:
+    Parameters
+    ----------
+    kernel_type
         Indicates if to use Gaussian kernel. One of
         * ``'gaussian'`` - use Gaussian kernel
-        * ``'not gaussian'`` - do not use Gaussian kernel
+        * ``'not gaussian'`` - do not use Gaussian kernel.
     """
 
     def __init__(self, kernel_type="gaussian"):
@@ -23,12 +25,18 @@ class MMD(torch.nn.Module):
     ) -> torch.Tensor:
         """Apply Guassian kernel.
 
-        :param x:
-            Tensor from the first distribution
-        :param y:
-            Tensor from the second distribution
-        :param gamma:
-            List of gamma parameters
+        Parameters
+        ----------
+        x
+            Tensor from the first distribution.
+        y
+            Tensor from the second distribution.
+        gamma
+            List of gamma parameters.
+
+        Returns
+        -------
+        Gaussian kernel between ``x`` and ``y``.
         """
         if gamma is None:
             gamma = [
@@ -71,12 +79,16 @@ class MMD(torch.nn.Module):
         Availability: https://github.com/theislab/scarches/blob/63a7c2b35a01e55fe7e1dd871add459a86cd27fb/scarches/models/trvae/losses.py
         Citation: Gretton, Arthur, et al. "A Kernel Two-Sample Test", 2012.
 
-        :param x:
-            Tensor with shape ``(batch_size, z_dim)``
-        :param y:
-            Tensor with shape ``(batch_size, z_dim)``
-        :returns:
-            MMD between ``x`` and ``y``
+        Parameters
+        ----------
+        x
+            Tensor with shape ``(batch_size, z_dim)``.
+        y
+            Tensor with shape ``(batch_size, z_dim)``.
+
+        Returns
+        -------
+        MMD between ``x`` and ``y``.
         """
         # in case there is only one sample in a batch belonging to one of the groups, then skip the batch
         if len(x) == 1 or len(y) == 1:

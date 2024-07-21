@@ -8,21 +8,22 @@ from multimil.dataloaders._ann_dataloader import GroupAnnDataLoader
 # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/dataloaders/_data_splitting.py#L56
 # accessed on 5 November 2022
 class GroupDataSplitter(DataSplitter):
-    """
-    Creates data loaders ``train_set``, ``validation_set``, ``test_set``.
+    """Creates data loaders ``train_set``, ``validation_set``, ``test_set``.
 
     If ``train_size + validation_set < 1`` then ``test_set`` is non-empty.
 
-    :param adata_manager:
+    Parameters
+    ----------
+    adata_manager
         :class:`~scvi.data.AnnDataManager` object that has been created via ``setup_anndata``.
-    :param train_size:
-        float, or None (default is 0.9)
-    :param validation_size:
-        float, or None (default is None)
-    :param use_gpu:
+    train_size
+        Proportion of cells to use  as the train set. Float, or None (default is 0.9).
+    validation_size
+        Proportion of cell to use as the valisation set. Float, or None (default is None). If None, is set to 1 - ``train_size``.
+    use_gpu
         Use default GPU if available (if None or True), or index of GPU to use (if int),
         or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
-    :param kwargs:
+    kwargs
         Keyword args for data loader. Data loader class is :class:`~mtg.dataloaders.GroupAnnDataLoader`.
     """
 

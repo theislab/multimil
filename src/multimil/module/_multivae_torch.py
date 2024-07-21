@@ -14,66 +14,68 @@ from multimil.nn import MLP, Decoder, GeneralizedSigmoid
 
 
 class MultiVAETorch(BaseModuleClass):
-    """The multigrate model implemented following scvi-tools module sctructure.
+    """MultiMIL's multimodal integration module.
 
-    :param modality_lengths:
-        List with lengths of each modality
-    :param condition_encoders:
-        Boolean to indicate if to condition encoders
-    :param condition_decoders:
-        Boolean to indicate if to condition decoders
-    :param normalization:
+    Parameters
+    ----------
+    modality_lengths
+        List with lengths of each modality.
+    condition_encoders
+        Boolean to indicate if to condition encoders.
+    condition_decoders
+        Boolean to indicate if to condition decoders.
+    normalization
         One of the following
         * ``'layer'`` - layer normalization
         * ``'batch'`` - batch normalization
-        * ``None`` - no normalization
-    :param z_dim:
-        Dimensionality of the latent space
-    :param losses:
+        * ``None`` - no normalization.
+    z_dim
+        Dimensionality of the latent space.
+    losses
         List of which losses to use. For each modality can be one of the following:
         * ``'mse'`` - mean squared error
         * ``'nb'`` - negative binomial
         * ``zinb`` - zero-inflated negative binomial
-        * ``bce`` - binary cross-entropy
-    :param dropout:
-        Dropout rate for neural networks
-    :param cond_dim:
-        Dimensionality of the covariate embeddings
-    :param kernel_type:
+        * ``bce`` - binary cross-entropy.
+    dropout
+        Dropout rate for neural networks.
+    cond_dim
+        Dimensionality of the covariate embeddings.
+    kernel_type
         One of the following:
         * ``'gaussian'`` - Gaussian kernel
-        * ``'not gaussian'`` - not Gaussian kernel
-    :param loss_coefs:
-        Dictionary with weights for each of the losses
-    :param num_groups:
-        Number of groups to integrate on
-    :param integrate_on_idx:
-        Indices on which to integrate on
-    :param cat_covariate_dims:
-        List with number of classes for each of the categorical covariates
-    :param cont_covariate_dims:
-        List of 1's for each of the continuous covariate
-    :param cont_cov_type:
+        * ``'not gaussian'`` - not Gaussian kernel.
+    loss_coefs
+        Dictionary with weights for each of the losses.
+    num_groups
+        Number of groups to integrate on.
+    integrate_on_idx
+        Indices on which to integrate on.
+    cat_covariate_dims
+        List with number of classes for each of the categorical covariates.
+    cont_covariate_dims
+        List of 1's for each of the continuous covariate.
+    cont_cov_type
         How to transform continuous covariate before multiplying with the embedding. One of the following:
         * ``'logsim'`` - generalized sigmoid
-        * ``'mlp'`` - MLP
-    :param n_layers_cont_embed:
-        Number of layers for the transformation of the continuous covariates before multiplying with the embedding
-    :param n_hidden_cont_embed:
-        Number of nodes in hidden layers in the network that transforms continuous covariates
-    :param n_layers_encoders:
-        Number of layers in each encoder
-    :param n_layers_decoders:
-        Number of layers in each decoder
-    :param n_hidden_encoders:
-        Number of nodes in hidden layers in encoders
-    :param n_hidden_decoders:
-        Number of nodes in hidden layers in decoders
-    :param mmd:
+        * ``'mlp'`` - MLP.
+    n_layers_cont_embed
+        Number of layers for the transformation of the continuous covariates before multiplying with the embedding.
+    n_hidden_cont_embed
+        Number of nodes in hidden layers in the network that transforms continuous covariates.
+    n_layers_encoders
+        Number of layers in each encoder.
+    n_layers_decoders
+        Number of layers in each decoder.
+    n_hidden_encoders
+        Number of nodes in hidden layers in encoders.
+    n_hidden_decoders
+        Number of nodes in hidden layers in decoders.
+    mmd
         How to calculate MMD loss. One of the following
         * ``'latent'`` - only on the latent representations
         * ``'marginal'`` - only on the marginal representations
-        * ``both`` - the sum of the two above
+        * ``both`` - the sum of the two above.
     """
 
     def __init__(
@@ -343,16 +345,20 @@ class MultiVAETorch(BaseModuleClass):
     ) -> dict[str, torch.Tensor | list[torch.Tensor]]:
         """Compute necessary inference quantities.
 
-        :param x:
-            Tensor of values with shape ``(batch_size, n_input_features)``
-        :param cat_covs:
-            Categorical covariates to condition on
-        :param cont_covs:
-            Continuous covariates to condition on
-        :param masks:
-            List of binary tensors indicating which values in ``x`` belong to which modality
-        :returns:
-            Joint representations, marginal representations, joint mu's and logvar's.
+        Parameters
+        ----------
+        x
+            Tensor of values with shape ``(batch_size, n_input_features)``.
+        cat_covs
+            Categorical covariates to condition on.
+        cont_covs
+            Continuous covariates to condition on.
+        masks
+            List of binary tensors indicating which values in ``x`` belong to which modality.
+
+        Returns
+        -------
+        Joint representations, marginal representations, joint mu's and logvar's.
         """
         # split x into modality xs
         if torch.is_tensor(x):
@@ -362,6 +368,7 @@ class MultiVAETorch(BaseModuleClass):
         else:
             xs = x
 
+        # TODO: check if masks still supported
         if masks is None:
             masks = [x.sum(dim=1) > 0 for x in xs]  # list of masks per modality
             masks = torch.stack(masks, dim=1)
@@ -401,14 +408,18 @@ class MultiVAETorch(BaseModuleClass):
     ) -> dict[str, list[torch.Tensor]]:
         """Compute necessary inference quantities.
 
-        :param z_joint:
-            Tensor of values with shape ``(batch_size, z_dim)``
-        :param cat_covs:
-            Categorical covariates to condition on
-        :param cont_covs:
-            Continuous covariates to condition on
-        :returns:
-            Reconstructed values for each modality.
+        Parameters
+        ----------
+        z_joint
+            Tensor of values with shape ``(batch_size, z_dim)``.
+        cat_covs
+            Categorical covariates to condition on.
+        cont_covs
+            Continuous covariates to condition on.
+
+        Returns
+        -------
+        Reconstructed values for each modality.
         """
         z = z_joint.unsqueeze(1).repeat(1, self.n_modality, 1)
         zs = torch.split(z, 1, dim=1)
@@ -534,16 +545,20 @@ class MultiVAETorch(BaseModuleClass):
     ]:
         """Calculate the (modality) reconstruction loss, Kullback divergences and integration loss.
 
-        :param tensors:
-            Tensor of values with shape ``(batch_size, n_input_features)``
-        :param inference_outputs:
-            Dictionary with the inference output
-        :param generative_outputs:
-            Dictionary with the generative output
-        :param kl_weight:
-            Weight of the KL loss
-        :returns:
-            Reconstruction loss, Kullback divergences, integration loss and modality reconstruction losses.
+        Parameters
+        ----------
+        tensors
+            Tensor of values with shape ``(batch_size, n_input_features)``.
+        inference_outputs
+            Dictionary with the inference output.
+        generative_outputs
+            Dictionary with the generative output.
+        kl_weight
+            Weight of the KL loss. Default is 1.0.
+
+        Returns
+        -------
+        Reconstruction loss, Kullback divergences, integration loss and modality reconstruction losses.
         """
         loss, recon_loss, kl_loss, extra_metrics = self._calculate_loss(
             tensors, inference_outputs, generative_outputs, kl_weight
@@ -556,20 +571,32 @@ class MultiVAETorch(BaseModuleClass):
             extra_metrics=extra_metrics,
         )
 
-    @torch.inference_mode()
-    def sample(self, tensors, n_samples=1):
-        """Sample from the generative model."""
-        inference_kwargs = {"n_samples": n_samples}
-        with torch.inference_mode():
-            (
-                _,
-                generative_outputs,
-            ) = self.forward(
-                tensors,
-                inference_kwargs=inference_kwargs,
-                compute_loss=False,
-            )
-        return generative_outputs["rs"]
+    # @torch.inference_mode()
+    # def sample(self, tensors, n_samples=1):
+    #     """Sample from the generative model.
+
+    #     Parameters
+    #     ----------
+    #     tensors
+    #         Tensor of values.
+    #     n_samples
+    #         Number of samples to generate.
+
+    #     Returns
+    #     -------
+    #     Generative outputs.
+    #     """
+    #     inference_kwargs = {"n_samples": n_samples}
+    #     with torch.inference_mode():
+    #         (
+    #             _,
+    #             generative_outputs,
+    #         ) = self.forward(
+    #             tensors,
+    #             inference_kwargs=inference_kwargs,
+    #             compute_loss=False,
+    #         )
+    #     return generative_outputs["rs"]
 
     def _calc_recon_loss(self, xs, rs, losses, group, size_factor, loss_coefs, masks):
         loss = []
@@ -643,6 +670,12 @@ class MultiVAETorch(BaseModuleClass):
             return self.cont_covariate_curves(covs) @ self.cont_covariate_embeddings.weight
 
     def select_losses_to_plot(self):
+        """Select losses to plot.
+
+        Returns
+        -------
+        Loss names.
+        """
         loss_names = ["kl_local", "elbo", "reconstruction_loss"]
         for i in range(self.n_modality):
             loss_names.append(f"modality_{i}_reconstruction_loss")
