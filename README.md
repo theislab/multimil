@@ -23,20 +23,24 @@ Please refer to the [documentation][link-docs]. In particular, the
 
 ## Installation
 
-You need to have Python 3.10 or newer installed on your system. If you don't have
-Python installed, we recommend installing [Mambaforge](https://github.com/conda-forge/miniforge#mambaforge).
+You need to have Python 3.10 or newer installed on your system. We recommend installing [Mambaforge](https://github.com/conda-forge/miniforge#mambaforge).
 
-There are several alternative options to install multimil:
+To create and activate a new environment:
 
-<!--
-1) Install the latest release of `multimil` from [PyPI][link-pypi]:
+```bash
+mamba create --name multimil python=3.10
+mamba activate multiiml
+```
+
+Next, there are several alternative options to install multimil:
+
+1. Install the latest release of `multimil` from [PyPI][link-pypi]:
 
 ```bash
 pip install multimil
 ```
--->
 
-1. Install the latest development version:
+2. Or install the latest development version:
 
 ```bash
 pip install git+https://github.com/theislab/multimil.git@main
@@ -48,7 +52,6 @@ See the [changelog][changelog].
 
 ## Contact
 
-For questions and help requests, you can reach out in the [scverse discourse][scverse-discourse].
 If you found a bug, please use the [issue tracker][issue-tracker].
 
 ## Citation
@@ -59,7 +62,6 @@ If you found a bug, please use the [issue tracker][issue-tracker].
 
 Code and notebooks to reproduce the results from the paper are available at https://github.com/theislab/multimil_reproducibility.
 
-[scverse-discourse]: https://discourse.scverse.org/
 [issue-tracker]: https://github.com/theislab/multimil/issues
 [changelog]: https://multimil.readthedocs.io/latest/changelog.html
 [link-docs]: https://multimil.readthedocs.io
