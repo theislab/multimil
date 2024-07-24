@@ -1,3 +1,9 @@
+# Notebooks
+.ipynb_checkpoints
+
+# Logs
+scvi_log/
+
 # Temp files
 .DS_Store
 *~

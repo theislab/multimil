@@ -53,9 +53,12 @@ test = [
     "coverage",
 ]
 tutorials = [
+    "muon",
     "jupyterlab",
+    "ipywidgets",
     "leidenalg",
     "igraph",
+    "gdown",
 ]
 
 [tool.coverage.run]
