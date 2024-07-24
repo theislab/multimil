@@ -257,8 +257,9 @@ def save_predictions_in_adata(
         adata.obs[f"predicted_{name}"] = df.to_numpy()
     if reg is False:
         adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype("category")
-        rename_dict = {str(i): name for i, name in enumerate(class_names)}
-        adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].cat.rename_categories(rename_dict)
+        adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].cat.rename_categories(
+            dict(enumerate(class_names))
+        )
 
     # bag level predictions
     adata.uns[f"bag_true_{name}"] = create_df(bag_true, predictions)
