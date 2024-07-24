@@ -7,19 +7,19 @@
 [link-tests]: https://github.com/theislab/multimil/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/multimil
 
----
-
-**NOTE**
-
-This repository is WIP. Tutorials, documentation and code updates are coming in the next few weeks.
-
----
-
 ## Getting started
 
 Please refer to the [documentation][link-docs]. In particular, the
 
--   [API documentation][link-api].
+-   [API documentation][link-api]
+
+and the tutorials:
+
+-   [Paired integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/paired_integration_cite-seq.html) [![Open In Colab][colab_badge]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/paired_integration_cite-seq.ipynb)
+-   [Trimodal integration and query-to-reference mapping][https://multimil.readthedocs.io/en/latest/notebooks/trimodal_integration.html] [![Open In Colab][colab_badge]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/trimodal_integration.ipynb)
+-   [Classification with MIL][https://multimil.readthedocs.io/en/latest/notebooks/mil_classification.html] [![Open In Colab][colab_badge]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_classification.ipynb)
+
+[colab-badge]: https://colab.research.google.com/assets/colab-badge.svg
 
 ## Installation
 
