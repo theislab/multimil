@@ -77,7 +77,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         self,
         adata: ad.AnnData,
         integrate_on: str | None = None,
-        condition_encoders: bool = False,
+        condition_encoders: bool = True,
         condition_decoders: bool = True,
         normalization: Literal["layer", "batch", None] = "layer",
         z_dim: int = 16,

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 
-def organize_multiome_anndatas(
+def organize_multimodal_anndatas(
     adatas: list[list[ad.AnnData | None]],
     layers: list[list[str | None]] | None = None,
 ) -> ad.AnnData:

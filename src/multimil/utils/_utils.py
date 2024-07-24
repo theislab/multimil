@@ -53,7 +53,7 @@ def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
     -------
     Size factor key.
     """
-    # TODO check that organize_multiome_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
+    # TODO check that organize_multimodal_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
     if size_factor_key is not None and rna_indices_end is not None:
         raise ValueError(
             "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."

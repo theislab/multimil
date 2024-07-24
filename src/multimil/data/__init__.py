@@ -1,3 +1,3 @@
-from ._preprocessing import organize_multiome_anndatas
+from ._preprocessing import organize_multimodal_anndatas
 
-__all__ = ["organize_multiome_anndatas"]
+__all__ = ["organize_multimodal_anndatas"]
