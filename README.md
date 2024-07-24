@@ -1,4 +1,4 @@
-# Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases.
+# Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases
 
 [![Tests][badge-tests]][link-tests]
 [![Documentation][badge-docs]][link-docs]
