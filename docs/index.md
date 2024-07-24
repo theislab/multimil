@@ -4,12 +4,11 @@
 
 ```{toctree}
 :hidden: true
-:maxdepth: 1
+:maxdepth: 2
 
 api.md
+tutorials.md
 changelog.md
 contributing.md
 references.md
-
-notebooks/example
 ```
