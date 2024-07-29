@@ -33,3 +33,6 @@ __pycache__/
 # IDEs
 /.idea/
 /.vscode/
+
+# Data
+*.h5ad
