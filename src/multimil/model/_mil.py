@@ -621,6 +621,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         )
 
         model = _initialize_model(cls, adata, attr_dict)
+        model.module.load_state_dict(reference_model.module.state_dict())
         model.to_device(device)
 
         model.module.eval()
