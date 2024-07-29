@@ -29,7 +29,7 @@ To create and activate a new environment:
 
 ```bash
 mamba create --name multimil python=3.10
-mamba activate multiiml
+mamba activate multimil
 ```
 
 Next, there are several alternative options to install multimil:
