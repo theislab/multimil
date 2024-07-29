@@ -1,4 +1,4 @@
-# Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases.
+# Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases
 
 [![Tests][badge-tests]][link-tests]
 [![Documentation][badge-docs]][link-docs]
@@ -6,6 +6,7 @@
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/multimil/test.yaml?branch=main
 [link-tests]: https://github.com/theislab/multimil/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/multimil
+[badge-colab]: https://colab.research.google.com/assets/colab-badge.svg
 
 ## Getting started
 
@@ -15,11 +16,9 @@ Please refer to the [documentation][link-docs]. In particular, the
 
 and the tutorials:
 
--   [Paired integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/paired_integration_cite-seq.html) [![Open In Colab][colab_badge]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/paired_integration_cite-seq.ipynb)
--   [Trimodal integration and query-to-reference mapping][https://multimil.readthedocs.io/en/latest/notebooks/trimodal_integration.html] [![Open In Colab][colab_badge]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/trimodal_integration.ipynb)
--   [Classification with MIL][https://multimil.readthedocs.io/en/latest/notebooks/mil_classification.html] [![Open In Colab][colab_badge]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_classification.ipynb)
-
-[colab-badge]: https://colab.research.google.com/assets/colab-badge.svg
+-   [Paired integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/paired_integration_cite-seq.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/paired_integration_cite-seq.ipynb)
+-   [Trimodal integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/trimodal_integration.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/trimodal_integration.ipynb)
+-   [Classification with MIL](https://multimil.readthedocs.io/en/latest/notebooks/mil_classification.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_classification.ipynb)
 
 ## Installation
 
