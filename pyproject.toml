@@ -20,6 +20,7 @@ urls.Source = "https://github.com/theislab/multimil"
 urls.Home-page = "https://github.com/theislab/multimil"
 dependencies = [
     "anndata",
+    "numpy<2.0",
     # for debug logging (referenced from the issue template)
     "session-info",
     # multimil specific
