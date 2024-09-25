@@ -19,7 +19,7 @@ urls.Documentation = "https://multimil.readthedocs.io/"
 urls.Source = "https://github.com/theislab/multimil"
 urls.Home-page = "https://github.com/theislab/multimil"
 dependencies = [
-    "anndata",
+    "anndata<0.11",
     "numpy<2.0",
     # for debug logging (referenced from the issue template)
     "session-info",
