@@ -192,6 +192,37 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         self.init_params_ = self._get_init_params(locals())
 
     @torch.inference_mode()
+    def impute(self, adata=None, batch_size=256):
+        """Impute missing values in the adata object.
+
+        Parameters
+        ----------
+        adata
+            AnnData object to run the model on. If `None`, the model's AnnData object is used.
+        batch_size
+            Minibatch size to use. Default is 256.
+        """
+        if not self.is_trained_:
+            raise RuntimeError("Please train the model first.")
+
+        adata = self._validate_anndata(adata)
+
+        scdl = self._make_data_loader(adata=adata, batch_size=batch_size)
+
+        imputed = [[] for _ in range(len(self.modality_lengths))]
+
+        for tensors in scdl:
+            inference_inputs = self.module._get_inference_input(tensors)
+            inference_outputs = self.module.inference(**inference_inputs)
+            generative_inputs = self.module._get_generative_input(tensors, inference_outputs)
+            outputs = self.module.generative(**generative_inputs)
+            for i, output in enumerate(outputs["rs"]):
+                imputed[i] += [output.cpu()]
+        for i in range(len(imputed)):
+            imputed[i] = torch.cat(imputed[i]).numpy()
+            adata.obsm[f"imputed_modality_{i}"] = imputed[i]
+
+    @torch.inference_mode()
     def get_model_output(self, adata=None, batch_size=256):
         """Save the latent representation in the adata object.
 
