@@ -73,6 +73,8 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         Initialization method to use. Default is `None`.
     ignore_covariates
         List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
+    mix
+        How to mix the distributions to get the joint, one of ['product', 'mixture']. Default is `product`.
     """
 
     def __init__(
@@ -100,6 +102,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         activation: str | None = "leaky_relu",  # TODO add which options are impelemted
         initialization: str | None = None,  # TODO add which options are impelemted
         ignore_covariates: list[str] | None = None,
+        mix: Literal["product", "mixture"] = "product",
     ):
         super().__init__(adata)
 
@@ -191,6 +194,7 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             alignment_type=alignment_type,
             activation=activation,
             initialization=initialization,
+            mix=mix,
         )
 
         self.init_params_ = self._get_init_params(locals())

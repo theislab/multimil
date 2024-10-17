@@ -2,6 +2,7 @@ import warnings
 from typing import Literal
 
 import torch
+import torch.nn.functional as F
 from scvi import REGISTRY_KEYS
 from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
@@ -107,6 +108,7 @@ class MultiVAETorch(BaseModuleClass):
         alignment_type="latent",
         activation="leaky_relu",
         initialization=None,
+        mix="product",
     ):
         super().__init__()
 
@@ -133,6 +135,7 @@ class MultiVAETorch(BaseModuleClass):
         self.n_hidden_decoders = n_hidden_decoders
         self.cat_covs_idx = cat_covs_idx
         self.cont_covs_idx = cont_covs_idx
+        self.mix = mix
 
         if activation == "leaky_relu":
             self.activation = nn.LeakyReLU
@@ -315,6 +318,16 @@ class MultiVAETorch(BaseModuleClass):
         logvars_joint = torch.log(logvars_joint)
         return mus_joint, logvars_joint
 
+    def _mixture_of_experts(self, mus, logvars, masks):
+        vars = torch.exp(logvars)
+        masks = masks.unsqueeze(-1).repeat(1, 1, vars.shape[-1])
+        masks = masks.float()
+        weights = F.softmax(masks, dim=1)  # Apply softmax to get mixing weights
+        mus_mixture = torch.sum(weights * mus, dim=1)
+        vars_mixture = torch.sum(weights * (vars + mus**2), dim=1) - mus_mixture**2
+        logvars_mixture = torch.log(vars_mixture)
+        return mus_mixture, logvars_mixture
+
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
 
@@ -397,7 +410,12 @@ class MultiVAETorch(BaseModuleClass):
         mu = torch.stack(mus, dim=1)
         logvars = [mod_out[2] for mod_out in out]
         logvar = torch.stack(logvars, dim=1)
-        mu_joint, logvar_joint = self._product_of_experts(mu, logvar, masks)
+        if self.mix == "product":
+            mu_joint, logvar_joint = self._product_of_experts(mu, logvar, masks)
+        elif self.mix == "mixture":
+            mu_joint, logvar_joint = self._mixture_of_experts(mu, logvar, masks)
+        else:
+            raise ValueError(f"mix should be one of ['product', 'mixture'], but mix={self.mix} was passed")
         z_joint = self._reparameterize(mu_joint, logvar_joint)
         # drop mus and logvars according to masks for kl calculation
         # TODO here or in loss calculation? check
