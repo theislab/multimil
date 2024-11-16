@@ -2,7 +2,6 @@ import warnings
 from typing import Literal
 
 import torch
-import torch.nn.functional as F
 from scvi import REGISTRY_KEYS
 from scvi.distributions import NegativeBinomial, ZeroInflatedNegativeBinomial
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
@@ -311,20 +310,21 @@ class MultiVAETorch(BaseModuleClass):
         vars = torch.exp(logvars)
         masks = masks.unsqueeze(-1).repeat(1, 1, vars.shape[-1])
         mus_joint = torch.sum(mus * masks / vars, dim=1)
-        logvars_joint = torch.ones_like(mus_joint)  # batch size
-        logvars_joint += torch.sum(masks / vars, dim=1)
-        logvars_joint = 1.0 / logvars_joint  # inverse
-        mus_joint *= logvars_joint
-        logvars_joint = torch.log(logvars_joint)
+        vars_joint = torch.ones_like(mus_joint)  # batch size
+        vars_joint += torch.sum(masks / vars, dim=1)
+        vars_joint = 1.0 / vars_joint  # inverse
+        mus_joint *= vars_joint
+        logvars_joint = torch.log(vars_joint)
         return mus_joint, logvars_joint
 
     def _mixture_of_experts(self, mus, logvars, masks):
         vars = torch.exp(logvars)
         masks = masks.unsqueeze(-1).repeat(1, 1, vars.shape[-1])
         masks = masks.float()
-        weights = F.softmax(masks, dim=1)  # Apply softmax to get mixing weights
+        weights = masks / torch.sum(masks, dim=1, keepdim=True)  # normalize so the sum is 1
+        # params of 1/2 * (X + Y)
         mus_mixture = torch.sum(weights * mus, dim=1)
-        vars_mixture = torch.sum(weights * (vars + mus**2), dim=1) - mus_mixture**2
+        vars_mixture = torch.sum(weights**2 * vars, dim=1)
         logvars_mixture = torch.log(vars_mixture)
         return mus_mixture, logvars_mixture
 
@@ -387,7 +387,6 @@ class MultiVAETorch(BaseModuleClass):
         if masks is None:
             masks = [x.sum(dim=1) > 0 for x in xs]  # list of masks per modality
             masks = torch.stack(masks, dim=1)
-
         # if we want to condition encoders, i.e. concat covariates to the input
         if self.condition_encoders is True:
             cat_embedds = self._select_cat_covariates(cat_covs)
