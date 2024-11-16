@@ -63,14 +63,18 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         Number of nodes for each hidden layer in the encoders. Default is 32.
     n_hidden_decoders
         Number of nodes for each hidden layer in the decoders. Default is 32.
-    mmd
-        Which MMD loss to use. Default is `latent`.
+    modality_alignment
+        Whether to align the modalities, one of ['MMD', 'Jeffreys', None]. Default is `None`.
+    alignment_type
+        Which alignment type to use, one of ['latent', 'marginal', 'both']. Default is `latent`.
     activation
         Activation function to use. Default is `leaky_relu`.
     initialization
         Initialization method to use. Default is `None`.
     ignore_covariates
         List of covariates to ignore. Needed for query-to-reference mapping. Default is `None`.
+    mix
+        How to mix the distributions to get the joint, one of ['product', 'mixture']. Default is `product`.
     """
 
     def __init__(
@@ -93,14 +97,16 @@ class MultiVAE(BaseModelClass, ArchesMixin):
         n_hidden_cont_embed: int = 32,  # TODO default to None?
         n_hidden_encoders: list[int] | None = None,
         n_hidden_decoders: list[int] | None = None,
-        mmd: Literal["latent", "marginal", "both"] = "latent",
+        modality_alignment: Literal["MMD", "Jeffreys", None] = None,
+        alignment_type: Literal["latent", "marginal", "both"] = "latent",
         activation: str | None = "leaky_relu",  # TODO add which options are impelemted
         initialization: str | None = None,  # TODO add which options are impelemted
         ignore_covariates: list[str] | None = None,
+        mix: Literal["product", "mixture"] = "product",
     ):
         super().__init__(adata)
 
-        # for the integration with MMD loss
+        # for the integration with the alignment loss
         self.group_column = integrate_on
 
         # TODO: add options for number of hidden layers, hidden layers dim and output activation functions
@@ -184,9 +190,11 @@ class MultiVAE(BaseModelClass, ArchesMixin):
             cont_cov_type=cont_cov_type,
             n_layers_cont_embed=n_layers_cont_embed,
             n_hidden_cont_embed=n_hidden_cont_embed,
-            mmd=mmd,
+            modality_alignment=modality_alignment,
+            alignment_type=alignment_type,
             activation=activation,
             initialization=initialization,
+            mix=mix,
         )
 
         self.init_params_ = self._get_init_params(locals())

@@ -9,7 +9,7 @@ from torch import nn
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
 
-from multimil.distributions import MMD
+from multimil.distributions import MMD, Jeffreys
 from multimil.nn import MLP, Decoder, GeneralizedSigmoid
 
 
@@ -71,8 +71,8 @@ class MultiVAETorch(BaseModuleClass):
         Number of nodes in hidden layers in encoders.
     n_hidden_decoders
         Number of nodes in hidden layers in decoders.
-    mmd
-        How to calculate MMD loss. One of the following
+    alignment_type
+        How to calculate integration loss. One of the following
         * ``'latent'`` - only on the latent representations
         * ``'marginal'`` - only on the marginal representations
         * ``both`` - the sum of the two above.
@@ -103,9 +103,11 @@ class MultiVAETorch(BaseModuleClass):
         n_hidden_cont_embed: int = 16,
         n_hidden_encoders=None,
         n_hidden_decoders=None,
-        mmd="latent",
+        modality_alignment=None,
+        alignment_type="latent",
         activation="leaky_relu",
         initialization=None,
+        mix="product",
     ):
         super().__init__()
 
@@ -117,7 +119,8 @@ class MultiVAETorch(BaseModuleClass):
         self.integrate_on_idx = integrate_on_idx
         self.n_cont_cov = len(cont_covariate_dims)
         self.cont_cov_type = cont_cov_type
-        self.mmd = mmd
+        self.alignment_type = alignment_type
+        self.modality_alignment = modality_alignment
         self.normalization = normalization
         self.z_dim = z_dim
         self.dropout = dropout
@@ -131,6 +134,7 @@ class MultiVAETorch(BaseModuleClass):
         self.n_hidden_decoders = n_hidden_decoders
         self.cat_covs_idx = cat_covs_idx
         self.cont_covs_idx = cont_covs_idx
+        self.mix = mix
 
         if activation == "leaky_relu":
             self.activation = nn.LeakyReLU
@@ -306,12 +310,23 @@ class MultiVAETorch(BaseModuleClass):
         vars = torch.exp(logvars)
         masks = masks.unsqueeze(-1).repeat(1, 1, vars.shape[-1])
         mus_joint = torch.sum(mus * masks / vars, dim=1)
-        logvars_joint = torch.ones_like(mus_joint)  # batch size
-        logvars_joint += torch.sum(masks / vars, dim=1)
-        logvars_joint = 1.0 / logvars_joint  # inverse
-        mus_joint *= logvars_joint
-        logvars_joint = torch.log(logvars_joint)
+        vars_joint = torch.ones_like(mus_joint)  # batch size
+        vars_joint += torch.sum(masks / vars, dim=1)
+        vars_joint = 1.0 / vars_joint  # inverse
+        mus_joint *= vars_joint
+        logvars_joint = torch.log(vars_joint)
         return mus_joint, logvars_joint
+
+    def _mixture_of_experts(self, mus, logvars, masks):
+        vars = torch.exp(logvars)
+        masks = masks.unsqueeze(-1).repeat(1, 1, vars.shape[-1])
+        masks = masks.float()
+        weights = masks / torch.sum(masks, dim=1, keepdim=True)  # normalize so the sum is 1
+        # params of 1/2 * (X + Y)
+        mus_mixture = torch.sum(weights * mus, dim=1)
+        vars_mixture = torch.sum(weights**2 * vars, dim=1)
+        logvars_mixture = torch.log(vars_mixture)
+        return mus_mixture, logvars_mixture
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
@@ -372,7 +387,6 @@ class MultiVAETorch(BaseModuleClass):
         if masks is None:
             masks = [x.sum(dim=1) > 0 for x in xs]  # list of masks per modality
             masks = torch.stack(masks, dim=1)
-
         # if we want to condition encoders, i.e. concat covariates to the input
         if self.condition_encoders is True:
             cat_embedds = self._select_cat_covariates(cat_covs)
@@ -395,12 +409,24 @@ class MultiVAETorch(BaseModuleClass):
         mu = torch.stack(mus, dim=1)
         logvars = [mod_out[2] for mod_out in out]
         logvar = torch.stack(logvars, dim=1)
-        mu_joint, logvar_joint = self._product_of_experts(mu, logvar, masks)
+        if self.mix == "product":
+            mu_joint, logvar_joint = self._product_of_experts(mu, logvar, masks)
+        elif self.mix == "mixture":
+            mu_joint, logvar_joint = self._mixture_of_experts(mu, logvar, masks)
+        else:
+            raise ValueError(f"mix should be one of ['product', 'mixture'], but mix={self.mix} was passed")
         z_joint = self._reparameterize(mu_joint, logvar_joint)
         # drop mus and logvars according to masks for kl calculation
         # TODO here or in loss calculation? check
         # return mus+mus_joint
-        return {"z_joint": z_joint, "mu": mu_joint, "logvar": logvar_joint, "z_marginal": z_marginal}
+        return {
+            "z_joint": z_joint,
+            "mu": mu_joint,
+            "logvar": logvar_joint,
+            "z_marginal": z_marginal,
+            "mu_marginal": mu,
+            "logvar_marginal": logvar,
+        }
 
     @auto_move_data
     def generative(
@@ -475,6 +501,8 @@ class MultiVAETorch(BaseModuleClass):
         logvar = inference_outputs["logvar"]
         z_joint = inference_outputs["z_joint"]
         z_marginal = inference_outputs["z_marginal"]  # batch_size x n_modalities x latent_dim
+        mu_marginal = inference_outputs["mu_marginal"]
+        logvar_marginal = inference_outputs["logvar_marginal"]
 
         xs = torch.split(
             x, self.input_dims, dim=-1
@@ -486,23 +514,33 @@ class MultiVAETorch(BaseModuleClass):
         )
         kl_loss = kl_weight * kl(Normal(mu, torch.sqrt(torch.exp(logvar))), Normal(0, 1)).sum(dim=1)
 
-        if self.loss_coefs["integ"] == 0:
-            integ_loss = torch.tensor(0.0).to(self.device)
-        else:
-            integ_loss = torch.tensor(0.0).to(self.device)
-            if self.mmd == "latent" or self.mmd == "both":
-                integ_loss += self._calc_integ_loss(z_joint, integrate_on).to(self.device)
-            if self.mmd == "marginal" or self.mmd == "both":
+        integ_loss = torch.tensor(0.0).to(self.device)
+        if self.loss_coefs["integ"] > 0:
+            if self.alignment_type == "latent" or self.alignment_type == "both":
+                integ_loss += self._calc_integ_loss(z_joint, mu, logvar, integrate_on).to(self.device)
+            if self.alignment_type == "marginal" or self.alignment_type == "both":
                 for i in range(len(masks)):
                     for j in range(i + 1, len(masks)):
-                        idx_where_to_calc_mmd = torch.eq(
+                        idx_where_to_calc_integ_loss = torch.eq(
                             masks[i] == masks[j],
                             torch.eq(masks[i], torch.ones_like(masks[i])),
                         )
-                        if idx_where_to_calc_mmd.any():  # if need to calc mmd for a group between modalities
-                            marginal_i = z_marginal[:, i, :][idx_where_to_calc_mmd]
-                            marginal_j = z_marginal[:, j, :][idx_where_to_calc_mmd]
+                        if (
+                            idx_where_to_calc_integ_loss.any()
+                        ):  # if need to calc integ loss for a group between modalities
+                            marginal_i = z_marginal[:, i, :][idx_where_to_calc_integ_loss]
+                            marginal_j = z_marginal[:, j, :][idx_where_to_calc_integ_loss]
+
+                            mu_i = mu_marginal[:, i, :][idx_where_to_calc_integ_loss]
+                            mu_j = mu_marginal[:, j, :][idx_where_to_calc_integ_loss]
+
+                            logvar_i = logvar_marginal[:, i, :][idx_where_to_calc_integ_loss]
+                            logvar_j = logvar_marginal[:, j, :][idx_where_to_calc_integ_loss]
+
                             marginals = torch.cat([marginal_i, marginal_j])
+                            mus_marginal = torch.cat([mu_i, mu_j])
+                            logvars_marginal = torch.cat([logvar_i, logvar_j])
+
                             modalities = torch.cat(
                                 [
                                     torch.Tensor([i] * marginal_i.shape[0]),
@@ -510,13 +548,22 @@ class MultiVAETorch(BaseModuleClass):
                                 ]
                             ).to(self.device)
 
-                            integ_loss += self._calc_integ_loss(marginals, modalities).to(self.device)
+                            integ_loss += self._calc_integ_loss(
+                                marginals, mus_marginal, logvars_marginal, modalities
+                            ).to(self.device)
 
                 for i in range(len(masks)):
                     marginal_i = z_marginal[:, i, :]
                     marginal_i = marginal_i[masks[i]]
+
+                    mu_i = mu_marginal[:, i, :]
+                    mu_i = mu_i[masks[i]]
+
+                    logvar_i = logvar_marginal[:, i, :]
+                    logvar_i = logvar_i[masks[i]]
+
                     group_marginal = integrate_on[masks[i]]
-                    integ_loss += self._calc_integ_loss(marginal_i, group_marginal).to(self.device)
+                    integ_loss += self._calc_integ_loss(marginal_i, mu_i, logvar_i, group_marginal).to(self.device)
 
         loss = torch.mean(
             self.loss_coefs["recon"] * recon_loss
@@ -638,14 +685,31 @@ class MultiVAETorch(BaseModuleClass):
             torch.sum(torch.stack(loss, dim=-1) * torch.stack(masks, dim=-1), dim=0),
         )
 
-    def _calc_integ_loss(self, z, group):
+    def _calc_integ_loss(self, z, mu, logvar, group):
         loss = torch.tensor(0.0).to(self.device)
         unique = torch.unique(group)
+
         if len(unique) > 1:
-            zs = [z[group == i] for i in unique]
-            for i in range(len(zs)):
-                for j in range(i + 1, len(zs)):
-                    loss += MMD(kernel_type=self.kernel_type)(zs[i], zs[j])
+            if self.modality_alignment == "MMD":
+                zs = [z[group == i] for i in unique]
+                for i in range(len(zs)):
+                    for j in range(i + 1, len(zs)):
+                        loss += MMD(kernel_type=self.kernel_type)(zs[i], zs[j])
+
+            elif self.modality_alignment == "Jeffreys":
+                mus_joint = [mu[group == i] for i in unique]
+                logvars_joint = [logvar[group == i] for i in unique]
+                for i in range(len(mus_joint)):
+                    for j in range(i + 1, len(mus_joint)):
+                        if len(mus_joint[i]) == len(mus_joint[j]):
+                            loss += Jeffreys()(
+                                (mus_joint[i], torch.exp(logvars_joint[i])), (mus_joint[j], torch.exp(logvars_joint[j]))
+                            )
+                        else:
+                            raise ValueError(
+                                f"mus_joint[i] and mus_joint[j] have different lengths: {len(mus_joint[i])} != {len(mus_joint[j])}"
+                            )
+
         return loss
 
     def _compute_cont_cov_embeddings(self, covs):
