@@ -246,14 +246,19 @@ def save_predictions_in_adata(
     reg
         Whether the rediciton task is a regression task.
     """
-    # cell level predictions
-    df = create_df(cell_pred[idx], class_names, index=adata.obs_names)
-    adata.obsm[f"full_predictions_{name}"] = df
+    # cell level predictions)
+
     if clip == "clip":  # ord regression
+        df = create_df(cell_pred[idx], [name], index=adata.obs_names)
+        adata.obsm[f"full_predictions_{name}"] = df
         adata.obs[f"predicted_{name}"] = np.clip(np.round(df.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0)
     elif clip == "argmax":  # classification
+        df = create_df(cell_pred[idx], class_names, index=adata.obs_names)
+        adata.obsm[f"full_predictions_{name}"] = df
         adata.obs[f"predicted_{name}"] = df.to_numpy().argmax(axis=1)
-    else:
+    else:  # regression
+        df = create_df(cell_pred[idx], [name], index=adata.obs_names)
+        adata.obsm[f"full_predictions_{name}"] = df
         adata.obs[f"predicted_{name}"] = df.to_numpy()
     if reg is False:
         adata.obs[f"predicted_{name}"] = adata.obs[f"predicted_{name}"].astype("category")
@@ -263,14 +268,16 @@ def save_predictions_in_adata(
 
     # bag level predictions
     adata.uns[f"bag_true_{name}"] = create_df(bag_true, predictions)
-    df_bag = create_df(bag_pred[idx], class_names)
-    if clip == "clip":
+    if clip == "clip":  # ordinal regression
+        df_bag = create_df(bag_pred[idx], [name])
         adata.uns[f"bag_full_predictions_{name}"] = np.clip(
             np.round(df_bag.to_numpy()), a_min=0.0, a_max=len(class_names) - 1.0
         )
-    elif clip == "argmax":
+    elif clip == "argmax":  # classification
+        df_bag = create_df(bag_pred[idx], class_names)
         adata.uns[f"bag_full_predictions_{name}"] = df_bag.to_numpy().argmax(axis=1)
-    else:
+    else:  # regression
+        df_bag = create_df(bag_pred[idx], [name])
         adata.uns[f"bag_full_predictions_{name}"] = df_bag.to_numpy()
 
 

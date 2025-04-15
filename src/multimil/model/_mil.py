@@ -54,7 +54,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
     dropout
         Dropout rate. Default is 0.2.
     scoring
-        How to calculate attention scores. One of "gated_attn", "MLP". Default is "gated_attn".
+        How to calculate attention scores. One of "gated_attn", "attn", "mean", "max", "sum", "MLP". Default is "gated_attn".
     attn_dim
         Dimensionality of the hidden layer in attention calculation. Default is 16.
     n_layers_cell_aggregator
@@ -484,10 +484,13 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             pred = outputs["predictions"]
 
             # get attention for each cell in the bag
-            cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
-            sample_size = cell_attn.shape[-1]
-            cell_attn = cell_attn.flatten()  # in inference always one patient per batch
-            cell_level_attn += [cell_attn.cpu()]
+            if self.scoring in ["gated_attn", "attn"]:
+                cell_attn = self.module.cell_level_aggregator[-1].A.squeeze(dim=1)
+                cell_attn = cell_attn.flatten()  # in inference always one patient per batch
+                cell_level_attn += [cell_attn.cpu()]
+
+            assert outputs["z_joint"].shape[0] % pred[0].shape[0] == 0
+            sample_size = outputs["z_joint"].shape[0] // pred[0].shape[0]  # how many cells in patient_minibatch
             minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.module.sample_batch_size)
             regression = select_covariates(cont_covs, self.regression_idx, n_samples_in_batch)
             ordinal_regression = select_covariates(cat_covs, self.ord_idx, n_samples_in_batch)
@@ -527,8 +530,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 bags, n_samples_in_batch, minibatch_size, cell_counter, bag_counter, self.module.sample_batch_size
             )
 
-        cell_level = torch.cat(cell_level_attn).numpy()
-        adata.obs["cell_attn"] = cell_level
+        if self.scoring in ["gated_attn", "attn"]:
+            cell_level = torch.cat(cell_level_attn).numpy()
+            adata.obs["cell_attn"] = cell_level
         flat_bags = [value for sublist in bags for value in sublist]
         adata.obs["bags"] = flat_bags
 

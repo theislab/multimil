@@ -215,7 +215,7 @@ class Aggregator(nn.Module):
     n_input
         Number of input features.
     scoring
-        Scoring function to use. Can be one of ["attn", "gated_attn", "mlp"].
+        Scoring function to use. Can be one of ["attn", "gated_attn", "mean", "max", "sum", "mlp"].
     attn_dim
         Dimension of the hidden attention layer.
     sample_batch_size
@@ -299,32 +299,68 @@ class Aggregator(nn.Module):
         -------
         Tensor of pooled values.
         """
-        # TODO add sum, mean and max pooling
-        if self.scoring == "attn":
-            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
-            self.A = self.attention(x)  # Nx1
-            self.A = torch.transpose(self.A, -1, -2)  # 1xN
-            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+        # # TODO add mean and max pooling
+        # if self.scoring == "attn":
+        #     # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+        #     self.A = self.attention(x)  # Nx1
+        #     self.A = torch.transpose(self.A, -1, -2)  # 1xN
+        #     self.A = F.softmax(self.A, dim=-1)  # softmax over N
 
-        elif self.scoring == "gated_attn":
-            # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
-            A_V = self.attention_V(x)  # NxD
-            A_U = self.attention_U(x)  # NxD
-            self.A = self.attention_weights(A_V * A_U)  # element wise multiplication # Nx1
-            self.A = torch.transpose(self.A, -1, -2)  # 1xN
-            self.A = F.softmax(self.A, dim=-1)  # softmax over N
+        # elif self.scoring == "gated_attn":
+        #     # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+        #     A_V = self.attention_V(x)  # NxD
+        #     A_U = self.attention_U(x)  # NxD
+        #     self.A = self.attention_weights(A_V * A_U)  # element wise multiplication # Nx1
+        #     self.A = torch.transpose(self.A, -1, -2)  # 1xN
+        #     self.A = F.softmax(self.A, dim=-1)  # softmax over N
 
-        elif self.scoring == "mlp":
-            self.A = self.attention(x)  # N
-            self.A = torch.transpose(self.A, -1, -2)
-            self.A = F.softmax(self.A, dim=-1)
+        # elif self.scoring == "mlp":
+        #     self.A = self.attention(x)  # N
+        #     self.A = torch.transpose(self.A, -1, -2)
+        #     self.A = F.softmax(self.A, dim=-1)
 
-        else:
-            raise NotImplementedError(
-                f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].'
-            )
+        # else:
+        #     raise NotImplementedError(
+        #         f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp"].'
+        #     )
 
-        if self.scale:
-            self.A = self.A * self.A.shape[-1] / self.patient_batch_size
+        # if self.scale:
+        #     self.A = self.A * self.A.shape[-1] / self.patient_batch_size
 
-        return torch.bmm(self.A, x).squeeze(dim=1)
+        # return torch.bmm(self.A, x).squeeze(dim=1)
+        # Apply different pooling strategies based on the scoring method
+        if self.scoring in ["attn", "gated_attn", "mlp", "sum", "mean", "max"]:
+            if self.scoring == "attn":
+                # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+                A = self.attention(x)  # (batch_size, N, 1)
+                A = A.transpose(1, 2)  # (batch_size, 1, N)
+                A = F.softmax(A, dim=-1)
+            elif self.scoring == "gated_attn":
+                # from https://github.com/AMLab-Amsterdam/AttentionDeepMIL/blob/master/model.py (accessed 16.09.2021)
+                A_V = self.attention_V(x)  # (batch_size, N, attn_dim)
+                A_U = self.attention_U(x)  # (batch_size, N, attn_dim)
+                A = self.attention_weights(A_V * A_U)  # (batch_size, N, 1)
+                A = A.transpose(1, 2)  # (batch_size, 1, N)
+                A = F.softmax(A, dim=-1)
+            elif self.scoring == "mlp":
+                A = self.attention(x)  # (batch_size, N, 1)
+                A = A.transpose(1, 2)  # (batch_size, 1, N)
+                A = F.softmax(A, dim=-1)
+
+            elif self.scoring == "sum":
+                return torch.sum(x, dim=1)  # (batch_size, n_input)
+            elif self.scoring == "mean":
+                return torch.mean(x, dim=1)  # (batch_size, n_input)
+            elif self.scoring == "max":
+                return torch.max(x, dim=1).values  # (batch_size, n_input)
+            else:
+                raise NotImplementedError(
+                    f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "mlp", "sum", "mean", "max"].'
+                )
+            if self.scale:
+                if self.patient_batch_size is None:
+                    raise ValueError("patient_batch_size must be set when scale is True.")
+                self.A = A * A.shape[-1] / self.patient_batch_size
+
+            pooled = torch.bmm(A, x).squeeze(dim=1)  # (batch_size, n_input)
+            return pooled

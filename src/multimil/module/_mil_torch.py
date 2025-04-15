@@ -22,7 +22,7 @@ class MILClassifierTorch(BaseModuleClass):
     num_classification_classes
         Number of classes for each of the classification task.
     scoring
-        Scoring type. One of ["gated_attn", "attn", "mlp"].
+        Scoring type. One of ["gated_attn", "attn", "mean", "max", "sum", "mlp"].
     attn_dim
         Hidden attention dimension.
     n_layers_cell_aggregator
