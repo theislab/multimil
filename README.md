@@ -16,8 +16,10 @@ Please refer to the [documentation][link-docs]. In particular, the
 
 and the tutorials:
 
+<!--
 -   [Paired integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/paired_integration_cite-seq.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/paired_integration_cite-seq.ipynb)
--   [Trimodal integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/trimodal_integration.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/trimodal_integration.ipynb)
+-   [Trimodal integration and query-to-reference mapping](https://multimil.readthedocs.io/en/latest/notebooks/trimodal_integration.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/trimodal_integration.ipynb) -->
+
 -   [Classification with MIL](https://multimil.readthedocs.io/en/latest/notebooks/mil_classification.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_classification.ipynb)
 
 ## Installation
@@ -57,9 +59,7 @@ If you found a bug, please use the [issue tracker][issue-tracker].
 
 > **Multimodal Weakly Supervised Learning to Identify Disease-Specific Changes in Single-Cell Atlases**
 >
-> Anastasia Litinetskaya, Maiia Shulman, Soroor Hediyeh-zadeh, Amir Ali Moinfar, Fabiola Curion, Artur Szalata, Alireza Omidi, Mohammad Lotfollahi, and Fabian J. Theis. 
-> 2024. bioRxiv. https://doi.org/10.1101/2024.07.29.605625.
-
+> Anastasia Litinetskaya, Maiia Shulman, Soroor Hediyeh-zadeh, Amir Ali Moinfar, Fabiola Curion, Artur Szalata, Alireza Omidi, Mohammad Lotfollahi, and Fabian J. Theis. 2024. bioRxiv. https://doi.org/10.1101/2024.07.29.605625.
 
 ## Reproducibility
 
