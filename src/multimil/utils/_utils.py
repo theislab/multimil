@@ -1,7 +1,9 @@
 from math import ceil
 
+import anndata as ad
 import numpy as np
 import pandas as pd
+import scanpy as sc
 import scipy
 import torch
 from matplotlib import pyplot as plt
@@ -309,3 +311,80 @@ def plt_plot_losses(history, loss_names, save):
         plt.legend()
     if save is not None:
         plt.savefig(save, bbox_inches="tight")
+
+
+def get_sample_representations(
+    adata,
+    sample_key,
+    use_rep="X",
+    aggregation="weighted",
+    cell_attn_key="cell_attn",
+    covs_to_keep=None,
+) -> ad.AnnData:
+    """Get sample representations from cell-level representations.
+
+    Parameters
+    ----------
+    adata
+        Annotated data object with cell-level representations.
+    sample_key
+        Key in `adata.obs` that identifies samples.
+    use_rep
+        Key in `adata.obsm` to use for sample representations or '.X' (default is 'X').
+    aggregation
+        Method to aggregate cell-level representations to sample-level. Options are 'weighted' or 'mean'.
+    cell_attn_key
+        Key in `adata.obs` that contains cell-level attention weights (if aggregation is 'weighted').
+    covs_to_keep
+        List of sample-level covariate keys to keep in the final sample representation.
+
+    Returns
+    -------
+    ad.AnnData
+        Annotated data object with sample-level representations.
+    """
+    if use_rep == "X":
+        tmp = adata.copy()
+    else:
+        if use_rep not in adata.obsm.keys():
+            raise ValueError(f"Key '{use_rep}' not found in adata.obsm. Available keys: {adata.obsm.keys()}")
+        tmp = sc.AnnData(adata.obsm[use_rep], obs=adata.obs.copy())
+    tmp.obs[sample_key] = tmp.obs[sample_key].astype(str)
+
+    for i in range(tmp.X.shape[1]):
+        if aggregation == "weighted":
+            tmp.obs[f"latent{i}"] = tmp.X[:, i] * tmp.obs[cell_attn_key]
+        elif aggregation == "mean":
+            tmp.obs[f"latent{i}"] = tmp.X[:, i].copy()
+        else:
+            raise ValueError(f"Aggregation method {aggregation} is not supported. Use 'weighted' or 'mean'.")
+
+    if covs_to_keep is not None:
+        # check that covariates are sample-level i.e. have the same value for all cells in a sample and print warning if not and which ones are not
+        for cov in covs_to_keep:
+            if cov not in tmp.obs.columns:
+                raise ValueError(f"Covariate '{cov}' not found in adata.obs. Available keys: {tmp.obs.columns}")
+            # check that value is the same for all cells in each sample
+            if tmp.obs.groupby(sample_key)[cov].nunique().max() > 1:
+                raise ValueError(
+                    f"Covariate '{cov}' has different values for different cells in a sample. "
+                    "Please pass only sample-level covariates."
+                )
+        if sample_key not in covs_to_keep:
+            covs_to_keep = [sample_key] + covs_to_keep
+    else:
+        covs_to_keep = [sample_key]
+
+    if aggregation == "weighted":
+        df = (
+            tmp.obs[[f"latent{i}" for i in range(tmp.X.shape[1])] + [sample_key]].groupby(sample_key).agg("sum")
+        )  # because already multiplied by normalized weights
+    elif aggregation == "mean":
+        df = tmp.obs[[f"latent{i}" for i in range(tmp.X.shape[1])] + [sample_key]].groupby(sample_key).agg("mean")
+    df = df.join(tmp.obs[covs_to_keep].groupby(sample_key).agg("first"))
+
+    final_covs = [cov for cov in covs_to_keep if cov != sample_key]
+    pb = sc.AnnData(df.drop(final_covs, axis=1).values)
+    pb.obs = df[final_covs].copy()
+
+    return pb

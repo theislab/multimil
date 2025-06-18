@@ -3,6 +3,7 @@ from ._utils import (
     create_df,
     get_bag_info,
     get_predictions,
+    get_sample_representations,
     plt_plot_losses,
     prep_minibatch,
     save_predictions_in_adata,
@@ -20,4 +21,5 @@ __all__ = [
     "get_bag_info",
     "save_predictions_in_adata",
     "plt_plot_losses",
+    "get_sample_representations",
 ]
