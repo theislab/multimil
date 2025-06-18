@@ -388,3 +388,35 @@ def get_sample_representations(
     pb.obs = df[final_covs].copy()
 
     return pb
+
+
+def score_top_cells(adata, top_fraction=0.1, sample_key=None, key_added="top_cell_attn"):
+    """Score top cells based on cell attention weights.
+
+    Parameters
+    ----------
+    adata
+        Annotated data object with cell attention weights in `adata.obs['cell_attn']`.
+    top_fraction
+        Fraction of top cells to select based on attention weights (default is 0.1).
+    sample_key
+        Key in `adata.obs` that identifies samples. If None, will calculate across all cells.
+    key_added
+        Key in `adata.obs` to store the top cell attention scores (default is 'top_cell_attn').
+    """
+    if "cell_attn" not in adata.obs.columns:
+        raise ValueError("adata.obs must contain 'cell_attn' column with cell attention weights.")
+
+    adata.obs[key_added] = False
+    if sample_key is None:
+        sample_key = "_tmp_sample"
+        adata.obs[sample_key] = "_tmp_sample"
+    for sample in np.unique(adata.obs[sample_key]):
+        adata_sample = adata[adata.obs[sample_key] == sample].copy()
+        threshold_idx = int(len(adata_sample) * 0.9)
+        threshold_value = sorted(adata_sample.obs["cell_attn"])[threshold_idx]
+        top_idx = adata_sample[adata_sample.obs["cell_attn"] >= threshold_value].obs_names
+        adata.obs.loc[top_idx, "top_cell_attn"] = True
+    adata.obs[key_added] = adata.obs[key_added].astype("category")
+    if sample_key == "_tmp_sample":
+        del adata.obs[sample_key]

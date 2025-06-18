@@ -7,6 +7,7 @@ from ._utils import (
     plt_plot_losses,
     prep_minibatch,
     save_predictions_in_adata,
+    score_top_cells,
     select_covariates,
     setup_ordinal_regression,
 )
@@ -22,4 +23,5 @@ __all__ = [
     "save_predictions_in_adata",
     "plt_plot_losses",
     "get_sample_representations",
+    "score_top_cells",
 ]
