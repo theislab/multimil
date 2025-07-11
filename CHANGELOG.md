@@ -12,13 +12,13 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
--   **Utility functions**: Added `score_top_cells` and `get_sample_representations` to utils module
-  - `score_top_cells`: Function to identify and score top cells based on attention weights
-  - `get_sample_representations`: Function to aggregate cell-level data to sample-level representations
+- **Utility functions**: Added `score_top_cells` and `get_sample_representations` to utils module
+- `score_top_cells`: Function to identify and score top cells based on attention weights
+- `get_sample_representations`: Function to aggregate cell-level data to sample-level representations
 
 ### Changed
 
--   **Major refactoring**: Removed MultiVAE and MultiVAE_MIL models, keeping only MIL classifier
--   **Code cleanup**: Removed MLP attention weight learning from Aggregator class
--   **Parameter consistency**: Fixed default values between model and module classes
--   **Dynamic z_dim**: Automatically infer z_dim from input data shape instead of hardcoded value
+- **Major refactoring**: Removed MultiVAE and MultiVAE_MIL models, keeping only MIL classifier
+- **Code cleanup**: Removed MLP attention weight learning from Aggregator class
+- **Parameter consistency**: Fixed default values between model and module classes
+- **Dynamic z_dim**: Automatically infer z_dim from input data shape instead of hardcoded value

@@ -109,7 +109,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         super().__init__(adata)
 
         z_dim = adata.X.shape[1]
-        
+
         if classification is None:
             classification = []
         if regression is None:

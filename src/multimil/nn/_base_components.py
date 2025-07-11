@@ -1,5 +1,3 @@
-from typing import Literal, Union
-
 import torch
 from scvi.nn import FCLayers
 from torch import nn
@@ -73,9 +71,6 @@ class MLP(nn.Module):
         return self.mlp(x)
 
 
-
-
-
 class Aggregator(nn.Module):
     """A helper class to build custom aggregators depending on the scoring function passed.
 
@@ -99,7 +94,7 @@ class Aggregator(nn.Module):
 
     def __init__(
         self,
-        n_input: Union[int, None] = None,
+        n_input: int | None = None,
         scoring="gated_attn",
         attn_dim=16,  # D
         sample_batch_size=None,
@@ -172,7 +167,7 @@ class Aggregator(nn.Module):
             raise NotImplementedError(
                 f'scoring = {self.scoring} is not implemented. Has to be one of ["attn", "gated_attn", "sum", "mean", "max"].'
             )
-        
+
         if self.scale:
             if self.patient_batch_size is None:
                 raise ValueError("patient_batch_size must be set when scale is True.")

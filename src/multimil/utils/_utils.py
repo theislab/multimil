@@ -4,7 +4,6 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import scanpy as sc
-import scipy
 import torch
 from matplotlib import pyplot as plt
 
@@ -37,9 +36,6 @@ def create_df(pred, columns=None, index=None) -> pd.DataFrame:
     if columns is not None:
         df.columns = columns
     return df
-
-
-
 
 
 def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys):
@@ -326,10 +322,10 @@ def get_sample_representations(
     if top_fraction is not None:
         if cell_attn_key not in tmp.obs.columns:
             raise ValueError(f"Key '{cell_attn_key}' not found in adata.obs. Required for top cell selection.")
-        
+
         # Use the existing score_top_cells function
         score_top_cells(tmp, top_fraction=top_fraction, sample_key=sample_key, key_added="_top_cell_flag")
-        
+
         # Filter to only top cells
         tmp = tmp[tmp.obs["_top_cell_flag"]].copy()
         tmp.obs = tmp.obs.drop("_top_cell_flag", axis=1)
@@ -396,7 +392,7 @@ def score_top_cells(adata, top_fraction=0.1, sample_key=None, key_added="top_cel
         adata.obs[sample_key] = "_tmp_sample"
     for sample in np.unique(adata.obs[sample_key]):
         adata_sample = adata[adata.obs[sample_key] == sample].copy()
-        threshold_idx = int(len(adata_sample) * (1-top_fraction))
+        threshold_idx = int(len(adata_sample) * (1 - top_fraction))
         threshold_value = sorted(adata_sample.obs["cell_attn"])[threshold_idx]
         top_idx = adata_sample[adata_sample.obs["cell_attn"] >= threshold_value].obs_names
         adata.obs.loc[top_idx, "top_cell_attn"] = True
