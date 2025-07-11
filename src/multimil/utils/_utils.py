@@ -39,40 +39,7 @@ def create_df(pred, columns=None, index=None) -> pd.DataFrame:
     return df
 
 
-def calculate_size_factor(adata, size_factor_key, rna_indices_end) -> str:
-    """Calculate size factors.
 
-    Parameters
-    ----------
-    adata
-        Annotated data object.
-    size_factor_key
-        Key in `adata.obs` where size factors are stored.
-    rna_indices_end
-        Index of the last RNA feature in the data.
-
-    Returns
-    -------
-    Size factor key.
-    """
-    # TODO check that organize_multimodal_anndatas was run, i.e. that .uns['modality_lengths'] was added, needed for q2r
-    if size_factor_key is not None and rna_indices_end is not None:
-        raise ValueError(
-            "Only one of [`size_factor_key`, `rna_indices_end`] can be specified, but both are not `None`."
-        )
-    # TODO change to when both are None and data in unimodal, use all input features to calculate the size factors, add warning
-    if size_factor_key is None and rna_indices_end is None:
-        raise ValueError("One of [`size_factor_key`, `rna_indices_end`] has to be specified, but both are `None`.")
-
-    if size_factor_key is not None:
-        return size_factor_key
-    if rna_indices_end is not None:
-        adata_rna = adata[:, :rna_indices_end].copy()
-        if scipy.sparse.issparse(adata.X):
-            adata.obs.loc[:, "size_factors"] = adata_rna.X.toarray().sum(1).T.tolist()
-        else:
-            adata.obs.loc[:, "size_factors"] = adata_rna.X.sum(1).T.tolist()
-        return "size_factors"
 
 
 def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys):
@@ -320,6 +287,7 @@ def get_sample_representations(
     aggregation="weighted",
     cell_attn_key="cell_attn",
     covs_to_keep=None,
+    top_fraction=None,
 ) -> ad.AnnData:
     """Get sample representations from cell-level representations.
 
@@ -337,6 +305,9 @@ def get_sample_representations(
         Key in `adata.obs` that contains cell-level attention weights (if aggregation is 'weighted').
     covs_to_keep
         List of sample-level covariate keys to keep in the final sample representation.
+    top_fraction
+        Fraction of top cells to select based on attention weights. If None, uses all cells.
+        If provided, will first score top cells and then use only those for sample representation.
 
     Returns
     -------
@@ -350,6 +321,18 @@ def get_sample_representations(
             raise ValueError(f"Key '{use_rep}' not found in adata.obsm. Available keys: {adata.obsm.keys()}")
         tmp = sc.AnnData(adata.obsm[use_rep], obs=adata.obs.copy())
     tmp.obs[sample_key] = tmp.obs[sample_key].astype(str)
+
+    # If top_fraction is provided, first score top cells and filter
+    if top_fraction is not None:
+        if cell_attn_key not in tmp.obs.columns:
+            raise ValueError(f"Key '{cell_attn_key}' not found in adata.obs. Required for top cell selection.")
+        
+        # Use the existing score_top_cells function
+        score_top_cells(tmp, top_fraction=top_fraction, sample_key=sample_key, key_added="_top_cell_flag")
+        
+        # Filter to only top cells
+        tmp = tmp[tmp.obs["_top_cell_flag"]].copy()
+        tmp.obs = tmp.obs.drop("_top_cell_flag", axis=1)
 
     for i in range(tmp.X.shape[1]):
         if aggregation == "weighted":
@@ -413,7 +396,7 @@ def score_top_cells(adata, top_fraction=0.1, sample_key=None, key_added="top_cel
         adata.obs[sample_key] = "_tmp_sample"
     for sample in np.unique(adata.obs[sample_key]):
         adata_sample = adata[adata.obs[sample_key] == sample].copy()
-        threshold_idx = int(len(adata_sample) * 0.9)
+        threshold_idx = int(len(adata_sample) * (1-top_fraction))
         threshold_value = sorted(adata_sample.obs["cell_attn"])[threshold_idx]
         top_idx = adata_sample[adata_sample.obs["cell_attn"] >= threshold_value].obs_names
         adata.obs.loc[top_idx, "top_cell_attn"] = True

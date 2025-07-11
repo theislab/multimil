@@ -22,15 +22,13 @@ class MILClassifierTorch(BaseModuleClass):
     num_classification_classes
         Number of classes for each of the classification task.
     scoring
-        Scoring type. One of ["gated_attn", "attn", "mean", "max", "sum", "mlp"].
+        Scoring type. One of ["gated_attn", "attn", "mean", "max", "sum"].
     attn_dim
         Hidden attention dimension.
     n_layers_cell_aggregator
         Number of layers in the cell aggregator.
     n_layers_classifier
         Number of layers in the classifier.
-    n_layers_mlp_attn
-        Number of layers in the MLP attention.
     n_layers_regressor
         Number of layers in the regressor.
     n_hidden_regressor
@@ -39,8 +37,6 @@ class MILClassifierTorch(BaseModuleClass):
         Hidden dimension in the cell aggregator.
     n_hidden_classifier
         Hidden dimension in the classifier.
-    n_hidden_mlp_attn
-        Hidden dimension in the MLP attention.
     class_loss_coef
         Classification loss coefficient.
     regression_loss_coef
@@ -70,13 +66,11 @@ class MILClassifierTorch(BaseModuleClass):
         scoring="gated_attn",
         attn_dim=16,
         n_layers_cell_aggregator=1,
-        n_layers_classifier=1,
-        n_layers_mlp_attn=1,
-        n_layers_regressor=1,
-        n_hidden_regressor=16,
-        n_hidden_cell_aggregator=16,
-        n_hidden_classifier=16,
-        n_hidden_mlp_attn=16,
+        n_layers_classifier=2,
+        n_layers_regressor=2,
+        n_hidden_regressor=128,
+        n_hidden_cell_aggregator=128,
+        n_hidden_classifier=128,
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         sample_batch_size=128,
@@ -124,8 +118,6 @@ class MILClassifierTorch(BaseModuleClass):
                 sample_batch_size=sample_batch_size,
                 scale=True,
                 dropout=dropout,
-                n_layers_mlp_attn=n_layers_mlp_attn,
-                n_hidden_mlp_attn=n_hidden_mlp_attn,
                 activation=self.activation,
             ),
         )
@@ -191,8 +183,8 @@ class MILClassifierTorch(BaseModuleClass):
         return {"x": x}
 
     def _get_generative_input(self, tensors, inference_outputs):
-        z_joint = inference_outputs["z_joint"]
-        return {"z_joint": z_joint}
+        z = inference_outputs["z"]
+        return {"z": z}
 
     @auto_move_data
     def inference(self, x) -> dict[str, torch.Tensor | list[torch.Tensor]]:
@@ -207,8 +199,8 @@ class MILClassifierTorch(BaseModuleClass):
         -------
         Predictions.
         """
-        z_joint = x
-        inference_outputs = {"z_joint": z_joint}
+        z = x
+        inference_outputs = {"z": z}
 
         # MIL part
         batch_size = x.shape[0]
@@ -218,7 +210,7 @@ class MILClassifierTorch(BaseModuleClass):
             batch_size % self.sample_batch_size != 0
         ):  # can only happen during inference for last batches for each sample
             idx = []
-        zs = torch.tensor_split(z_joint, idx, dim=0)
+        zs = torch.tensor_split(z, idx, dim=0)
         zs = torch.stack(zs, dim=0)  # num of bags x batch_size x z_dim
         zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
 
@@ -231,23 +223,22 @@ class MILClassifierTorch(BaseModuleClass):
         inference_outputs.update(
             {"predictions": predictions}
         )  # predictions are a list as they can have different number of classes
-        return inference_outputs  # z_joint, mu, logvar, predictions
+        return inference_outputs
 
     @auto_move_data
-    def generative(self, z_joint) -> torch.Tensor:
-        # TODO even if not used, make consistent with the rest, i.e. return dict
+    def generative(self, z) -> dict[str, torch.Tensor | list[torch.Tensor]]:
         """Forward pass for generative.
 
         Parameters
         ----------
-        z_joint
+        z
             Latent embeddings.
 
         Returns
         -------
-        Same as input.
+        Tensor of same shape as input.
         """
-        return z_joint
+        return {"z": z}
 
     def _calculate_loss(self, tensors, inference_outputs, generative_outputs, kl_weight: float = 1.0):
         cont_key = REGISTRY_KEYS.CONT_COVS_KEY

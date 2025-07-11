@@ -136,7 +136,6 @@ class StratifiedSampler(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return self.length
 
-
 # adjusted from scvi-tools
 # https://github.com/scverse/scvi-tools/blob/0b802762869c43c9f49e69fe62b1a5a9b5c4dae6/scvi/dataloaders/_ann_dataloader.py#L89
 # accessed on 5 November 2022

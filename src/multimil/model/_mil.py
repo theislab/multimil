@@ -54,7 +54,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
     dropout
         Dropout rate. Default is 0.2.
     scoring
-        How to calculate attention scores. One of "gated_attn", "attn", "mean", "max", "sum", "MLP". Default is "gated_attn".
+        How to calculate attention scores. One of "gated_attn", "attn", "mean", "max", "sum". Default is "gated_attn".
     attn_dim
         Dimensionality of the hidden layer in attention calculation. Default is 16.
     n_layers_cell_aggregator
@@ -63,14 +63,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         Number of layers in the classifier. Default is 2.
     n_layers_regressor
         Number of layers in the regressor. Default is 2.
-    n_layers_mlp_attn
-        Number of layers in the MLP attention. Only used if `scoring` = "MLP". Default is 1.
     n_hidden_cell_aggregator
         Number of hidden units in the cell aggregator. Default is 128.
     n_hidden_classifier
         Number of hidden units in the classifier. Default is 128.
-    n_hidden_mlp_attn
-        Number of hidden units in the MLP attention. Default is 32.
     n_hidden_regressor
         Number of hidden units in the regressor. Default is 128.
     class_loss_coef
@@ -83,8 +79,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         Initialization method for the weights. Default is None.
     anneal_class_loss
         Whether to anneal the classification loss. Default is False.
-    ignore_covariates
-        List of covariates to ignore. Needed for query-to-reference mapping. Default is None.
+
     """
 
     def __init__(
@@ -96,27 +91,25 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         ordinal_regression=None,
         sample_batch_size=128,
         normalization="layer",
-        z_dim=16,  # TODO do we need it? can't we get it from adata?
         dropout=0.2,
-        scoring="gated_attn",  # TODO test if MLP is supported and if we want to keep it
+        scoring="gated_attn",  # How to calculate attention scores
         attn_dim=16,
         n_layers_cell_aggregator: int = 1,
         n_layers_classifier: int = 2,
         n_layers_regressor: int = 2,
-        n_layers_mlp_attn: int = 1,
         n_hidden_cell_aggregator: int = 128,
         n_hidden_classifier: int = 128,
-        n_hidden_mlp_attn: int = 32,
         n_hidden_regressor: int = 128,
         class_loss_coef=1.0,
         regression_loss_coef=1.0,
         activation="leaky_relu",  # or tanh
         initialization=None,  # xavier (tanh) or kaiming (leaky_relu)
         anneal_class_loss=False,
-        ignore_covariates=None,
     ):
         super().__init__(adata)
 
+        z_dim = adata.X.shape[1]
+        
         if classification is None:
             classification = []
         if regression is None:
@@ -145,26 +138,15 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         # TODO add check that class is the same within a patient
         # TODO assert length of things is the same as number of modalities
         # TODO add that n_layers has to be > 0 for all
-        # TODO warning if n_layers == 1 then n_hidden is not used for classifier and MLP attention
-        # TODO warning if MLP attention is used but n layers and n hidden not given that using default values
+        # TODO warning if n_layers == 1 then n_hidden is not used for classifier
         # TODO check that there is at least on ecovariate to predict
-        if scoring == "MLP":
-            if not n_layers_mlp_attn:
-                n_layers_mlp_attn = 1
-            if not n_hidden_mlp_attn:
-                n_hidden_mlp_attn = 16
 
         self.regression_idx = []
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
             for key in cont_covs["columns"]:
                 if key in self.regression:
                     self.regression_idx.append(list(cont_covs["columns"]).index(key))
-                else:  # only can happen when using multivae_mil
-                    if ignore_covariates is not None and key not in ignore_covariates:
-                        warnings.warn(
-                            f"Registered continuous covariate '{key}' is not in regression covariates so will be ignored.",
-                            stacklevel=2,
-                        )
+                # Note: ignore_covariates parameter is kept for API compatibility but not used in MIL-only version
 
         # classification and ordinal regression together here as ordinal regression values need to be registered as categorical covariates
         self.class_idx, self.ord_idx = [], []
@@ -178,16 +160,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 elif cat_cov_name in self.ordinal_regression:
                     self.num_classification_classes.append(num_cat)
                     self.ord_idx.append(i)
-                else:  # the actual categorical covariate, only can happen when using multivae_mil
-                    if (
-                        ignore_covariates is not None
-                        and cat_cov_name not in ignore_covariates
-                        and cat_cov_name != self.sample_key
-                    ):
-                        warnings.warn(
-                            f"Registered categorical covariate '{cat_cov_name}' is not in classification or ordinal regression covariates and is not the sample covariate so will be ignored.",
-                            stacklevel=2,
-                        )
+                # Note: ignore_covariates parameter is kept for API compatibility but not used in MIL-only version
 
         for label in ordinal_regression:
             print(
@@ -209,12 +182,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             attn_dim=attn_dim,
             n_layers_cell_aggregator=n_layers_cell_aggregator,
             n_layers_classifier=n_layers_classifier,
-            n_layers_mlp_attn=n_layers_mlp_attn,
             n_layers_regressor=n_layers_regressor,
             n_hidden_regressor=n_hidden_regressor,
             n_hidden_cell_aggregator=n_hidden_cell_aggregator,
             n_hidden_classifier=n_hidden_classifier,
-            n_hidden_mlp_attn=n_hidden_mlp_attn,
             class_loss_coef=class_loss_coef,
             regression_loss_coef=regression_loss_coef,
             sample_batch_size=sample_batch_size,
@@ -306,7 +277,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         -------
         Trainer object.
         """
-        # TODO put in a function, return params needed for splitter, plan and runner, then can call the function from multivae_mil
         if len(self.regression) > 0:
             if early_stopping_monitor == "accuracy_validation":
                 warnings.warn(
@@ -489,8 +459,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 cell_attn = cell_attn.flatten()  # in inference always one patient per batch
                 cell_level_attn += [cell_attn.cpu()]
 
-            assert outputs["z_joint"].shape[0] % pred[0].shape[0] == 0
-            sample_size = outputs["z_joint"].shape[0] // pred[0].shape[0]  # how many cells in patient_minibatch
+            assert outputs["z"].shape[0] % pred[0].shape[0] == 0
+            sample_size = outputs["z"].shape[0] // pred[0].shape[0]  # how many cells in patient_minibatch
             minibatch_size, n_samples_in_batch = prep_minibatch(cat_covs, self.module.sample_batch_size)
             regression = select_covariates(cont_covs, self.regression_idx, n_samples_in_batch)
             ordinal_regression = select_covariates(cat_covs, self.ord_idx, n_samples_in_batch)
@@ -520,10 +490,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 reg_pred,
                 len(self.class_idx) + len(self.ord_idx),
             )
-
-            # TODO remove n_of_bags_in_batch after testing
-            n_of_bags_in_batch = pred[0].shape[0]
-            assert n_samples_in_batch == n_of_bags_in_batch
 
             # save bag info to be able to calculate bag predictions later
             bags, cell_counter, bag_counter = get_bag_info(

@@ -1,5 +1,4 @@
 from ._utils import (
-    calculate_size_factor,
     create_df,
     get_bag_info,
     get_predictions,
@@ -14,7 +13,6 @@ from ._utils import (
 
 __all__ = [
     "create_df",
-    "calculate_size_factor",
     "setup_ordinal_regression",
     "select_covariates",
     "prep_minibatch",
