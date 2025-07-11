@@ -36,3 +36,6 @@ __pycache__/
 
 # Data
 *.h5ad
+
+# Private notebooks
+_*.ipynb

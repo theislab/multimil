@@ -9,9 +9,7 @@
 .. autosummary::
     :toctree: generated
 
-    model.MultiVAE
     model.MILClassifier
-    model.MultiVAE_MIL
 ```
 
 ## Module
@@ -23,7 +21,5 @@
 .. autosummary::
     :toctree: generated
 
-    module.MultiVAETorch
     module.MILClassifierTorch
-    module.MultiVAETorch_MIL
 ```
