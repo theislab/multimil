@@ -22,3 +22,9 @@ and this project adheres to [Semantic Versioning][].
 - **Code cleanup**: Removed MLP attention weight learning from Aggregator class
 - **Parameter consistency**: Fixed default values between model and module classes
 - **Dynamic z_dim**: Automatically infer z_dim from input data shape instead of hardcoded value
+
+### Fixed
+
+- **Make categorical covariates categorical**: Ensure the correct type in `setup_anndata`.
+- **Improved error handling**: If the prediction covariate hasn't been registered with `setup_anndata`, throw an error.
+- **Dead links to API and changelog**: Fixed in README.
