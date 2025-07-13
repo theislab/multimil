@@ -59,7 +59,7 @@ If you found a bug, please use the [issue tracker][issue-tracker].
 
 ## Reproducibility
 
-Code and notebooks to reproduce the results from the paper are available at [https://github.com/theislab/multimil_reproducibility][https://github.com/theislab/multimil_reproducibility].
+Code and notebooks to reproduce the results from the paper are available at [theislab/multimil_reproducibility](/https://github.com/theislab/multimil_reproducibility).
 
 [issue-tracker]: https://github.com/theislab/multimil/issues
 [changelog]: https://multimil.readthedocs.io/en/latest/changelog.html
