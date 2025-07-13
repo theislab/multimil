@@ -134,7 +134,15 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         self.regression = regression
         self.ordinal_regression = ordinal_regression
 
-        # TODO check if all of the three above were registered with setup anndata
+        # check if all of the three above were registered with setup anndata
+        for key in classification + ordinal_regression:
+            if key not in self.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)["field_keys"]:
+                raise ValueError(f"Key '{key}' is not registered as categorical covariates.")
+
+        for key in regression:
+            if key not in self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)["field_keys"]:
+                raise ValueError(f"Key '{key}' is not registered as continuous covariates.")
+
         # TODO add check that class is the same within a patient
         # TODO assert length of things is the same as number of modalities
         # TODO add that n_layers has to be > 0 for all
@@ -378,6 +386,10 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         kwargs
             Additional parameters to pass to register_fields() of AnnDataManager.
         """
+        if categorical_covariate_keys is not None:
+            for key in categorical_covariate_keys:
+                adata.obs[key] = adata.obs[key].astype("category")
+
         setup_ordinal_regression(adata, ordinal_regression_order, categorical_covariate_keys)
 
         setup_method_args = cls._get_setup_method_args(**locals())

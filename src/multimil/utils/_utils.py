@@ -50,17 +50,17 @@ def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covari
     categorical_covariate_keys
         Keys of categorical covariates.
     """
-    # TODO make sure not to assume categorical columns for ordinal regression -> change to np.unique if needed
     if ordinal_regression_order is not None:
         if not set(ordinal_regression_order.keys()).issubset(categorical_covariate_keys):
             raise ValueError(
                 f"All keys {ordinal_regression_order.keys()} has to be registered as categorical covariates too, but categorical_covariate_keys = {categorical_covariate_keys}"
             )
         for key in ordinal_regression_order.keys():
-            adata.obs[key] = adata.obs[key].astype("category")
-            if set(adata.obs[key].cat.categories) != set(ordinal_regression_order[key]):
+            # Get unique values from the column without assuming it's categorical
+            unique_values = np.unique(adata.obs[key].values)
+            if set(unique_values) != set(ordinal_regression_order[key]):
                 raise ValueError(
-                    f"Categories of adata.obs[{key}]={adata.obs[key].cat.categories} are not the same as categories specified = {ordinal_regression_order[key]}"
+                    f"Unique values in adata.obs[{key}]={unique_values} are not the same as categories specified = {ordinal_regression_order[key]}"
                 )
             adata.obs[key] = adata.obs[key].cat.reorder_categories(ordinal_regression_order[key])
 
