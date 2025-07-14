@@ -395,7 +395,6 @@ def score_top_cells(adata, top_fraction=0.1, sample_key=None, key_added="top_cel
         threshold_idx = int(len(adata_sample) * (1 - top_fraction))
         threshold_value = sorted(adata_sample.obs["cell_attn"])[threshold_idx]
         top_idx = adata_sample[adata_sample.obs["cell_attn"] >= threshold_value].obs_names
-        adata.obs.loc[top_idx, "top_cell_attn"] = True
-    adata.obs[key_added] = adata.obs[key_added].astype("category")
+        adata.obs.loc[top_idx, key_added] = True
     if sample_key == "_tmp_sample":
         del adata.obs[sample_key]

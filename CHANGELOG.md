@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.3.1] - 2025-07-14
+
+### Fixed
+
+- Fixed a bug in `score_top_cells` that didn't set the specified `key_added` column in .obs to True.
+- Fixed a bug in `score_top_cells` that set the `key_added` to be categorical, which resulted in wrong indexing in `get_sample_representations`.
+
 ## [0.3.0] - 2025-07-13
 
 ### Added
