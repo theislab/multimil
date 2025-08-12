@@ -80,6 +80,12 @@ class MILClassifierTorch(BaseModuleClass):
         activation="leaky_relu",
         initialization=None,
         anneal_class_loss=False,
+        use_sample_cov=False,
+        cat_sample_idx=None, 
+        cont_sample_idx=None,
+        num_cat_cov_classes=None,
+        min_cont_sample_cov=None,
+        max_cont_sample_cov=None,
     ):
         super().__init__()
 
@@ -100,6 +106,12 @@ class MILClassifierTorch(BaseModuleClass):
         self.class_idx = class_idx
         self.ord_idx = ord_idx
         self.reg_idx = reg_idx
+        self.cat_sample_idx = cat_sample_idx
+        self.cont_sample_idx = cont_sample_idx
+        self.num_cat_cov_classes = num_cat_cov_classes
+        self.use_sample_cov = use_sample_cov
+        self.min_cont_sample_cov = min_cont_sample_cov
+        self.max_cont_sample_cov = max_cont_sample_cov
 
         self.cell_level_aggregator = nn.Sequential(
             MLP(
@@ -122,11 +134,18 @@ class MILClassifierTorch(BaseModuleClass):
             ),
         )
 
+        
+        if use_sample_cov is True:
+            class_input_dim = z_dim
+            for n in num_cat_cov_classes:
+                class_input_dim += n
+            for n in range(len(self.cont_sample_idx)):
+                class_input_dim += 1
+        else:
+            class_input_dim = z_dim
+
         if len(self.class_idx) > 0:
             self.classifiers = torch.nn.ModuleList()
-
-            # classify zs directly
-            class_input_dim = z_dim
 
             for num in self.num_classification_classes:
                 if n_layers_classifier == 1:
@@ -180,20 +199,38 @@ class MILClassifierTorch(BaseModuleClass):
 
     def _get_inference_input(self, tensors):
         x = tensors[REGISTRY_KEYS.X_KEY]
-        return {"x": x}
+        if self.use_sample_cov is True:
+            cont_key = REGISTRY_KEYS.CONT_COVS_KEY
+            cont_covs = tensors[cont_key] if cont_key in tensors.keys() else None
+
+            cat_key = REGISTRY_KEYS.CAT_COVS_KEY
+            cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
+
+            _, n_samples_in_batch = prep_minibatch(cat_covs, self.sample_batch_size)
+            cat_sample_covs = select_covariates(cat_covs, self.cat_sample_idx.to(self.device), n_samples_in_batch)
+            cont_sample_covs = select_covariates(cont_covs, self.cont_sample_idx.to(self.device), n_samples_in_batch)
+        else:
+            cat_sample_covs = None
+            cont_sample_covs = None
+
+        return {"x": x, "cat_sample_covs": cat_sample_covs, "cont_sample_covs": cont_sample_covs}
 
     def _get_generative_input(self, tensors, inference_outputs):
         z = inference_outputs["z"]
         return {"z": z}
 
     @auto_move_data
-    def inference(self, x) -> dict[str, torch.Tensor | list[torch.Tensor]]:
+    def inference(self, x, cat_sample_covs, cont_sample_covs) -> dict[str, torch.Tensor | list[torch.Tensor]]:
         """Forward pass for inference.
 
         Parameters
         ----------
         x
             Input.
+        cat_sample_covs
+            Categorical sample covariates.
+        cont_sample_covs
+            Continuous sample covariates.
 
         Returns
         -------
@@ -213,6 +250,21 @@ class MILClassifierTorch(BaseModuleClass):
         zs = torch.tensor_split(z, idx, dim=0)
         zs = torch.stack(zs, dim=0)  # num of bags x batch_size x z_dim
         zs_attn = self.cell_level_aggregator(zs)  # num of bags x cond_dim
+
+        if cat_sample_covs is not None:
+            one_hot_cat_sample_covs = []
+            for i, num_classes in zip(range(cat_sample_covs.shape[1]), self.num_cat_cov_classes):
+                one_hot_sample = F.one_hot(cat_sample_covs.long()[:, i], num_classes=num_classes)
+                one_hot_cat_sample_covs.append(one_hot_sample)
+
+            cat_sample_covs = torch.cat(one_hot_cat_sample_covs, dim=1)
+            zs_attn = torch.cat([zs_attn, cat_sample_covs], dim=1)
+
+        if cont_sample_covs is not None:
+            # min max scale continuous sample covariates
+            for i in range(cont_sample_covs.shape[1]):
+                cont_sample_covs[:, i] = (cont_sample_covs[:, i] - self.min_cont_sample_cov[i]) / (self.max_cont_sample_cov[i] - self.min_cont_sample_cov[i])
+            zs_attn = torch.cat([zs_attn, cont_sample_covs], dim=1)
 
         predictions = []
         if len(self.class_idx) > 0:

@@ -143,18 +143,49 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             if key not in self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)["field_keys"]:
                 raise ValueError(f"Key '{key}' is not registered as continuous covariates.")
 
+        # use the rest of the categoricalcovariates for sample covariates
+        self.cat_sample_idx, self.cont_sample_idx = [], []
+        self.num_cat_cov_classes = []
+        cat_sample_covs, cont_sample_covs = [], []
+
+        if len(cat_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CAT_COVS_KEY)) > 0:
+            for i, num_cat in enumerate(cat_covs.n_cats_per_key):
+                cat_cov_name = cat_covs["field_keys"][i]
+
+                if cat_cov_name not in self.classification and cat_cov_name not in self.ordinal_regression and cat_cov_name != self.sample_key:
+                    self.cat_sample_idx.append(i)
+                    cat_sample_covs.append(cat_cov_name)
+                    self.num_cat_cov_classes.append(num_cat)
+
+        min_cont_sample_cov = []
+        max_cont_sample_cov = []
+        if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
+            for key in cont_covs["columns"]:
+                if key not in self.regression:
+                    self.cont_sample_idx.append(list(cont_covs["columns"]).index(key))
+                    cont_sample_covs.append(key)
+                    # store the min and max of the continuous sample covariates
+                    min_cont_sample_cov.append(adata.obsm['_scvi_extra_continuous_covs'][key].min())
+                    max_cont_sample_cov.append(adata.obsm['_scvi_extra_continuous_covs'][key].max())
+
+        use_sample_cov = False
+        if len(cat_sample_covs) + len(cont_sample_covs) > 0:
+            use_sample_cov = True
+        if len(cat_sample_covs) > 0:
+            print(f"Using {cat_sample_covs} as categorical sample covariates.")
+        if len(cont_sample_covs) > 0:
+            print(f"Using {cont_sample_covs} as continuous sample covariates.")
+
         # TODO add check that class is the same within a patient
-        # TODO assert length of things is the same as number of modalities
         # TODO add that n_layers has to be > 0 for all
         # TODO warning if n_layers == 1 then n_hidden is not used for classifier
-        # TODO check that there is at least on ecovariate to predict
+        # TODO check that there is at least one covariate to predict
 
         self.regression_idx = []
         if len(cont_covs := self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)) > 0:
             for key in cont_covs["columns"]:
                 if key in self.regression:
                     self.regression_idx.append(list(cont_covs["columns"]).index(key))
-                # Note: ignore_covariates parameter is kept for API compatibility but not used in MIL-only version
 
         # classification and ordinal regression together here as ordinal regression values need to be registered as categorical covariates
         self.class_idx, self.ord_idx = [], []
@@ -168,7 +199,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 elif cat_cov_name in self.ordinal_regression:
                     self.num_classification_classes.append(num_cat)
                     self.ord_idx.append(i)
-                # Note: ignore_covariates parameter is kept for API compatibility but not used in MIL-only version
 
         for label in ordinal_regression:
             print(
@@ -178,6 +208,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         self.class_idx = torch.tensor(self.class_idx)
         self.ord_idx = torch.tensor(self.ord_idx)
         self.regression_idx = torch.tensor(self.regression_idx)
+        self.cat_sample_idx = torch.tensor(self.cat_sample_idx)
+        self.cont_sample_idx = torch.tensor(self.cont_sample_idx)
 
         self.module = MILClassifierTorch(
             z_dim=z_dim,
@@ -201,6 +233,12 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             ord_idx=self.ord_idx,
             reg_idx=self.regression_idx,
             anneal_class_loss=anneal_class_loss,
+            cat_sample_idx=self.cat_sample_idx,
+            cont_sample_idx=self.cont_sample_idx,
+            num_cat_cov_classes=self.num_cat_cov_classes,
+            use_sample_cov=use_sample_cov,
+            min_cont_sample_cov=min_cont_sample_cov,
+            max_cont_sample_cov=max_cont_sample_cov,
         )
 
         self.init_params_ = self._get_init_params(locals())
