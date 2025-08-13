@@ -152,7 +152,11 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             for i, num_cat in enumerate(cat_covs.n_cats_per_key):
                 cat_cov_name = cat_covs["field_keys"][i]
 
-                if cat_cov_name not in self.classification and cat_cov_name not in self.ordinal_regression and cat_cov_name != self.sample_key:
+                if (
+                    cat_cov_name not in self.classification
+                    and cat_cov_name not in self.ordinal_regression
+                    and cat_cov_name != self.sample_key
+                ):
                     self.cat_sample_idx.append(i)
                     cat_sample_covs.append(cat_cov_name)
                     self.num_cat_cov_classes.append(num_cat)
@@ -165,8 +169,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                     self.cont_sample_idx.append(list(cont_covs["columns"]).index(key))
                     cont_sample_covs.append(key)
                     # store the min and max of the continuous sample covariates
-                    min_cont_sample_cov.append(adata.obsm['_scvi_extra_continuous_covs'][key].min())
-                    max_cont_sample_cov.append(adata.obsm['_scvi_extra_continuous_covs'][key].max())
+                    min_cont_sample_cov.append(adata.obsm["_scvi_extra_continuous_covs"][key].min())
+                    max_cont_sample_cov.append(adata.obsm["_scvi_extra_continuous_covs"][key].max())
 
         use_sample_cov = False
         if len(cat_sample_covs) + len(cont_sample_covs) > 0:

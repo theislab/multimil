@@ -81,7 +81,7 @@ class MILClassifierTorch(BaseModuleClass):
         initialization=None,
         anneal_class_loss=False,
         use_sample_cov=False,
-        cat_sample_idx=None, 
+        cat_sample_idx=None,
         cont_sample_idx=None,
         num_cat_cov_classes=None,
         min_cont_sample_cov=None,
@@ -134,12 +134,11 @@ class MILClassifierTorch(BaseModuleClass):
             ),
         )
 
-        
         if use_sample_cov is True:
             class_input_dim = z_dim
             for n in num_cat_cov_classes:
                 class_input_dim += n
-            for n in range(len(self.cont_sample_idx)):
+            for _ in range(len(self.cont_sample_idx)):
                 class_input_dim += 1
         else:
             class_input_dim = z_dim
@@ -253,7 +252,7 @@ class MILClassifierTorch(BaseModuleClass):
 
         if cat_sample_covs is not None:
             one_hot_cat_sample_covs = []
-            for i, num_classes in zip(range(cat_sample_covs.shape[1]), self.num_cat_cov_classes):
+            for i, num_classes in zip(range(cat_sample_covs.shape[1]), self.num_cat_cov_classes, strict=False):
                 one_hot_sample = F.one_hot(cat_sample_covs.long()[:, i], num_classes=num_classes)
                 one_hot_cat_sample_covs.append(one_hot_sample)
 
@@ -263,7 +262,9 @@ class MILClassifierTorch(BaseModuleClass):
         if cont_sample_covs is not None:
             # min max scale continuous sample covariates
             for i in range(cont_sample_covs.shape[1]):
-                cont_sample_covs[:, i] = (cont_sample_covs[:, i] - self.min_cont_sample_cov[i]) / (self.max_cont_sample_cov[i] - self.min_cont_sample_cov[i])
+                cont_sample_covs[:, i] = (cont_sample_covs[:, i] - self.min_cont_sample_cov[i]) / (
+                    self.max_cont_sample_cov[i] - self.min_cont_sample_cov[i]
+                )
             zs_attn = torch.cat([zs_attn, cont_sample_covs], dim=1)
 
         predictions = []
