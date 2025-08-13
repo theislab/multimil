@@ -140,7 +140,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
                 raise ValueError(f"Key '{key}' is not registered as categorical covariates.")
 
         for key in regression:
-            if key not in self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)["field_keys"]:
+            if key not in self.adata_manager.get_state_registry(REGISTRY_KEYS.CONT_COVS_KEY)["columns"]:
                 raise ValueError(f"Key '{key}' is not registered as continuous covariates.")
 
         # use the rest of the categoricalcovariates for sample covariates
