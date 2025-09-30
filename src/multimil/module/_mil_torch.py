@@ -175,7 +175,7 @@ class MILClassifierTorch(BaseModuleClass):
                     self.regressors.append(
                         nn.Sequential(
                             MLP(
-                                z_dim,
+                                class_input_dim,
                                 n_hidden_regressor,
                                 n_layers=n_layers_regressor - 1,
                                 n_hidden=n_hidden_regressor,
@@ -206,8 +206,18 @@ class MILClassifierTorch(BaseModuleClass):
             cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
             _, n_samples_in_batch = prep_minibatch(cat_covs, self.sample_batch_size)
-            cat_sample_covs = select_covariates(cat_covs, self.cat_sample_idx.to(self.device), n_samples_in_batch)
-            cont_sample_covs = select_covariates(cont_covs, self.cont_sample_idx.to(self.device), n_samples_in_batch)
+            if self.cat_sample_idx.shape[0] > 0:
+                cat_sample_covs = select_covariates(
+                    cat_covs.to(self.device), self.cat_sample_idx.to(self.device), n_samples_in_batch
+                )
+            else:
+                cat_sample_covs = None
+            if self.cont_sample_idx.shape[0] > 0:
+                cont_sample_covs = select_covariates(
+                    cont_covs.to(self.device), self.cont_sample_idx.to(self.device), n_samples_in_batch
+                )
+            else:
+                cont_sample_covs = None
         else:
             cat_sample_covs = None
             cont_sample_covs = None
