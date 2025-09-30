@@ -65,15 +65,15 @@ def setup_ordinal_regression(adata, ordinal_regression_order, categorical_covari
             adata.obs[key] = adata.obs[key].cat.reorder_categories(ordinal_regression_order[key])
 
 
-def select_covariates(covs, prediction_idx, n_samples_in_batch) -> torch.Tensor:
-    """Select prediction covariates from all covariates.
+def select_covariates(covs, idx, n_samples_in_batch) -> torch.Tensor:
+    """Select covariates from all covariates.
 
     Parameters
     ----------
     covs
         Covariates.
-    prediction_idx
-        Index of predictions.
+    idx
+        Index of covariates.
     n_samples_in_batch
         Number of samples in the batch.
 
@@ -81,9 +81,9 @@ def select_covariates(covs, prediction_idx, n_samples_in_batch) -> torch.Tensor:
     -------
     Prediction covariates.
     """
-    if len(prediction_idx) > 0:
-        covs = torch.index_select(covs, 1, prediction_idx)
-        covs = covs.view(n_samples_in_batch, -1, len(prediction_idx))[:, 0, :]
+    if len(idx) > 0:
+        covs = torch.index_select(covs, 1, idx)
+        covs = covs.view(n_samples_in_batch, -1, len(idx))[:, 0, :]
     else:
         covs = torch.tensor([])
     return covs
