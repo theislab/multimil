@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.3.2] - 2025-12-16
+
+### Added
+
+-   tutorial for regression
+-   support for sample-covariate embeddings, experimental, only one-hot
+
+### Changed
+
+-   removed `muon` from dependencies for tutorials
+-   changed the classification tutorial to include training across 3 CV folds
+
+## Fixed
+
+-   fixed a bug in regression which was caused by a wrong key when accessing the continuous covariates registered with scvi-tools
+
 ## [0.3.1] - 2025-07-14
 
 ### Fixed
