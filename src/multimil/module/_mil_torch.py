@@ -170,7 +170,7 @@ class MILClassifierTorch(BaseModuleClass):
                 len(self.ord_idx) + len(self.reg_idx)
             ):  # one head per standard regression and one per ordinal regression
                 if n_layers_regressor == 1:
-                    self.regressors.append(nn.Linear(z_dim, 1))
+                    self.regressors.append(nn.Linear(class_input_dim, 1))
                 else:
                     self.regressors.append(
                         nn.Sequential(
@@ -336,7 +336,7 @@ class MILClassifierTorch(BaseModuleClass):
                 torch.sum(
                     torch.eq(
                         torch.clamp(
-                            torch.round(predictions[len(self.class_idx) + i].squeeze()),
+                            torch.round(predictions[len(self.class_idx) + i].squeeze(-1)),
                             min=0.0,
                             max=self.num_classification_classes[i] - 1.0,
                         ),

@@ -206,7 +206,7 @@ class GroupAnnDataLoader(DataLoader):
             indices = np.arange(len(self.dataset))
             sampler_kwargs["indices"] = indices
         else:
-            if hasattr(indices, "dtype") and indices.dtype is np.dtype("bool"):
+            if hasattr(indices, "dtype") and indices.dtype == bool:
                 indices = np.where(indices)[0].ravel()
             indices = np.asarray(indices)
             sampler_kwargs["indices"] = indices

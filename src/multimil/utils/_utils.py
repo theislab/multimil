@@ -26,9 +26,9 @@ def create_df(pred, columns=None, index=None) -> pd.DataFrame:
     """
     if isinstance(pred, dict):
         for key in pred.keys():
-            pred[key] = torch.cat(pred[key]).squeeze().cpu().numpy()
+            pred[key] = np.atleast_1d(torch.cat(pred[key]).squeeze().cpu().numpy())
     else:
-        pred = torch.cat(pred).squeeze().cpu().numpy()
+        pred = np.atleast_1d(torch.cat(pred).squeeze().cpu().numpy())
 
     df = pd.DataFrame(pred)
     if index is not None:
@@ -356,11 +356,17 @@ def get_sample_representations(
 
     if aggregation == "weighted":
         df = (
-            tmp.obs[[f"latent{i}" for i in range(tmp.X.shape[1])] + [sample_key]].groupby(sample_key).agg("sum")
+            tmp.obs[[f"latent{i}" for i in range(tmp.X.shape[1])] + [sample_key]]
+            .groupby(sample_key, observed=True)
+            .agg("sum")
         )  # because already multiplied by normalized weights
     elif aggregation == "mean":
-        df = tmp.obs[[f"latent{i}" for i in range(tmp.X.shape[1])] + [sample_key]].groupby(sample_key).agg("mean")
-    df = df.join(tmp.obs[covs_to_keep].groupby(sample_key).agg("first"))
+        df = (
+            tmp.obs[[f"latent{i}" for i in range(tmp.X.shape[1])] + [sample_key]]
+            .groupby(sample_key, observed=True)
+            .agg("mean")
+        )
+    df = df.join(tmp.obs[covs_to_keep].groupby(sample_key, observed=True).agg("first"))
 
     final_covs = [cov for cov in covs_to_keep if cov != sample_key]
     pb = sc.AnnData(df.drop(final_covs, axis=1).values)
