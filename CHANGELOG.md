@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning][].
 - Single-layer regressor head used `z_dim` instead of `class_input_dim` when sample covariates are present.
 - `.squeeze()` on 1-element tensors in `create_df` produced 0-d scalars; wrapped with `np.atleast_1d`.
 - Fixed floating-point undercount in `GroupDataSplitter` (`floor(1.0 - 0.9) = 0` edge case).
+- Corrected misleading intro text in the regression tutorial notebook (incorrectly stated IPF samples were included; they lack age annotations and are excluded).
 
 ## [0.3.2] - 2025-12-16
 
