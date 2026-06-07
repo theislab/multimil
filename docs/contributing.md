@@ -10,10 +10,18 @@ to the [scanpy developer guide][].
 ## Installing dev dependencies
 
 In addition to the packages needed to _use_ this package, you need additional python packages to _run tests_ and _build
-the documentation_. It's easy to install them using `pip`:
+the documentation_. We use [uv](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
 cd multimil
+uv sync --extra dev --extra test --extra doc
+```
+
+This creates a `.venv/` and installs all dependencies from `uv.lock`. Prefix commands with `uv run` (e.g. `uv run pytest`) to use the managed environment.
+
+Alternatively, with plain pip:
+
+```bash
 pip install -e ".[dev,test,doc]"
 ```
 
@@ -51,7 +59,7 @@ and [prettier][prettier-editors].
 ## Writing tests
 
 ```{note}
-Remember to first install the package with `pip install -e '.[dev,test]'`
+Remember to first install the package with `uv sync --extra dev --extra test` (or `pip install -e '.[dev,test]'`).
 ```
 
 This package uses the [pytest][] for automated testing. Please [write tests][scanpy-test-docs] for every function added
@@ -61,7 +69,7 @@ Most IDEs integrate with pytest and provide a GUI to run tests. Alternatively, y
 command line by executing
 
 ```bash
-pytest
+uv run pytest
 ```
 
 in the root of the repository.
