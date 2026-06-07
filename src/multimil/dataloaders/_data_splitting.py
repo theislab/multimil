@@ -45,9 +45,7 @@ class GroupDataSplitter(DataSplitter):
         self.group_column = group_column
 
         # --- sample-level split ------------------------------------------------
-        sample_labels = np.asarray(
-            adata_manager.adata.obsm["_scvi_extra_categorical_covs"][group_column]
-        )
+        sample_labels = np.asarray(adata_manager.adata.obsm["_scvi_extra_categorical_covs"][group_column])
         unique_samples = np.unique(sample_labels)
         n_samples = len(unique_samples)
 
