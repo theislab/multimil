@@ -12,38 +12,35 @@
 
 Please refer to the [documentation][link-docs]. In particular, the
 
--   [API documentation][link-api]
+- [API documentation][link-api]
 
 and the tutorials:
 
--   [Classification with MultiMIL](https://multimil.readthedocs.io/en/latest/notebooks/mil_classification.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_classification.ipynb)
--   [Regression with MultiMIL](https://multimil.readthedocs.io/en/latest/notebooks/mil_regression.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_regression.ipynb)
+- [Classification with MultiMIL](https://multimil.readthedocs.io/en/latest/notebooks/mil_classification.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_classification.ipynb)
+- [Regression with MultiMIL](https://multimil.readthedocs.io/en/latest/notebooks/mil_regression.html) [![Open In Colab][badge-colab]](https://colab.research.google.com/github/theislab/multimil/blob/main/docs/notebooks/mil_regression.ipynb)
 
 Please also check out our [sample prediction pipeline](https://github.com/theislab/sample-prediction-pipeline), which contains MultiMIL and several other baselines.
 
 ## Installation
 
-You need to have Python 3.10 or newer installed on your system. We recommend installing [Mambaforge](https://github.com/conda-forge/miniforge#mambaforge).
+You need to have Python 3.12 or newer installed on your system. We recommend using [uv](https://docs.astral.sh/uv/) for environment management.
 
-To create and activate a new environment:
+Install the latest release of `multimil` from [PyPI][link-pypi]:
 
 ```bash
-mamba create --name multimil python=3.10
-mamba activate multimil
+uv pip install multimil
 ```
 
-Next, there are several alternative options to install multimil:
+Or install the latest development version:
 
-1. Install the latest release of `multimil` from [PyPI][link-pypi]:
+```bash
+uv pip install git+https://github.com/theislab/multimil.git@main
+```
+
+Alternatively, with plain pip:
 
 ```bash
 pip install multimil
-```
-
-2. Or install the latest development version:
-
-```bash
-pip install git+https://github.com/theislab/multimil.git@main
 ```
 
 ## Release notes

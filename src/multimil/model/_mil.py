@@ -4,16 +4,16 @@ import warnings
 import anndata as ad
 import torch
 from anndata import AnnData
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint
 from scvi import REGISTRY_KEYS
 from scvi.data import AnnDataManager, fields
 from scvi.data._constants import _MODEL_NAME_KEY, _SETUP_ARGS_KEY
-from scvi.model._utils import parse_use_gpu_arg
+from scvi.model._utils import parse_device_args
 from scvi.model.base import ArchesMixin, BaseModelClass
 from scvi.model.base._archesmixin import _get_loaded_data
-from scvi.model.base._utils import _initialize_model
+from scvi.model.base._save_load import _initialize_model
 from scvi.train import AdversarialTrainingPlan, TrainRunner
-from scvi.train._callbacks import SaveBestState
+from scvi.train._callbacks import SaveCheckpoint
 
 from multimil.dataloaders import GroupAnnDataLoader, GroupDataSplitter
 from multimil.module import MILClassifierTorch
@@ -251,7 +251,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         self,
         max_epochs: int = 200,
         lr: float = 5e-4,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        devices: int | list[int] | str = "auto",
         train_size: float = 0.9,
         validation_size: float | None = None,
         batch_size: int = 256,
@@ -278,9 +279,12 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             Number of passes through the dataset.
         lr
             Learning rate for optimization.
-        use_gpu
-            Use default GPU if available (if None or True), or index of GPU to use (if int),
-            or name of GPU (if str), or use CPU (if False).
+        accelerator
+            Supports passing different accelerator types ("cpu", "gpu", "tpu", "mps", "auto").
+            Default is "auto", which automatically selects the best available accelerator.
+        devices
+            Number of devices to train on (``int``), list of device indices (``list[int]``),
+            or ``"auto"`` (default) to use all available devices.
         train_size
             Size of training set in the range [0.0, 1.0].
         validation_size
@@ -355,7 +359,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         if save_best:
             if "callbacks" not in kwargs.keys():
                 kwargs["callbacks"] = []
-            kwargs["callbacks"].append(SaveBestState(monitor=early_stopping_monitor, mode=early_stopping_mode))
+            kwargs["callbacks"].append(
+                SaveCheckpoint(monitor=early_stopping_monitor, load_best_on_end=True, mode=early_stopping_mode)
+            )
 
         if save_checkpoint_every_n_epochs is not None:
             if path_to_checkpoints is not None:
@@ -380,7 +386,6 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
-            use_gpu=use_gpu,
         )
 
         training_plan = AdversarialTrainingPlan(self.module, **plan_kwargs)
@@ -389,7 +394,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            use_gpu=use_gpu,
+            accelerator=accelerator,
+            devices=devices,
             early_stopping=early_stopping,
             check_val_every_n_epoch=check_val_every_n_epoch,
             early_stopping_monitor=early_stopping_monitor,
@@ -602,7 +608,8 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         cls,
         adata: AnnData,
         reference_model: BaseModelClass,
-        use_gpu: str | int | bool | None = None,
+        accelerator: str = "auto",
+        devices: int | list[int] | str = "auto",
     ) -> BaseModelClass:
         """Online update of a reference model with scArches algorithm # TODO cite.
 
@@ -614,9 +621,11 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             as AnnData is validated against the ``registry``.
         reference_model
             Already instantiated model of the same class.
-        use_gpu
-            Load model on default GPU if available (if None or True),
-            or index of GPU to use (if int), or name of GPU (if str), or use CPU (if False).
+        accelerator
+            Supports passing different accelerator types ("cpu", "gpu", "tpu", "mps", "auto").
+            Default is "auto".
+        devices
+            Number of devices (``int``), list of device indices (``list[int]``), or ``"auto"``.
 
         Returns
         -------
@@ -625,9 +634,9 @@ class MILClassifier(BaseModelClass, ArchesMixin):
         # currently this function works only if the prediction cov is present in the .obs of the query
         # TODO need to allow it to be missing, maybe add a dummy column to .obs of query adata
 
-        _, _, device = parse_use_gpu_arg(use_gpu)
+        _, _, device = parse_device_args(accelerator, devices, return_device="torch", validate_single_device=True)
 
-        attr_dict, _, _ = _get_loaded_data(reference_model, device=device)
+        attr_dict, _, _, _ = _get_loaded_data(reference_model, device=device)
 
         registry = attr_dict.pop("registry_")
         if _MODEL_NAME_KEY in registry and registry[_MODEL_NAME_KEY] != cls.__name__:
@@ -644,7 +653,7 @@ class MILClassifier(BaseModelClass, ArchesMixin):
             **registry[_SETUP_ARGS_KEY],
         )
 
-        model = _initialize_model(cls, adata, attr_dict)
+        model = _initialize_model(cls, adata, registry, attr_dict, None)
         model.module.load_state_dict(reference_model.module.state_dict())
         model.to_device(device)
 

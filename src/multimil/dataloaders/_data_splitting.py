@@ -1,3 +1,5 @@
+import numpy as np
+from scvi import settings
 from scvi.data import AnnDataManager
 from scvi.dataloaders import DataSplitter
 
@@ -10,21 +12,26 @@ from multimil.dataloaders._ann_dataloader import GroupAnnDataLoader
 class GroupDataSplitter(DataSplitter):
     """Creates data loaders ``train_set``, ``validation_set``, ``test_set``.
 
-    If ``train_size + validation_set < 1`` then ``test_set`` is non-empty.
+    Splits are computed at the **sample level** (i.e. every cell that belongs to a given
+    sample lands entirely in train, validation, or test) rather than at the cell level.
+    This guarantees that each split contains complete bags, which is required for the
+    grouped dataloader.
+
+    If ``train_size + validation_size < 1`` then ``test_set`` is non-empty.
 
     Parameters
     ----------
     adata_manager
         :class:`~scvi.data.AnnDataManager` object that has been created via ``setup_anndata``.
+    group_column
+        Key in ``adata.obs`` that identifies samples / bags.
     train_size
-        Proportion of cells to use  as the train set. Float, or None (default is 0.9).
+        Proportion of **samples** to use as the train set (default 0.9).
     validation_size
-        Proportion of cell to use as the valisation set. Float, or None (default is None). If None, is set to 1 - ``train_size``.
-    use_gpu
-        Use default GPU if available (if None or True), or index of GPU to use (if int),
-        or name of GPU (if str, e.g., `'cuda:0'`), or use CPU (if False).
+        Proportion of **samples** for validation. If ``None``, defaults to
+        ``1 - train_size``.
     kwargs
-        Keyword args for data loader. Data loader class is :class:`~mtg.dataloaders.GroupAnnDataLoader`.
+        Keyword args forwarded to :class:`~multimil.dataloaders.GroupAnnDataLoader`.
     """
 
     def __init__(
@@ -33,11 +40,42 @@ class GroupDataSplitter(DataSplitter):
         group_column: str,
         train_size: float = 0.9,
         validation_size: float | None = None,
-        use_gpu: bool = False,
         **kwargs,
     ):
         self.group_column = group_column
-        super().__init__(adata_manager, train_size, validation_size, use_gpu, **kwargs)
+
+        # --- sample-level split ------------------------------------------------
+        sample_labels = np.asarray(adata_manager.adata.obsm["_scvi_extra_categorical_covs"][group_column])
+        unique_samples = np.unique(sample_labels)
+        n_samples = len(unique_samples)
+
+        # Compute n_train first to avoid floating-point error in 1.0 - train_size
+        # (e.g. 1.0 - 0.9 = 0.09999... causing floor to under-count by 1).
+        if validation_size is None:
+            n_train = int(np.floor(train_size * n_samples))
+            n_val = n_samples - n_train
+        else:
+            n_val = int(np.floor(validation_size * n_samples))
+            n_train = n_samples - n_val
+
+        rng = np.random.RandomState(seed=settings.seed)
+        perm = rng.permutation(n_samples)
+        val_samples = set(unique_samples[perm[:n_val]])
+        train_samples = set(unique_samples[perm[n_val : n_val + n_train]])
+
+        all_idx = np.arange(len(sample_labels))
+        train_idx = all_idx[np.array([s in train_samples for s in sample_labels])]
+        val_idx = all_idx[np.array([s in val_samples for s in sample_labels])]
+        test_idx = np.array([], dtype=np.intp)
+        # -----------------------------------------------------------------------
+
+        super().__init__(
+            adata_manager,
+            train_size=train_size,
+            validation_size=validation_size,
+            external_indexing=[train_idx, val_idx, test_idx],
+            **kwargs,
+        )
 
     def train_dataloader(self):
         """Return data loader for train AnnData."""

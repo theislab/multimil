@@ -24,9 +24,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python: "3.10"
-          - os: ubuntu-latest
             python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
           - os: ubuntu-latest
             python: "3.12"
             pip-flags: "--pre"

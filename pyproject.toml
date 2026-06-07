@@ -7,7 +7,7 @@ name = "multimil"
 version = "0.3.2"
 description = "Multimodal weakly supervised learning to identify disease-specific changes in single-cell atlases"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {file = "LICENSE"}
 authors = [
     {name = "Anastasia Litinetskaya"},
@@ -19,14 +19,14 @@ urls.Documentation = "https://multimil.readthedocs.io/"
 urls.Source = "https://github.com/theislab/multimil"
 urls.Home-page = "https://github.com/theislab/multimil"
 dependencies = [
-    "anndata<0.11",
-    "numpy<2.0",
+    "anndata",
+    "numpy>=2.0",
     # for debug logging (referenced from the issue template)
     "session-info",
     # multimil specific
     "scanpy",
-    "scvi-tools<1.0.0",
-    "jax<0.6",
+    "scvi-tools>=1.4",
+    "torch",
     "requests",
     "matplotlib",
 ]
@@ -54,6 +54,8 @@ doc = [
 test = [
     "pytest",
     "coverage",
+    "gdown",
+    "scikit-learn",
 ]
 tutorials = [
     "jupyterlab",
@@ -61,6 +63,7 @@ tutorials = [
     "leidenalg",
     "igraph",
     "gdown",
+    "scikit-learn",
 ]
 
 [tool.coverage.run]
@@ -135,6 +138,22 @@ convention = "numpy"
 "*/__init__.py" = ["F401"]
 "src/multimil/module/__init__.py" = ["I"]
 
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'darwin'" },
+    { index = "pytorch-cu121", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
 [tool.cruft]
 skip = [
     "tests",
@@ -145,4 +164,9 @@ skip = [
     "docs/references.bib",
     "docs/references.md",
     "docs/notebooks/example.ipynb",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.16",
 ]
